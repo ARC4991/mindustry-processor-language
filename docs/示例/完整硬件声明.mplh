@@ -1,20 +1,20 @@
 // 此文件由项目配置指定；其中导出的硬件常量对项目 MPL 代码全局可见。
 
-const Screen0: Display = link(0);
-const Screen1: Display = link(1);
-const Screen2: Display = link(2);
-const Screen3: Display = link(3);
+const Screen0: Display = link("display1");
+const Screen1: Display = link("display2");
+const Screen2: Display = link("display3");
+const Screen3: Display = link("display4");
 
 export const MainScreen: Display = Display.combine([
     [Screen0, Screen1],
     [Screen2, Screen3]
 ]);
 
-export const AlertBoard: Message = link();
+export const AlertBoard: Message = link("message1");
 
 // 内存没有 MPL/MIL 名称，也不能被源码下标访问；编译器统一分配其容量。
 memory physical(
-    link: 5,
+    link: "memory1",
     size: 512
 );
 
