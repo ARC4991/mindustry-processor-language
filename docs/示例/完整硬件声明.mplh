@@ -10,7 +10,7 @@ export const MainScreen: Display = Display.combine([
     [Screen2, Screen3]
 ]);
 
-export const AlertBoard: Message = link(4);
+export const AlertBoard: Message = link();
 
 // 内存没有 MPL/MIL 名称，也不能被源码下标访问；编译器统一分配其容量。
 memory physical(
