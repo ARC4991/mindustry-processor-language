@@ -1,0 +1,23 @@
+// 此文件由项目配置指定；其中导出的硬件常量对项目 MPL 代码全局可见。
+
+const Screen0: Display = link(0);
+const Screen1: Display = link(1);
+const Screen2: Display = link(2);
+const Screen3: Display = link(3);
+
+export const MainScreen: Display = Display.combine([
+    [Screen0, Screen1],
+    [Screen2, Screen3]
+]);
+
+export const AlertBoard: Message = link(4);
+
+export const Data: Memory = Memory.physical(
+    link: 5,
+    size: 512
+);
+
+export const Runtime: Memory = Memory.virtual(
+    size: 4096,
+    mode: Pool
+);

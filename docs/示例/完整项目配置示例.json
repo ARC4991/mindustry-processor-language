@@ -1,0 +1,12 @@
+{
+  "name": "@example/alpha-monitor",
+  "version": "0.1.0",
+  "target": {
+    "mindustry": "v7"
+  },
+  "entry": "src/main.mpl",
+  "hardware": "src/hardware.mplh",
+  "dependencies": {
+    "@mpl/status-panel": "^0.1.0"
+  }
+}
