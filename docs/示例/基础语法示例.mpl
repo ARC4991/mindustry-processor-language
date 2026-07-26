@@ -1,8 +1,8 @@
 // 本示例描述讨论中的表面语法，不保证当前可编译。
 
-const val step: num = 8;
+const val step: Int = 8;
 
-fun clamp(value: num, lower: num, upper: num): num {
+fun clamp(value: Float, lower: Float, upper: Float): Float {
     if (value < lower) {
         return lower;
     }
