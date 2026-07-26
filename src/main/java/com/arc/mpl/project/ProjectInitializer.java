@@ -35,8 +35,8 @@ public final class ProjectInitializer {
             }
             """.formatted(name, target));
         Files.writeString(projectDirectory.resolve("src/hardware.mplh"), """
-            // 将一个 Message Block 连到处理器；第一版会自动绑定 message1。
-            const AlertBoard: Message = link();
+            // Message Block 在游戏中的链接变量名由处理器提供。
+            const AlertBoard: Message = link("message1");
             """);
         Files.writeString(projectDirectory.resolve("src/main.mpl"), """
             // main.mpl 的顶层代码会由处理器顺序执行。

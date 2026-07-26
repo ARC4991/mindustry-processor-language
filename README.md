@@ -16,7 +16,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 ./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/output.mlog'
 ```
 
-`src/hardware.mplh` 中的 `const AlertBoard: Message = link();` 会在第一版绑定唯一 Message Block 对应的 `message1`。可参考 [消息输出演示](examples/message-output-demo)。
+`src/hardware.mplh` 中的 `const AlertBoard: Message = link("message1");` 将 MPL 硬件名绑定到游戏提供的链接变量。可参考 [消息输出演示](examples/message-output-demo)。
 
 ## 文档
 

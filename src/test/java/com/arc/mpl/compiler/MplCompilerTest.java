@@ -34,20 +34,20 @@ class MplCompilerTest {
         assertTrue(result.succeeded());
         assertEquals("v146", result.profile().orElseThrow().id());
         assertTrue(result.diagnostics().isEmpty());
-        assertEquals("op add mpl_tmp0 1 2\nset mpl_total mpl_tmp0\nop add mpl_total mpl_total 3\n",
+        assertEquals("op add mpl_tmp0 1 2\nset mpl_total mpl_tmp0\nop add mpl_total mpl_total 3\nstop\n",
             result.mlog().orElseThrow());
     }
 
     @Test
     void compilesMessagePrintUsingTheAutomaticFirstMessageLink(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
-        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), "const AlertBoard: Message = link();");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), "const AlertBoard: Message = link(\"message1\");");
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), "var frog: Int = 21;\nAlertBoard.print(\"frog=\", frog * 2);");
 
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
         assertTrue(result.succeeded());
-        assertEquals("set mpl_frog 21\nprint \"frog=\"\nop mul mpl_tmp0 mpl_frog 2\nprint mpl_tmp0\nprintflush message1\n",
+        assertEquals("set mpl_frog 21\nprint \"frog=\"\nop mul mpl_tmp0 mpl_frog 2\nprint mpl_tmp0\nprintflush message1\nstop\n",
             result.mlog().orElseThrow());
     }
 }

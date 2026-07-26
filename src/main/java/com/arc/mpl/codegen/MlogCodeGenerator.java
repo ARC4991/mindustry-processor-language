@@ -27,6 +27,8 @@ public final class MlogCodeGenerator {
         for (HirStatement statement : program.statements()) {
             emitStatement(statement);
         }
+        // MPL 程序默认只执行一次；持续逻辑必须由用户显式写 while。
+        lines.add("stop");
         return lines.isEmpty() ? "" : String.join("\n", lines) + "\n";
     }
 
