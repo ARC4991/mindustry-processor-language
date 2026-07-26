@@ -4,6 +4,7 @@ import com.arc.mpl.compiler.CompilationRequest;
 import com.arc.mpl.compiler.CompilationResult;
 import com.arc.mpl.compiler.MplCompiler;
 import com.arc.mpl.diagnostic.Diagnostic;
+import com.arc.mpl.project.ProjectInitializer;
 
 import java.nio.file.Path;
 import java.nio.file.Files;
@@ -17,6 +18,28 @@ public final class MplCli {
     public static void main(String[] args) {
         if (args.length == 1 && "--version".equals(args[0])) {
             System.out.println("mpl 0.1.0-SNAPSHOT");
+            return;
+        }
+        if ((args.length == 2 || args.length == 3) && "init".equals(args[0])) {
+            String target = "v146";
+            String directory;
+            if (args.length == 3) {
+                if (!args[1].startsWith("--target=")) {
+                    printUsage();
+                    return;
+                }
+                target = args[1].substring("--target=".length());
+                directory = args[2];
+            } else {
+                directory = args[1];
+            }
+            try {
+                new ProjectInitializer().initialize(Path.of(directory), target);
+                System.out.println("已初始化 MPL 项目：" + directory + "（target=" + target + "）");
+            } catch (IOException | IllegalArgumentException exception) {
+                System.err.println("初始化失败：" + exception.getMessage());
+                System.exit(1);
+            }
             return;
         }
         if (args.length == 3 && "check".equals(args[0]) && args[1].startsWith("--target=")) {
@@ -43,9 +66,14 @@ public final class MplCli {
             return;
         }
 
-        System.err.println("用法：mpl check --target=<v146|v159.7> <项目目录>");
-        System.err.println("      mpl build --target=<v146|v159.7> <项目目录> <输出.mlog>");
+        printUsage();
         System.exit(2);
+    }
+
+    private static void printUsage() {
+        System.err.println("用法：mpl init [--target=<v146|v159.7>] <项目目录>");
+        System.err.println("      mpl check --target=<v146|v159.7> <项目目录>");
+        System.err.println("      mpl build --target=<v146|v159.7> <项目目录> <输出.mlog>");
     }
 
     private static void printDiagnostic(Diagnostic diagnostic) {

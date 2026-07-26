@@ -4,6 +4,20 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 项目目前处于语法设计阶段，尚未提供稳定的编译器版本。实现语言确定为 Java（JDK 17），解析器计划采用 ANTLR 4；任何标记为“讨论基线”的语法都可能调整。
 
+## 快速试用
+
+当前原型支持初始化项目、基础数值表达式与 Message 输出。需要 JDK 17：
+
+```bash
+# 默认使用 v146；目录必须不存在或为空。
+./gradlew run --args='init my-mpl-project'
+
+# 将生成的 mlog 粘贴到已连接一个 Message Block 的处理器中。
+./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/output.mlog'
+```
+
+`src/hardware.mplh` 中的 `const AlertBoard: Message = link();` 会在第一版绑定唯一 Message Block 对应的 `message1`。可参考 [消息输出演示](examples/message-output-demo)。
+
 ## 文档
 
 - [MPL 语言规范（讨论稿）](docs/语法设计/语言规范（讨论稿）.md)：语法、类型、控制流、优先级及待决议题。
@@ -40,4 +54,4 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 ## 仓库状态
 
-仓库当前计划先以私有方式维护，待语法和基础实现稳定后再公开。发布前会补充许可证、版本策略、命令行使用说明与贡献指南。
+仓库当前计划先以私有方式维护，待语法和基础实现稳定后再公开。发布前会补充版本策略与贡献指南。
