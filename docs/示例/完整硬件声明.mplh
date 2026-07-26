@@ -12,17 +12,13 @@ export const MainScreen: Display = Display.combine([
 
 export const AlertBoard: Message = link(4);
 
-export const Data: Memory = Memory.physical(
+// 内存没有 MPL/MIL 名称，也不能被源码下标访问；编译器统一分配其容量。
+memory physical(
     link: 5,
     size: 512
 );
 
-export const Runtime: Memory = Memory.virtual(
+memory virtual(
     size: 4096,
     mode: Pool
-);
-
-export const Scratch: Memory = Memory.virtual(
-    size: 32,
-    mode: Manual
 );

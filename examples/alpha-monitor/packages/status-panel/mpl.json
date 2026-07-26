@@ -1,5 +1,6 @@
 {
   "name": "@mpl/status-panel",
   "version": "0.1.0",
-  "entry": "index.mpl"
+  "entry": "src/index.mpl",
+  "hardware": "hardware.mplh"
 }

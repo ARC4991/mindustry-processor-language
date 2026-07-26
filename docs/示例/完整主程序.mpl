@@ -1,8 +1,8 @@
 // main.mpl：顶层语句直接执行。
-// MainScreen、AlertBoard、Data、Runtime 来自完整硬件声明.mplh，无需 import。
+// MainScreen、AlertBoard 来自完整硬件声明.mplh，无需 import。
+// 内存也已在该文件声明，但由编译器统一管理，不暴露给源码。
 
 import { StatusPanel } from "@mpl/status-panel" with {
-    storage: Runtime,
     screen: MainScreen
 };
 
@@ -14,6 +14,5 @@ for (var unit : Unit.getAllAlpha(_.health < 50.0)) {
     unit.move(MainScreen.width / 2, MainScreen.height / 2);
 }
 
-Data[0] = damagedCount;
 panel.render(damagedCount);
 AlertBoard.print("受损 Alpha 数量：", damagedCount);

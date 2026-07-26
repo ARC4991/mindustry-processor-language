@@ -1,5 +1,5 @@
 // 项目唯一的硬件声明文件。
-// 所有 Memory 都必须在这里声明；业务代码不需要也不能重新导入它们。
+// 所有内存都必须在这里声明；MPL/MIL 与包源码均不能读写它们。
 
 const Screen0: Display = link(0);
 const Screen1: Display = link(1);
@@ -13,19 +13,13 @@ export const MainScreen: Display = Display.combine([
 
 export const AlertBoard: Message = link(4);
 
-export const Data: Memory = Memory.physical(
+memory physical(
     link: 5,
     size: 512
 );
 
-// Pool 内存供 new 分配的对象与注入给包的对象池使用。
-export const Runtime: Memory = Memory.virtual(
+// Pool 仅是链接器的布局策略，供 new 和包的内部需求统一分配。
+memory virtual(
     size: 4096,
     mode: Pool
-);
-
-// Manual 内存允许业务代码使用显式下标。
-export const Scratch: Memory = Memory.virtual(
-    size: 32,
-    mode: Manual
 );

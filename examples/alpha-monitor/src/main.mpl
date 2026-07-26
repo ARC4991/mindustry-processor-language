@@ -1,8 +1,8 @@
 // main.mpl 的顶层语句会直接执行。
-// MainScreen、AlertBoard、Data、Runtime、Scratch 自动来自 hardware.mplh。
+// MainScreen、AlertBoard 自动来自 hardware.mplh。
+// 内存预算也在那里声明，但不会暴露为源码变量。
 
 import { StatusPanel } from "@mpl/status-panel" with {
-    storage: Runtime,
     screen: MainScreen
 };
 
@@ -26,13 +26,9 @@ for (var unit : Unit.getAllAlpha(_.health < HealthLimit)) {
     unit.move(MainScreen.width / 2, MainScreen.height / 2);
 }
 
-// Data 是物理内存，Scratch 是虚拟内存；访问语法完全一致。
-Data[0] = damagedCount;
-Scratch[0] = damagedCount;
-
 MainScreen.clear(Color.black);
 for (var i: Int = 0; i < damagedCount; i += 1) {
-    var height: Float = clamp(Data[0] + i, 0.0, MainScreen.height);
+    var height: Float = clamp(damagedCount + i, 0.0, MainScreen.height);
     MainScreen.fill(Color.green);
     MainScreen.fillRect(i * BarWidth, MainScreen.height - height, BarWidth - 2, height);
 }
