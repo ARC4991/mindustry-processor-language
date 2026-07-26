@@ -8,8 +8,10 @@ import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.Identifier;
 import com.arc.mpl.ast.IntegerLiteral;
+import com.arc.mpl.ast.MethodCallExpression;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.Statement;
+import com.arc.mpl.ast.StringLiteral;
 import com.arc.mpl.ast.UnaryExpression;
 import com.arc.mpl.ast.VariableDeclaration;
 import com.arc.mpl.diagnostic.Diagnostic;
@@ -169,13 +171,27 @@ public final class MplSyntaxParser {
             if (context.FLOAT_LITERAL() != null) {
                 return new FloatLiteral(Double.parseDouble(context.FLOAT_LITERAL().getText()), span(context));
             }
+            if (context.STRING_LITERAL() != null) {
+                String token = context.STRING_LITERAL().getText();
+                return new StringLiteral(unescape(token.substring(1, token.length() - 1)), span(context));
+            }
             if (context.TRUE() != null || context.FALSE() != null) {
                 return new BooleanLiteral(context.TRUE() != null, span(context));
             }
-            if (context.IDENTIFIER() != null) {
-                return new Identifier(context.IDENTIFIER().getText(), span(context));
+            if (context.target != null) {
+                List<Expression> arguments = new ArrayList<>();
+                for (MplGrammarParser.ExpressionContext argument : context.expression()) arguments.add((Expression) visit(argument));
+                return new MethodCallExpression(context.target.getText(), context.method.getText(), arguments, span(context));
             }
-            return visit(context.expression());
+            if (context.name != null) {
+                return new Identifier(context.name.getText(), span(context));
+            }
+            return visit(context.grouped);
+        }
+
+        private String unescape(String text) {
+            return text.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t")
+                .replace("\\\"", "\"").replace("\\\\", "\\");
         }
 
         private Expression fold(org.antlr.v4.runtime.ParserRuleContext context, List<? extends ParseTree> operands) {

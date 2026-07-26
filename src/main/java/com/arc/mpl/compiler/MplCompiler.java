@@ -4,6 +4,7 @@ import com.arc.mpl.codegen.MlogCodeGenerator;
 import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.Severity;
 import com.arc.mpl.profile.KnownProfiles;
+import com.arc.mpl.project.HardwareLoader;
 import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.semantic.SemanticAnalyzer;
 import com.arc.mpl.semantic.SemanticResult;
@@ -46,7 +47,15 @@ public final class MplCompiler {
 
         ParseResult parsed = new MplSyntaxParser().parse(source, sourceFile);
         if (!parsed.succeeded()) return new CompilationResult(profile, parsed.diagnostics(), Optional.empty());
-        SemanticResult analyzed = new SemanticAnalyzer().analyze(parsed.program().orElseThrow(), sourceFile);
+        SemanticResult analyzed;
+        try {
+            analyzed = new SemanticAnalyzer().analyze(parsed.program().orElseThrow(), sourceFile,
+                new HardwareLoader().loadMessages(request.projectDirectory()));
+        } catch (IOException exception) {
+            return new CompilationResult(profile, List.of(new Diagnostic(
+                Severity.ERROR, "MPL1103", "无法读取硬件声明：" + exception.getMessage(),
+                Optional.of(sourceFile), Optional.empty())), Optional.empty());
+        }
         if (analyzed.program().isEmpty()) return new CompilationResult(profile, analyzed.diagnostics(), Optional.empty());
         return new CompilationResult(profile, analyzed.diagnostics(),
             Optional.of(new MlogCodeGenerator().generate(analyzed.program().orElseThrow())));

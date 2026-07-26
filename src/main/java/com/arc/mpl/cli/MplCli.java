@@ -6,6 +6,8 @@ import com.arc.mpl.compiler.MplCompiler;
 import com.arc.mpl.diagnostic.Diagnostic;
 
 import java.nio.file.Path;
+import java.nio.file.Files;
+import java.io.IOException;
 
 /** Minimal CLI shell; command parsing grows without leaking into compiler phases. */
 public final class MplCli {
@@ -24,8 +26,25 @@ public final class MplCli {
             System.exit(result.succeeded() ? 0 : 1);
             return;
         }
+        if (args.length == 4 && "build".equals(args[0]) && args[1].startsWith("--target=")) {
+            String target = args[1].substring("--target=".length());
+            CompilationResult result = new MplCompiler().compile(new CompilationRequest(Path.of(args[2]), target));
+            result.diagnostics().forEach(MplCli::printDiagnostic);
+            if (!result.succeeded()) {
+                System.exit(1);
+                return;
+            }
+            try {
+                Files.writeString(Path.of(args[3]), result.mlog().orElseThrow());
+            } catch (IOException exception) {
+                System.err.println("无法写入 mlog 文件：" + exception.getMessage());
+                System.exit(1);
+            }
+            return;
+        }
 
         System.err.println("用法：mpl check --target=<v146|v159.7> <项目目录>");
+        System.err.println("      mpl build --target=<v146|v159.7> <项目目录> <输出.mlog>");
         System.exit(2);
     }
 

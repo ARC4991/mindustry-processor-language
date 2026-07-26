@@ -8,8 +8,10 @@ import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.Identifier;
 import com.arc.mpl.ast.IntegerLiteral;
+import com.arc.mpl.ast.MethodCallExpression;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.Statement;
+import com.arc.mpl.ast.StringLiteral;
 import com.arc.mpl.ast.UnaryExpression;
 import com.arc.mpl.ast.VariableDeclaration;
 import com.arc.mpl.diagnostic.Diagnostic;
@@ -21,8 +23,10 @@ import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirProgram;
+import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirStatement;
 import com.arc.mpl.hir.HirUnary;
+import com.arc.mpl.hir.HirText;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.ValueType;
@@ -39,11 +43,17 @@ public final class SemanticAnalyzer {
     private final Map<String, Symbol> symbols = new HashMap<>();
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private Path file;
+    private Map<String, String> messages = Map.of();
 
     public SemanticResult analyze(Program program, Path sourceFile) {
+        return analyze(program, sourceFile, Map.of());
+    }
+
+    public SemanticResult analyze(Program program, Path sourceFile, Map<String, String> messages) {
         symbols.clear();
         diagnostics.clear();
         file = sourceFile;
+        this.messages = Map.copyOf(messages);
         List<HirStatement> statements = new ArrayList<>();
         for (Statement statement : program.statements()) {
             statements.add(analyzeStatement(statement));
@@ -56,7 +66,25 @@ public final class SemanticAnalyzer {
             return analyzeDeclaration(declaration);
         }
         ExpressionStatement expressionStatement = (ExpressionStatement) statement;
+        if (expressionStatement.expression() instanceof MethodCallExpression call) return analyzeMethodCall(call);
         return new HirExpressionStatement(analyzeExpression(expressionStatement.expression()));
+    }
+
+    private HirStatement analyzeMethodCall(MethodCallExpression call) {
+        String linkName = messages.get(call.target());
+        if (linkName == null || !"print".equals(call.method())) {
+            error("MPL3201", "当前阶段仅支持已声明 Message 的 .print(...) 调用", call.span());
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        List<HirExpression> arguments = new ArrayList<>();
+        for (Expression argument : call.arguments()) {
+            HirExpression value = analyzeExpression(argument);
+            if (value.type() == ValueType.ERROR && !(value instanceof HirText)) {
+                error("MPL3202", "print 参数必须是数值、Bool 或字符串字面量", argument.span());
+            }
+            arguments.add(value);
+        }
+        return new HirPrintStatement(linkName, arguments);
     }
 
     private HirStatement analyzeDeclaration(VariableDeclaration declaration) {
@@ -78,6 +106,11 @@ public final class SemanticAnalyzer {
         }
         if (expression instanceof FloatLiteral decimal) {
             return new HirConstant(Double.toString(decimal.value()), ValueType.FLOAT);
+        }
+        if (expression instanceof StringLiteral text) return new HirText(text.value());
+        if (expression instanceof MethodCallExpression call) {
+            error("MPL3201", "硬件调用只能作为独立语句", call.span());
+            return new HirConstant("0", ValueType.ERROR);
         }
         if (expression instanceof BooleanLiteral bool) {
             return new HirConstant(bool.value() ? "1" : "0", ValueType.BOOL);

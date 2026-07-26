@@ -1,0 +1,6 @@
+set mpl_frog 21
+op mul mpl_tmp0 mpl_frog 2
+set mpl_frog mpl_tmp0
+print "MPL 运行成功，答案："
+print mpl_frog
+printflush message1

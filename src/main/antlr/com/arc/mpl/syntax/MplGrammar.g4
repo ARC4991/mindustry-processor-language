@@ -35,10 +35,12 @@ unaryExpression
 primaryExpression
     : INT_LITERAL
     | FLOAT_LITERAL
+    | STRING_LITERAL
     | TRUE
     | FALSE
-    | IDENTIFIER
-    | LPAREN expression RPAREN
+    | target=IDENTIFIER DOT method=IDENTIFIER LPAREN (expression (COMMA expression)*)? RPAREN
+    | name=IDENTIFIER
+    | LPAREN grouped=expression RPAREN
     ;
 
 VAR: 'var';
@@ -69,8 +71,11 @@ GREATER: '>';
 LPAREN: '(';
 RPAREN: ')';
 COLON: ':';
+COMMA: ',';
+DOT: '.';
 SEMICOLON: ';';
 
+STRING_LITERAL: '"' (ESCAPE_SEQUENCE | ~["\\\r\n])* '"';
 FLOAT_LITERAL: (DIGITS '.' DIGITS? | '.' DIGITS) EXPONENT?;
 INT_LITERAL: DIGITS;
 IDENTIFIER: [a-zA-Z_] [a-zA-Z_0-9]*;
@@ -82,3 +87,4 @@ ERROR_CHARACTER: .;
 
 fragment DIGITS: [0-9]+;
 fragment EXPONENT: [eE] [+-]? DIGITS;
+fragment ESCAPE_SEQUENCE: '\\' ["\\nrt];

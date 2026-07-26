@@ -24,6 +24,7 @@ dependencies {
 
 application {
     mainClass = "com.arc.mpl.cli.MplCli"
+    applicationDefaultJvmArgs = ["-Dfile.encoding=UTF-8"]
 }
 
 tasks.withType(JavaCompile).configureEach {

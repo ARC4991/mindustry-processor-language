@@ -1,0 +1,2 @@
+// 处理器只连接一个 Message Block 时，link() 会自动绑定游戏的 message1。
+const AlertBoard: Message = link();

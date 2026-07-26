@@ -6,8 +6,10 @@ import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirProgram;
+import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirStatement;
 import com.arc.mpl.hir.HirUnary;
+import com.arc.mpl.hir.HirText;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 
@@ -33,11 +35,17 @@ public final class MlogCodeGenerator {
             lines.add("set " + variable(declaration.name()) + " " + emitExpression(declaration.initializer()));
             return;
         }
+        if (statement instanceof HirPrintStatement print) {
+            for (HirExpression argument : print.arguments()) lines.add("print " + emitExpression(argument));
+            lines.add("printflush " + print.linkName());
+            return;
+        }
         emitExpression(((HirExpressionStatement) statement).expression());
     }
 
     private String emitExpression(HirExpression expression) {
         if (expression instanceof HirConstant constant) return constant.mlogLiteral();
+        if (expression instanceof HirText text) return quote(text.value());
         if (expression instanceof HirVariable variable) return variable(variable.name());
         if (expression instanceof HirUnary unary) return emitUnary(unary);
         if (expression instanceof HirBinary binary) return emitBinary(binary);
@@ -101,5 +109,9 @@ public final class MlogCodeGenerator {
 
     private String temporary() {
         return "mpl_tmp" + temporaryIndex++;
+    }
+
+    private String quote(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\"", "\\\"") + "\"";
     }
 }
