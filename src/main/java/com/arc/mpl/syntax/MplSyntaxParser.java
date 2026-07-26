@@ -34,14 +34,14 @@ public final class MplSyntaxParser {
     public ParseResult parse(String source, Path file) {
         List<Diagnostic> diagnostics = new ArrayList<>();
         SyntaxErrorListener errors = new SyntaxErrorListener(file, diagnostics);
-        MplGrammarLexer lexer = new MplGrammarLexer(CharStreams.fromString(source));
+        MplLexer lexer = new MplLexer(CharStreams.fromString(source));
         lexer.removeErrorListeners();
         lexer.addErrorListener(errors);
 
-        MplGrammarParser parser = new MplGrammarParser(new CommonTokenStream(lexer));
+        MplParser parser = new MplParser(new CommonTokenStream(lexer));
         parser.removeErrorListeners();
         parser.addErrorListener(errors);
-        MplGrammarParser.ProgramContext program = parser.program();
+        MplParser.ProgramContext program = parser.program();
         if (!diagnostics.isEmpty()) {
             return new ParseResult(Optional.empty(), diagnostics);
         }
@@ -76,18 +76,18 @@ public final class MplSyntaxParser {
         }
     }
 
-    private static final class AstBuilder extends MplGrammarBaseVisitor<Object> {
+    private static final class AstBuilder extends MplParserBaseVisitor<Object> {
         @Override
-        public Program visitProgram(MplGrammarParser.ProgramContext context) {
+        public Program visitProgram(MplParser.ProgramContext context) {
             List<Statement> statements = new ArrayList<>();
-            for (MplGrammarParser.StatementContext statement : context.statement()) {
+            for (MplParser.StatementContext statement : context.statement()) {
                 statements.add((Statement) visit(statement));
             }
             return new Program(statements);
         }
 
         @Override
-        public Statement visitStatement(MplGrammarParser.StatementContext context) {
+        public Statement visitStatement(MplParser.StatementContext context) {
             if (context.variableDeclaration() != null) {
                 return (Statement) visit(context.variableDeclaration());
             }
@@ -96,8 +96,8 @@ public final class MplSyntaxParser {
         }
 
         @Override
-        public VariableDeclaration visitVariableDeclaration(MplGrammarParser.VariableDeclarationContext context) {
-            boolean mutable = context.kind.getType() == MplGrammarParser.VAR;
+        public VariableDeclaration visitVariableDeclaration(MplParser.VariableDeclarationContext context) {
+            boolean mutable = context.kind.getType() == MplParser.VAR;
             Optional<String> declaredType = context.typeName == null
                 ? Optional.empty()
                 : Optional.of(context.typeName.getText());
@@ -110,12 +110,12 @@ public final class MplSyntaxParser {
         }
 
         @Override
-        public Object visitExpression(MplGrammarParser.ExpressionContext context) {
+        public Object visitExpression(MplParser.ExpressionContext context) {
             return visit(context.assignmentExpression());
         }
 
         @Override
-        public Object visitAssignmentExpression(MplGrammarParser.AssignmentExpressionContext context) {
+        public Object visitAssignmentExpression(MplParser.AssignmentExpressionContext context) {
             if (context.IDENTIFIER() == null) {
                 return visit(context.logicalOrExpression());
             }
@@ -125,37 +125,37 @@ public final class MplSyntaxParser {
         }
 
         @Override
-        public Object visitLogicalOrExpression(MplGrammarParser.LogicalOrExpressionContext context) {
+        public Object visitLogicalOrExpression(MplParser.LogicalOrExpressionContext context) {
             return fold(context, context.logicalAndExpression());
         }
 
         @Override
-        public Object visitLogicalAndExpression(MplGrammarParser.LogicalAndExpressionContext context) {
+        public Object visitLogicalAndExpression(MplParser.LogicalAndExpressionContext context) {
             return fold(context, context.equalityExpression());
         }
 
         @Override
-        public Object visitEqualityExpression(MplGrammarParser.EqualityExpressionContext context) {
+        public Object visitEqualityExpression(MplParser.EqualityExpressionContext context) {
             return fold(context, context.comparisonExpression());
         }
 
         @Override
-        public Object visitComparisonExpression(MplGrammarParser.ComparisonExpressionContext context) {
+        public Object visitComparisonExpression(MplParser.ComparisonExpressionContext context) {
             return fold(context, context.additiveExpression());
         }
 
         @Override
-        public Object visitAdditiveExpression(MplGrammarParser.AdditiveExpressionContext context) {
+        public Object visitAdditiveExpression(MplParser.AdditiveExpressionContext context) {
             return fold(context, context.multiplicativeExpression());
         }
 
         @Override
-        public Object visitMultiplicativeExpression(MplGrammarParser.MultiplicativeExpressionContext context) {
+        public Object visitMultiplicativeExpression(MplParser.MultiplicativeExpressionContext context) {
             return fold(context, context.unaryExpression());
         }
 
         @Override
-        public Object visitUnaryExpression(MplGrammarParser.UnaryExpressionContext context) {
+        public Object visitUnaryExpression(MplParser.UnaryExpressionContext context) {
             if (context.operator == null) {
                 return visit(context.primaryExpression());
             }
@@ -164,7 +164,7 @@ public final class MplSyntaxParser {
         }
 
         @Override
-        public Object visitPrimaryExpression(MplGrammarParser.PrimaryExpressionContext context) {
+        public Object visitPrimaryExpression(MplParser.PrimaryExpressionContext context) {
             if (context.INT_LITERAL() != null) {
                 return new IntegerLiteral(Long.parseLong(context.INT_LITERAL().getText()), span(context));
             }
@@ -180,7 +180,7 @@ public final class MplSyntaxParser {
             }
             if (context.target != null) {
                 List<Expression> arguments = new ArrayList<>();
-                for (MplGrammarParser.ExpressionContext argument : context.expression()) arguments.add((Expression) visit(argument));
+                for (MplParser.ExpressionContext argument : context.expression()) arguments.add((Expression) visit(argument));
                 return new MethodCallExpression(context.target.getText(), context.method.getText(), arguments, span(context));
             }
             if (context.name != null) {
