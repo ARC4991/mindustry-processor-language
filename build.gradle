@@ -1,0 +1,23 @@
+plugins {
+    id "java"
+}
+group = "com.arc.mpl"
+version = "0.1.0-SNAPSHOT"
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
