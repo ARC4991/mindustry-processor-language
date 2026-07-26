@@ -21,3 +21,8 @@ export const Runtime: Memory = Memory.virtual(
     size: 4096,
     mode: Pool
 );
+
+export const Scratch: Memory = Memory.virtual(
+    size: 32,
+    mode: Manual
+);
