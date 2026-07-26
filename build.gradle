@@ -1,5 +1,6 @@
 plugins {
     id "java"
+    id "application"
 }
 group = "com.arc.mpl"
 version = "0.1.0-SNAPSHOT"
@@ -12,6 +13,15 @@ java {
 
 repositories {
     mavenCentral()
+}
+
+dependencies {
+    testImplementation platform("org.junit:junit-bom:5.11.4")
+    testImplementation "org.junit.jupiter:junit-jupiter"
+}
+
+application {
+    mainClass = "com.arc.mpl.cli.MplCli"
 }
 
 tasks.withType(JavaCompile).configureEach {
