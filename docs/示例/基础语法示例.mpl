@@ -11,11 +11,7 @@ fun clamp(value: num, lower: num, upper: num): num {
     }
     return value;
 }
-var x: num = 0;
-var y: num = clamp(32, 0, 100);
-
-@bindUnit(@flare);
-while (x < 10) {
-    @move(x * step, y);
-    x += 1;
+for (var unit : Alpha.getAll()) {
+    unit.move(32, 64);
+    print("单位血量：", unit.health);
 }
