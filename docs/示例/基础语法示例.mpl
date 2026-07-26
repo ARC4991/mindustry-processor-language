@@ -11,7 +11,7 @@ fun clamp(value: num, lower: num, upper: num): num {
     }
     return value;
 }
-for (var unit : Alpha.getAll()) {
+for (var unit : Unit.getAllAlpha(_.health < 50)) {
     unit.move(32, 64);
     print("单位血量：", unit.health);
 }
