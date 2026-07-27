@@ -5,6 +5,7 @@ public enum ValueType {
     INT,
     FLOAT,
     BOOL,
+    UNIT,
     ERROR;
 
     public boolean canAssignFrom(ValueType value) {

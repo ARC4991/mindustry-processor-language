@@ -3,17 +3,22 @@ package com.arc.mpl.syntax;
 import com.arc.mpl.ast.AssignmentExpression;
 import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.BooleanLiteral;
+import com.arc.mpl.ast.BlockStatement;
+import com.arc.mpl.ast.CallExpression;
 import com.arc.mpl.ast.Expression;
 import com.arc.mpl.ast.ExpressionStatement;
+import com.arc.mpl.ast.ForEachStatement;
 import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.Identifier;
 import com.arc.mpl.ast.IntegerLiteral;
-import com.arc.mpl.ast.MethodCallExpression;
+import com.arc.mpl.ast.LambdaExpression;
+import com.arc.mpl.ast.MemberAccessExpression;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.Statement;
 import com.arc.mpl.ast.StringLiteral;
 import com.arc.mpl.ast.UnaryExpression;
 import com.arc.mpl.ast.VariableDeclaration;
+import com.arc.mpl.ast.WhileStatement;
 import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.Diagnostic.SourceSpan;
 import org.antlr.v4.runtime.BaseErrorListener;
@@ -88,11 +93,46 @@ public final class MplSyntaxParser {
 
         @Override
         public Statement visitStatement(MplParser.StatementContext context) {
+            if (context.whileStatement() != null) {
+                return (Statement) visit(context.whileStatement());
+            }
+            if (context.forEachStatement() != null) {
+                return (Statement) visit(context.forEachStatement());
+            }
+            if (context.block() != null) {
+                return (Statement) visit(context.block());
+            }
             if (context.variableDeclaration() != null) {
                 return (Statement) visit(context.variableDeclaration());
             }
             Expression expression = (Expression) visit(context.expression());
             return new ExpressionStatement(expression, span(context));
+        }
+
+        @Override
+        public BlockStatement visitBlock(MplParser.BlockContext context) {
+            List<Statement> statements = new ArrayList<>();
+            for (MplParser.StatementContext statement : context.statement()) {
+                statements.add((Statement) visit(statement));
+            }
+            return new BlockStatement(statements, span(context));
+        }
+
+        @Override
+        public WhileStatement visitWhileStatement(MplParser.WhileStatementContext context) {
+            return new WhileStatement(
+                (Expression) visit(context.condition),
+                (BlockStatement) visit(context.body),
+                span(context));
+        }
+
+        @Override
+        public ForEachStatement visitForEachStatement(MplParser.ForEachStatementContext context) {
+            return new ForEachStatement(
+                context.name.getText(),
+                (Expression) visit(context.iterable),
+                (BlockStatement) visit(context.body),
+                span(context));
         }
 
         @Override
@@ -111,7 +151,18 @@ public final class MplSyntaxParser {
 
         @Override
         public Object visitExpression(MplParser.ExpressionContext context) {
+            if (context.lambdaExpression() != null) {
+                return visit(context.lambdaExpression());
+            }
             return visit(context.assignmentExpression());
+        }
+
+        @Override
+        public LambdaExpression visitLambdaExpression(MplParser.LambdaExpressionContext context) {
+            return new LambdaExpression(
+                context.parameter.getText(),
+                (Expression) visit(context.body),
+                span(context));
         }
 
         @Override
@@ -157,10 +208,27 @@ public final class MplSyntaxParser {
         @Override
         public Object visitUnaryExpression(MplParser.UnaryExpressionContext context) {
             if (context.operator == null) {
-                return visit(context.primaryExpression());
+                return visit(context.postfixExpression());
             }
             return new UnaryExpression(context.operator.getText(),
                 (Expression) visit(context.unaryExpression()), span(context));
+        }
+
+        @Override
+        public Object visitPostfixExpression(MplParser.PostfixExpressionContext context) {
+            Expression result = (Expression) visit(context.primaryExpression());
+            for (MplParser.PostfixSuffixContext suffix : context.postfixSuffix()) {
+                if (suffix.member != null) {
+                    result = new MemberAccessExpression(result, suffix.member.getText(), span(context));
+                    continue;
+                }
+                List<Expression> arguments = new ArrayList<>();
+                for (MplParser.ExpressionContext argument : suffix.expression()) {
+                    arguments.add((Expression) visit(argument));
+                }
+                result = new CallExpression(result, arguments, span(context));
+            }
+            return result;
         }
 
         @Override
@@ -177,11 +245,6 @@ public final class MplSyntaxParser {
             }
             if (context.TRUE() != null || context.FALSE() != null) {
                 return new BooleanLiteral(context.TRUE() != null, span(context));
-            }
-            if (context.target != null) {
-                List<Expression> arguments = new ArrayList<>();
-                for (MplParser.ExpressionContext argument : context.expression()) arguments.add((Expression) visit(argument));
-                return new MethodCallExpression(context.target.getText(), context.method.getText(), arguments, span(context));
             }
             if (context.name != null) {
                 return new Identifier(context.name.getText(), span(context));

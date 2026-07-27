@@ -4,9 +4,12 @@ lexer grammar MplLexer;
 
 VAR: 'var';
 VAL: 'val';
+FOR: 'for';
+WHILE: 'while';
 TRUE: 'true';
 FALSE: 'false';
 
+ARROW: '=>';
 PLUS_ASSIGN: '+=';
 MINUS_ASSIGN: '-=';
 STAR_ASSIGN: '*=';
@@ -29,6 +32,8 @@ LESS: '<';
 GREATER: '>';
 LPAREN: '(';
 RPAREN: ')';
+LBRACE: '{';
+RBRACE: '}';
 COLON: ':';
 COMMA: ',';
 DOT: '.';

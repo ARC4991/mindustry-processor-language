@@ -7,15 +7,29 @@ options { tokenVocab = MplLexer; }
 program: statement* EOF;
 
 statement
-    : variableDeclaration SEMICOLON
+    : whileStatement
+    | forEachStatement
+    | block
+    | variableDeclaration SEMICOLON
     | expression SEMICOLON
     ;
+
+block: LBRACE statement* RBRACE;
+
+whileStatement: WHILE LPAREN condition=expression RPAREN body=block;
+
+forEachStatement: FOR LPAREN VAR name=IDENTIFIER COLON iterable=expression RPAREN body=block;
 
 variableDeclaration
     : kind=(VAR | VAL) name=IDENTIFIER (COLON typeName=IDENTIFIER)? ASSIGN expression
     ;
 
-expression: assignmentExpression;
+expression
+    : lambdaExpression
+    | assignmentExpression
+    ;
+
+lambdaExpression: parameter=IDENTIFIER ARROW body=expression;
 
 assignmentExpression
     : IDENTIFIER operator=(ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) assignmentExpression
@@ -31,7 +45,14 @@ multiplicativeExpression: unaryExpression ((STAR | SLASH | PERCENT) unaryExpress
 
 unaryExpression
     : operator=(PLUS | MINUS | BANG) unaryExpression
-    | primaryExpression
+    | postfixExpression
+    ;
+
+postfixExpression: primaryExpression postfixSuffix*;
+
+postfixSuffix
+    : DOT member=IDENTIFIER
+    | LPAREN (expression (COMMA expression)*)? RPAREN
     ;
 
 primaryExpression
@@ -40,7 +61,6 @@ primaryExpression
     | STRING_LITERAL
     | TRUE
     | FALSE
-    | target=IDENTIFIER DOT method=IDENTIFIER LPAREN (expression (COMMA expression)*)? RPAREN
     | name=IDENTIFIER
     | LPAREN grouped=expression RPAREN
     ;

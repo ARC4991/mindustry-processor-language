@@ -1,0 +1,41 @@
+set mpl_centerX 100.0
+set mpl_centerY 80.0
+set mpl_radius 6.0
+mpl_while_start_0:
+jump mpl_while_end_1 equal 1 0
+op mul __mpl_tmp0 @time 0.02
+set mpl_phase __mpl_tmp0
+set mpl_slot 0
+ubind @dagger
+jump mpl_unit_end_4 strictEqual @unit null
+set __mpl_unit_sentinel0 @unit
+mpl_unit_scan_2:
+sensor __mpl_tmp1 @unit @dead
+op equal __mpl_tmp2 __mpl_tmp1 0
+jump mpl_unit_next_3 equal __mpl_tmp2 0
+op mul __mpl_tmp3 mpl_slot 120.0
+op add __mpl_tmp4 mpl_phase __mpl_tmp3
+set mpl_angle __mpl_tmp4
+op cos __mpl_tmp5 mpl_angle 0
+op mul __mpl_tmp6 __mpl_tmp5 mpl_radius
+op add __mpl_tmp7 mpl_centerX __mpl_tmp6
+set mpl_targetX __mpl_tmp7
+op sin __mpl_tmp8 mpl_angle 0
+op mul __mpl_tmp9 __mpl_tmp8 mpl_radius
+op add __mpl_tmp10 mpl_centerY __mpl_tmp9
+set mpl_targetY __mpl_tmp10
+ucontrol move mpl_targetX mpl_targetY 0 0 0
+op add mpl_slot mpl_slot 1
+mpl_unit_next_3:
+ubind __mpl_unit_sentinel0
+jump mpl_unit_end_4 strictEqual @unit null
+sensor __mpl_tmp11 @unit @dead
+jump mpl_unit_end_4 equal __mpl_tmp11 1
+ubind @dagger
+jump mpl_unit_end_4 strictEqual @unit null
+jump mpl_unit_end_4 strictEqual @unit __mpl_unit_sentinel0
+jump mpl_unit_scan_2 always 0 0
+mpl_unit_end_4:
+jump mpl_while_start_0 always 0 0
+mpl_while_end_1:
+stop
