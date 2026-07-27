@@ -12,9 +12,19 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 # 默认使用 v146；目录必须不存在或为空。
 ./gradlew run --args='init my-mpl-project'
 
-# 将生成的 mlog 粘贴到已连接一个 Message Block 的处理器中。
+# 同时生成可检查的 output.mil 与可粘贴到处理器中的 output.mlog。
 ./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/output.mlog'
 ```
+
+`build` 的最后一个参数仍是 mlog 输出路径；编译器会在同一目录自动生成同名的 `.mil` 文件。例如 `build/... output.mlog` 会产生 `output.mil` 与 `output.mlog`。MIL 使用 `@logic.*` 目标宏表达已完成的 lowering，便于检查 compiler/runtime 展开；游戏中只粘贴 `.mlog`。
+
+默认构建使用最短的 `_0`、`_1` … 跳转标签以节省代码空间；排查生成逻辑时可加 `--debug`，让 `.mil` 与 `.mlog` 保留可读的完整标签名：
+
+```bash
+./gradlew run --args='build --debug --target=v146 my-mpl-project my-mpl-project/output.mlog'
+```
+
+编译信息默认使用中文；`--lang=zh-CN` 可显式指定该 catalogue，并为后续语言目录保留稳定的命令行接口。错误码不随翻译改变。
 
 `src/hardware.mplh` 中的 `const AlertBoard: Message = link("message1");` 将 MPL 硬件名绑定到游戏提供的链接变量。可参考 [消息输出演示](examples/message-output-demo)。
 

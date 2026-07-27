@@ -6,8 +6,8 @@ val centerY: Float = 80.0;
 val radius: Float = 6.0;
 
 while (true) {
-    // @time 是毫秒；0.02 表示每秒转动 20°。
-    val phase: Float = Clock.time * 0.02;
+    // Clock.time 的单位是秒；20.0 表示每秒转动 20°。
+    val phase: Float = Clock.time * 20.0;
     var slot: Int = 0;
 
     for (var unit : Unit.getAllDagger().where(_.alive).take(3)) {

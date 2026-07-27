@@ -26,4 +26,4 @@
 
 ## 示例的 MPL 约定
 
-`Math.sin(angle)` 与 `Math.cos(angle)` 以**度**为输入，直接映射 v146 mlog 的 `op sin` / `op cos`。`Clock.time` 映射 v146 的 `@time`（毫秒），因此 `phase = Clock.time * 0.02` 表示每秒 20°，不会因处理器 IPT 改变编队的角速度。`.where(_.alive)` 验证 UnitSet 的筛选与 `alive → !@dead` lowering；末尾 `.take(3)` 验证 compiler-private 的稳定三单位认领。
+`Math.sin(angle)` 与 `Math.cos(angle)` 以**度**为输入，直接映射 v146 mlog 的 `op sin` / `op cos`。`Clock.time` 是由 v146 `@time` 派生的**秒** `Float`，因此 `phase = Clock.time * 20.0` 表示每秒 20°，不会因处理器 IPT 改变编队的角速度。需要直接使用毫秒时写 `Clock.timeMs`。`.where(_.alive)` 验证 UnitSet 的筛选与 `alive → !@dead` lowering；末尾 `.take(3)` 验证 compiler-private 的稳定三单位认领。

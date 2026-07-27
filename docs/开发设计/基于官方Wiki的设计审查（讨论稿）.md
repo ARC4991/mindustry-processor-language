@@ -116,7 +116,7 @@ Wiki 说明显示绘图、消息输出和开关输入是独立的目标能力。
 
 | 目标常量 | 建议高层入口 | 需要决定 |
 | --- | --- | --- |
-| `@time` / `@tick` | `Clock.time` / `Clock.tick` | 时间类型、精度与确定性 |
+| `@time` / `@tick` | `Clock.timeMs`、`Clock.time`、`Clock.tick` | 时间单位、精度与确定性 |
 | `@mapw` / `@maph` | `Map.width` / `Map.height` | 是否作为编译期常量；通常应是运行期只读值 |
 | `@ipt` | `Processor.instructionsPerTick` | 用于性能监控还是仅诊断 |
 | `@this` / `@thisx` / `@thisy` | `Processor.self` / `Processor.position` | Processor 对象的可见属性 |

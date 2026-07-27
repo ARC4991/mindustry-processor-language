@@ -1,0 +1,9 @@
+// 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。
+// @logic.* 由所选 target profile 展开为游戏 mlog 指令。
+@logic.set(mpl_frog, 21);
+@logic.op(mul, __mpl_tmp0, mpl_frog, 2);
+@logic.set(mpl_frog, __mpl_tmp0);
+@logic.print("MPL 运行成功，答案：");
+@logic.print(mpl_frog);
+@logic.printFlush(message1);
+@logic.stop();
