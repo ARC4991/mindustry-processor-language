@@ -175,7 +175,13 @@ public final class SemanticAnalyzer {
             }
             List<HirStatement> body = analyzeBlock(loop.body());
             UnitType type = query.orElseThrow().type();
-            return new HirUnitIteration(loop.name(), query.orElseThrow().typeName(), type.mlogName(), filters, body);
+            return new HirUnitIteration(
+                loop.name(),
+                query.orElseThrow().typeName(),
+                type.mlogName(),
+                filters,
+                query.orElseThrow().managedLimit(),
+                body);
         } finally {
             scopes.pop();
             unitIterationDepth--;
@@ -185,16 +191,15 @@ public final class SemanticAnalyzer {
 
     private Optional<UnitQuery> parseUnitQuery(Expression iterable) {
         List<Expression> filters = new ArrayList<>();
+        List<CallExpression> modifiers = new ArrayList<>();
         Expression current = iterable;
 
         while (current instanceof CallExpression call
-            && call.callee() instanceof MemberAccessExpression member
-            && "where".equals(member.member())) {
-            if (call.arguments().size() != 1) {
-                error("MPL3302", "UnitSet.where(...) 需要恰好一个过滤 lambda", call.span());
-                return Optional.empty();
+            && call.callee() instanceof MemberAccessExpression member) {
+            if (!"where".equals(member.member()) && !"take".equals(member.member())) {
+                break;
             }
-            filters.add(0, call.arguments().get(0));
+            modifiers.add(call);
             current = member.target();
         }
 
@@ -220,7 +225,40 @@ public final class SemanticAnalyzer {
             return Optional.empty();
         }
         if (call.arguments().size() == 1) filters.add(0, call.arguments().get(0));
-        return Optional.of(new UnitQuery(typeName, type, List.copyOf(filters)));
+
+        int managedLimit = 0;
+        for (int index = modifiers.size() - 1; index >= 0; index--) {
+            CallExpression modifier = modifiers.get(index);
+            MemberAccessExpression modifierMember = (MemberAccessExpression) modifier.callee();
+            if ("where".equals(modifierMember.member())) {
+                if (managedLimit != 0) {
+                    error("MPL3307", "UnitSet.take(n) 必须放在所有 .where(...) 之后", modifier.span());
+                    return Optional.empty();
+                }
+                if (modifier.arguments().size() != 1) {
+                    error("MPL3302", "UnitSet.where(...) 需要恰好一个过滤 lambda", modifier.span());
+                    return Optional.empty();
+                }
+                filters.add(modifier.arguments().get(0));
+                continue;
+            }
+
+            if (managedLimit != 0) {
+                error("MPL3307", "一个 UnitSet 查询只能调用一次 .take(n)", modifier.span());
+                return Optional.empty();
+            }
+            if (modifier.arguments().size() != 1 || !(modifier.arguments().get(0) instanceof IntegerLiteral literal)) {
+                error("MPL3307", "UnitSet.take(n) 只接受正 Int 字面量", modifier.span());
+                return Optional.empty();
+            }
+            if (literal.value() <= 0 || literal.value() > Integer.MAX_VALUE) {
+                error("MPL3307", "UnitSet.take(n) 的 n 必须位于 1 到 2147483647", literal.span());
+                return Optional.empty();
+            }
+            managedLimit = (int) literal.value();
+        }
+
+        return Optional.of(new UnitQuery(typeName, type, List.copyOf(filters), managedLimit));
     }
 
     private HirExpression analyzeUnitFilter(Expression source, String bindingName) {
@@ -587,6 +625,6 @@ public final class SemanticAnalyzer {
     private record UnitType(String mlogName) {
     }
 
-    private record UnitQuery(String typeName, UnitType type, List<Expression> filters) {
+    private record UnitQuery(String typeName, UnitType type, List<Expression> filters, int managedLimit) {
     }
 }

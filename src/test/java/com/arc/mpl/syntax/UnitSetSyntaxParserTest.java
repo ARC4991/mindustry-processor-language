@@ -53,4 +53,20 @@ class UnitSetSyntaxParserTest {
         CallExpression where = assertInstanceOf(CallExpression.class, iteration.iterable());
         assertInstanceOf(LambdaExpression.class, where.arguments().get(0));
     }
+
+    @Test
+    void parsesATrailingManagedTakeModifier() {
+        ParseResult result = parser.parse("""
+            for (var unit : Unit.getAllDagger().where(_.alive).take(3)) {
+                unit.move(1.0, 2.0);
+            }
+            """, Path.of("main.mpl"));
+
+        assertTrue(result.succeeded());
+        ForEachStatement iteration = assertInstanceOf(ForEachStatement.class,
+            result.program().orElseThrow().statements().get(0));
+        CallExpression take = assertInstanceOf(CallExpression.class, iteration.iterable());
+        assertEquals("take", assertInstanceOf(com.arc.mpl.ast.MemberAccessExpression.class, take.callee()).member());
+        assertEquals(1, take.arguments().size());
+    }
 }

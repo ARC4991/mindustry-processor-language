@@ -6,36 +6,107 @@ jump mpl_while_end_1 equal 1 0
 op mul __mpl_tmp0 @time 0.02
 set mpl_phase __mpl_tmp0
 set mpl_slot 0
+op mul __mpl_tmp1 @thisx 2
+op mul __mpl_tmp2 @thisy 2
+op mul __mpl_tmp3 @mapw 2
+op mul __mpl_tmp4 __mpl_tmp2 __mpl_tmp3
+op add __mpl_tmp5 __mpl_tmp1 __mpl_tmp4
+op mul __mpl_managed_owner0 __mpl_tmp5 4096
+op add __mpl_managed_owner0 __mpl_managed_owner0 4000000000
+op add __mpl_managed_owner0 __mpl_managed_owner0 0
+set __mpl_managed_count0 0
 ubind @dagger
-jump mpl_unit_end_4 strictEqual @unit null
-set __mpl_unit_sentinel0 @unit
-mpl_unit_scan_2:
-sensor __mpl_tmp1 @unit @dead
-op equal __mpl_tmp2 __mpl_tmp1 0
-jump mpl_unit_next_3 equal __mpl_tmp2 0
-op mul __mpl_tmp3 mpl_slot 120.0
-op add __mpl_tmp4 mpl_phase __mpl_tmp3
-set mpl_angle __mpl_tmp4
-op cos __mpl_tmp5 mpl_angle 0
-op mul __mpl_tmp6 __mpl_tmp5 mpl_radius
-op add __mpl_tmp7 mpl_centerX __mpl_tmp6
-set mpl_targetX __mpl_tmp7
-op sin __mpl_tmp8 mpl_angle 0
-op mul __mpl_tmp9 __mpl_tmp8 mpl_radius
-op add __mpl_tmp10 mpl_centerY __mpl_tmp9
-set mpl_targetY __mpl_tmp10
+jump mpl_managed_reconcile_end_8 strictEqual @unit null
+set __mpl_managed_sentinel0 @unit
+mpl_managed_reconcile_scan_2:
+sensor __mpl_tmp6 @unit @flag
+jump mpl_managed_reconcile_tagged_3 strictEqual __mpl_tmp6 __mpl_managed_owner0
+jump mpl_managed_reconcile_next_7 always 0 0
+mpl_managed_reconcile_tagged_3:
+sensor __mpl_tmp7 @unit @controller
+jump mpl_managed_reconcile_owned_4 strictEqual __mpl_tmp7 @this
+jump mpl_managed_reconcile_next_7 always 0 0
+mpl_managed_reconcile_owned_4:
+sensor __mpl_tmp8 @unit @dead
+op equal __mpl_tmp9 __mpl_tmp8 0
+jump mpl_managed_reconcile_reject_5 equal __mpl_tmp9 0
+op add __mpl_managed_count0 __mpl_managed_count0 1
+jump mpl_managed_reconcile_next_7 lessThanEq __mpl_managed_count0 3
+mpl_managed_reconcile_excess_6:
+ucontrol flag 0 0 0 0 0
+op sub __mpl_managed_count0 __mpl_managed_count0 1
+jump mpl_managed_reconcile_next_7 always 0 0
+mpl_managed_reconcile_reject_5:
+ucontrol flag 0 0 0 0 0
+jump mpl_managed_reconcile_next_7 always 0 0
+mpl_managed_reconcile_next_7:
+ubind __mpl_managed_sentinel0
+jump mpl_managed_reconcile_end_8 strictEqual @unit null
+sensor __mpl_tmp10 @unit @dead
+jump mpl_managed_reconcile_end_8 equal __mpl_tmp10 1
+ubind @dagger
+jump mpl_managed_reconcile_end_8 strictEqual @unit null
+jump mpl_managed_reconcile_end_8 strictEqual @unit __mpl_managed_sentinel0
+jump mpl_managed_reconcile_scan_2 always 0 0
+mpl_managed_reconcile_end_8:
+ubind @dagger
+jump mpl_managed_unit_end_17 strictEqual @unit null
+set __mpl_managed_sentinel0 @unit
+mpl_managed_unit_scan_9:
+sensor __mpl_tmp11 @unit @flag
+jump mpl_managed_unit_owned_10 strictEqual __mpl_tmp11 __mpl_managed_owner0
+jump mpl_managed_unit_unclaimed_11 strictEqual __mpl_tmp11 0
+jump mpl_managed_unit_next_16 always 0 0
+mpl_managed_unit_unclaimed_11:
+jump mpl_managed_unit_next_16 greaterThanEq __mpl_managed_count0 3
+sensor __mpl_tmp12 @unit @controlled
+jump mpl_managed_unit_next_16 notEqual __mpl_tmp12 0
+sensor __mpl_tmp13 @unit @dead
+op equal __mpl_tmp14 __mpl_tmp13 0
+jump mpl_managed_unit_next_16 equal __mpl_tmp14 0
+ucontrol flag __mpl_managed_owner0 0 0 0 0
+sensor __mpl_tmp15 @unit @flag
+jump mpl_managed_unit_claimed_tagged_12 strictEqual __mpl_tmp15 __mpl_managed_owner0
+jump mpl_managed_unit_next_16 always 0 0
+mpl_managed_unit_claimed_tagged_12:
+sensor __mpl_tmp16 @unit @controller
+jump mpl_managed_unit_claimed_14 strictEqual __mpl_tmp16 @this
+jump mpl_managed_unit_next_16 always 0 0
+mpl_managed_unit_claimed_14:
+op add __mpl_managed_count0 __mpl_managed_count0 1
+jump mpl_managed_unit_body_15 always 0 0
+mpl_managed_unit_owned_10:
+sensor __mpl_tmp17 @unit @controller
+jump mpl_managed_unit_owned_confirmed_13 strictEqual __mpl_tmp17 @this
+jump mpl_managed_unit_next_16 always 0 0
+mpl_managed_unit_owned_confirmed_13:
+sensor __mpl_tmp18 @unit @dead
+op equal __mpl_tmp19 __mpl_tmp18 0
+jump mpl_managed_unit_next_16 equal __mpl_tmp19 0
+mpl_managed_unit_body_15:
+op mul __mpl_tmp20 mpl_slot 120.0
+op add __mpl_tmp21 mpl_phase __mpl_tmp20
+set mpl_angle __mpl_tmp21
+op cos __mpl_tmp22 mpl_angle 0
+op mul __mpl_tmp23 __mpl_tmp22 mpl_radius
+op add __mpl_tmp24 mpl_centerX __mpl_tmp23
+set mpl_targetX __mpl_tmp24
+op sin __mpl_tmp25 mpl_angle 0
+op mul __mpl_tmp26 __mpl_tmp25 mpl_radius
+op add __mpl_tmp27 mpl_centerY __mpl_tmp26
+set mpl_targetY __mpl_tmp27
 ucontrol move mpl_targetX mpl_targetY 0 0 0
 op add mpl_slot mpl_slot 1
-mpl_unit_next_3:
-ubind __mpl_unit_sentinel0
-jump mpl_unit_end_4 strictEqual @unit null
-sensor __mpl_tmp11 @unit @dead
-jump mpl_unit_end_4 equal __mpl_tmp11 1
+mpl_managed_unit_next_16:
+ubind __mpl_managed_sentinel0
+jump mpl_managed_unit_end_17 strictEqual @unit null
+sensor __mpl_tmp28 @unit @dead
+jump mpl_managed_unit_end_17 equal __mpl_tmp28 1
 ubind @dagger
-jump mpl_unit_end_4 strictEqual @unit null
-jump mpl_unit_end_4 strictEqual @unit __mpl_unit_sentinel0
-jump mpl_unit_scan_2 always 0 0
-mpl_unit_end_4:
+jump mpl_managed_unit_end_17 strictEqual @unit null
+jump mpl_managed_unit_end_17 strictEqual @unit __mpl_managed_sentinel0
+jump mpl_managed_unit_scan_9 always 0 0
+mpl_managed_unit_end_17:
 jump mpl_while_start_0 always 0 0
 mpl_while_end_1:
 stop

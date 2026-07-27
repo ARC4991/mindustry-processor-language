@@ -30,7 +30,8 @@ class UnitSetSemanticAnalyzerTest {
             while (true) {
                 for (var unit : Unit.getAllDagger()
                     .where(_.health > 0.0)
-                    .where(_.dead == false)) {
+                    .where(_.dead == false)
+                    .take(3)) {
                     unit.move(Math.cos(phase), Math.sin(phase));
                 }
             }
@@ -52,6 +53,8 @@ class UnitSetSemanticAnalyzerTest {
         assertEquals("Dagger", iteration.unitType());
         assertEquals("dagger", iteration.mlogType());
         assertEquals(2, iteration.filters().size());
+        assertEquals(3, iteration.managedLimit());
+        assertTrue(iteration.hasManagedLimit());
 
         HirBinary healthFilter = assertInstanceOf(HirBinary.class, iteration.filters().get(0));
         HirMemberAccess health = assertInstanceOf(HirMemberAccess.class, healthFilter.left());
@@ -69,6 +72,31 @@ class UnitSetSemanticAnalyzerTest {
         assertEquals(2, move.arguments().size());
         assertEquals("cos", assertInstanceOf(HirIntrinsicCall.class, move.arguments().get(0)).name());
         assertEquals("sin", assertInstanceOf(HirIntrinsicCall.class, move.arguments().get(1)).name());
+    }
+
+    @Test
+    void rejectsInvalidOrMisorderedManagedUnitSetLimits() {
+        Program zeroLimit = parser.parse("""
+            for (var unit : Unit.getAllDagger().take(0)) {
+                unit.move(1.0, 2.0);
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult zeroResult = analyzer.analyze(zeroLimit, Path.of("main.mpl"));
+
+        assertTrue(zeroResult.program().isEmpty());
+        assertTrue(zeroResult.diagnostics().stream().anyMatch(diagnostic -> "MPL3307".equals(diagnostic.code())));
+
+        Program misorderedLimit = parser.parse("""
+            for (var unit : Unit.getAllDagger().take(3).where(_.alive)) {
+                unit.move(1.0, 2.0);
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult misorderedResult = analyzer.analyze(misorderedLimit, Path.of("main.mpl"));
+
+        assertTrue(misorderedResult.program().isEmpty());
+        assertTrue(misorderedResult.diagnostics().stream().anyMatch(diagnostic -> "MPL3307".equals(diagnostic.code())));
     }
 
     @Test

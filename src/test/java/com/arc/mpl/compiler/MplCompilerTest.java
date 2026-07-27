@@ -110,6 +110,27 @@ class MplCompilerTest {
     }
 
     @Test
+    void lowersManagedUnitSetTakeWithoutExposingFlagToMpl(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            while (true) {
+                for (var unit : Unit.getAllDagger().where(_.alive).take(3)) {
+                    unit.move(10.0, 20.0);
+                }
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("sensor __mpl_tmp5 @unit @flag"));
+        assertTrue(mlog.contains("@unit @controlled"));
+        assertTrue(mlog.contains("ucontrol flag __mpl_managed_owner0 0 0 0 0"));
+        assertTrue(mlog.contains("ucontrol move 10.0 20.0 0 0 0"));
+    }
+
+    @Test
     void rejectsGeneratedMlogThatExceedsTheTargetInstructionLimit(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         StringBuilder source = new StringBuilder();
