@@ -11,7 +11,8 @@ public final class KnownProfiles {
         Set.of("baseline-logic", "unit-bind-cycle"));
     private static final TargetProfile V159_7 = new FixedProfile(
         "v159.7",
-        Set.of("baseline-logic", "unit-bind-cycle", "select", "printchar", "format", "unpackcolor", "draw-print"));
+        Set.of("baseline-logic", "unit-bind-cycle", "select", "printchar", "format", "unpackcolor", "draw-print",
+            "logic-build-variables"));
 
     private KnownProfiles() {
     }
@@ -42,6 +43,41 @@ public final class KnownProfiles {
                 case LOGIC -> 8;
                 case HYPER -> 25;
             };
+        }
+
+        @Override
+        public int maxInstructions() {
+            return 1_000;
+        }
+
+        @Override
+        public int maxJumpLabels() {
+            return 500;
+        }
+
+        @Override
+        public int maxTokensPerStatement() {
+            return 16;
+        }
+
+        @Override
+        public int maxGraphicsBufferCommands() {
+            return 256;
+        }
+
+        @Override
+        public int displayFlushCommandLimit() {
+            return 1_024;
+        }
+
+        @Override
+        public int maxMessageUtf16CodeUnits() {
+            return 400;
+        }
+
+        @Override
+        public int maxDrawCoordinateMagnitude() {
+            return 1_023;
         }
     }
 }

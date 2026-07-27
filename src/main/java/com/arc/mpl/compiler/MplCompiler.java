@@ -1,6 +1,7 @@
 package com.arc.mpl.compiler;
 
 import com.arc.mpl.codegen.MlogCodeGenerator;
+import com.arc.mpl.codegen.MlogOutputValidator;
 import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.Severity;
 import com.arc.mpl.profile.KnownProfiles;
@@ -15,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Optional;
 
 /**
@@ -57,7 +59,12 @@ public final class MplCompiler {
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
         if (analyzed.program().isEmpty()) return new CompilationResult(profile, analyzed.diagnostics(), Optional.empty());
-        return new CompilationResult(profile, analyzed.diagnostics(),
-            Optional.of(new MlogCodeGenerator().generate(analyzed.program().orElseThrow())));
+        String mlog = new MlogCodeGenerator().generate(analyzed.program().orElseThrow());
+        List<Diagnostic> diagnostics = new ArrayList<>(analyzed.diagnostics());
+        diagnostics.addAll(new MlogOutputValidator().validate(mlog, profile.orElseThrow()));
+        return new CompilationResult(profile, diagnostics,
+            diagnostics.stream().anyMatch(diagnostic -> diagnostic.severity() == Severity.ERROR)
+                ? Optional.empty()
+                : Optional.of(mlog));
     }
 }
