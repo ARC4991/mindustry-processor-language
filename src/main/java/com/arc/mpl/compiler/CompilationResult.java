@@ -12,12 +12,27 @@ import java.util.Optional;
 public record CompilationResult(
     Optional<TargetProfile> profile,
     List<Diagnostic> diagnostics,
-    Optional<String> mlog
+    Optional<String> mlog,
+    Optional<String> mil
 ) {
     public CompilationResult {
         profile = profile == null ? Optional.empty() : profile;
         diagnostics = List.copyOf(Objects.requireNonNull(diagnostics, "diagnostics"));
         mlog = mlog == null ? Optional.empty() : mlog;
+        mil = mil == null ? Optional.empty() : mil;
+    }
+
+    /**
+     * Compatibility constructor for callers that only receive a final mlog
+     * artifact. Successful compiler builds should use the four-argument
+     * constructor so the inspectable MIL artifact travels with it.
+     */
+    public CompilationResult(
+        Optional<TargetProfile> profile,
+        List<Diagnostic> diagnostics,
+        Optional<String> mlog
+    ) {
+        this(profile, diagnostics, mlog, Optional.empty());
     }
 
     public boolean succeeded() {

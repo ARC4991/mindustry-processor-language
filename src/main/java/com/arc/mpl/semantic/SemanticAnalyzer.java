@@ -513,14 +513,20 @@ public final class SemanticAnalyzer {
     }
 
     private HirExpression clockIntrinsic(String name, List<Expression> sourceArguments, SourceSpan span) {
-        if (!"time".equals(name) && !"tick".equals(name)) {
-            error("MPL3201", "Clock 目前仅支持 time 与 tick", span);
-            return new HirConstant("0", ValueType.ERROR);
-        }
         if (!sourceArguments.isEmpty()) {
             error("MPL3201", "Clock." + name + " 不接受参数", span);
         }
-        return new HirIntrinsicCall("Clock", name, List.of(), "time".equals(name) ? ValueType.FLOAT : ValueType.INT);
+        ValueType type = switch (name) {
+            // v146 exposes both @time and @tick as game-time doubles.  Keep the
+            // exact target value rather than silently truncating @tick to Int.
+            case "timeMs", "time", "timeMinutes", "timeHours", "tick" -> ValueType.FLOAT;
+            default -> ValueType.ERROR;
+        };
+        if (type == ValueType.ERROR) {
+            error("MPL3201", "Clock 目前支持 timeMs、time、timeMinutes、timeHours 与 tick", span);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        return new HirIntrinsicCall("Clock", name, List.of(), type);
     }
 
     private ValueType binaryType(String operator, ValueType left, ValueType right, SourceSpan span) {

@@ -1,7 +1,9 @@
 package com.arc.mpl.compiler;
 
 import com.arc.mpl.codegen.MlogCodeGenerator;
+import com.arc.mpl.codegen.MlogLabelStyle;
 import com.arc.mpl.codegen.MlogOutputValidator;
+import com.arc.mpl.codegen.MilCodeGenerator;
 import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.Severity;
 import com.arc.mpl.profile.KnownProfiles;
@@ -28,22 +30,23 @@ public final class MplCompiler {
         if (profile.isEmpty()) {
             return new CompilationResult(
                 Optional.empty(),
-                List.of(Diagnostic.error("MPL1001", "不支持的 Mindustry target profile：" + request.targetProfile())),
+                List.of(Diagnostic.localizedError(
+                    "MPL1001", "compiler.target.unsupported", request.targetProfile())),
                 Optional.empty());
         }
 
         Path sourceFile = request.projectDirectory().resolve("src/main.mpl");
         if (!Files.isRegularFile(sourceFile)) {
-            return new CompilationResult(profile, List.of(new Diagnostic(
-                Severity.ERROR, "MPL1101", "找不到项目入口文件：" + sourceFile,
+            return new CompilationResult(profile, List.of(Diagnostic.localized(
+                Severity.ERROR, "MPL1101", "compiler.entry.missing", List.of(sourceFile),
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
         String source;
         try {
             source = Files.readString(sourceFile);
         } catch (IOException exception) {
-            return new CompilationResult(profile, List.of(new Diagnostic(
-                Severity.ERROR, "MPL1102", "无法读取项目入口文件：" + exception.getMessage(),
+            return new CompilationResult(profile, List.of(Diagnostic.localized(
+                Severity.ERROR, "MPL1102", "compiler.entry.read", List.of(exceptionMessage(exception)),
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
 
@@ -54,17 +57,24 @@ public final class MplCompiler {
             analyzed = new SemanticAnalyzer().analyze(parsed.program().orElseThrow(), sourceFile,
                 new HardwareLoader().loadMessages(request.projectDirectory()));
         } catch (IOException exception) {
-            return new CompilationResult(profile, List.of(new Diagnostic(
-                Severity.ERROR, "MPL1103", "无法读取硬件声明：" + exception.getMessage(),
+            return new CompilationResult(profile, List.of(Diagnostic.localized(
+                Severity.ERROR, "MPL1103", "compiler.hardware.read", List.of(exceptionMessage(exception)),
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
         if (analyzed.program().isEmpty()) return new CompilationResult(profile, analyzed.diagnostics(), Optional.empty());
-        String mlog = new MlogCodeGenerator().generate(analyzed.program().orElseThrow());
+        MlogLabelStyle labelStyle = request.debug() ? MlogLabelStyle.DEBUG : MlogLabelStyle.RELEASE;
+        String mlog = new MlogCodeGenerator(labelStyle).generate(analyzed.program().orElseThrow());
+        String mil = new MilCodeGenerator().generate(mlog);
         List<Diagnostic> diagnostics = new ArrayList<>(analyzed.diagnostics());
         diagnostics.addAll(new MlogOutputValidator().validate(mlog, profile.orElseThrow()));
+        boolean hasError = diagnostics.stream().anyMatch(diagnostic -> diagnostic.severity() == Severity.ERROR);
         return new CompilationResult(profile, diagnostics,
-            diagnostics.stream().anyMatch(diagnostic -> diagnostic.severity() == Severity.ERROR)
-                ? Optional.empty()
-                : Optional.of(mlog));
+            hasError ? Optional.empty() : Optional.of(mlog),
+            hasError ? Optional.empty() : Optional.of(mil));
+    }
+
+    private String exceptionMessage(IOException exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 }

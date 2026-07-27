@@ -19,37 +19,49 @@ import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 
-import java.util.ArrayList;
 import java.util.List;
+
+import com.arc.mpl.codegen.MlogProgramBuilder.JumpCondition;
+import com.arc.mpl.codegen.MlogProgramBuilder.Operation;
+import com.arc.mpl.codegen.MlogProgramBuilder.UnitControlCommand;
 
 /** Deterministic baseline mlog emission for the first arithmetic HIR subset. */
 public final class MlogCodeGenerator {
-    private final List<String> lines = new ArrayList<>();
+    private final MlogLabelStyle labelStyle;
+    private MlogProgramBuilder output;
     private int temporaryIndex;
-    private int labelIndex;
     private int unitIterationIndex;
 
+    /** Creates a compact release emitter, suitable for deployment to a processor. */
+    public MlogCodeGenerator() {
+        this(MlogLabelStyle.RELEASE);
+    }
+
+    /** Creates an emitter with an explicit jump-label spelling policy. */
+    public MlogCodeGenerator(MlogLabelStyle labelStyle) {
+        this.labelStyle = java.util.Objects.requireNonNull(labelStyle, "labelStyle");
+    }
+
     public String generate(HirProgram program) {
-        lines.clear();
+        output = new MlogProgramBuilder(labelStyle);
         temporaryIndex = 0;
-        labelIndex = 0;
         unitIterationIndex = 0;
         for (HirStatement statement : program.statements()) {
             emitStatement(statement);
         }
         // MPL 程序默认只执行一次；持续逻辑必须由用户显式写 while。
-        lines.add("stop");
-        return lines.isEmpty() ? "" : String.join("\n", lines) + "\n";
+        output.stop();
+        return output.render();
     }
 
     private void emitStatement(HirStatement statement) {
         if (statement instanceof HirVariableDeclaration declaration) {
-            lines.add("set " + variable(declaration.name()) + " " + emitExpression(declaration.initializer()));
+            output.set(variable(declaration.name()), emitExpression(declaration.initializer()));
             return;
         }
         if (statement instanceof HirPrintStatement print) {
-            for (HirExpression argument : print.arguments()) lines.add("print " + emitExpression(argument));
-            lines.add("printflush " + print.linkName());
+            for (HirExpression argument : print.arguments()) output.print(emitExpression(argument));
+            output.printFlush(print.linkName());
             return;
         }
         if (statement instanceof HirBlock block) {
@@ -72,13 +84,13 @@ public final class MlogCodeGenerator {
     }
 
     private void emitWhile(HirWhile loop) {
-        String start = label("while_start");
-        String end = label("while_end");
+        MlogProgramBuilder.Label start = label("while_start");
+        MlogProgramBuilder.Label end = label("while_end");
         emitLabel(start);
         String condition = emitExpression(loop.condition());
-        emitJump(end, "equal", condition, "0");
+        emitJump(end, JumpCondition.EQUAL, condition, "0");
         for (HirStatement statement : loop.body()) emitStatement(statement);
-        emitJump(start, "always", "0", "0");
+        emitJump(start, JumpCondition.ALWAYS, "0", "0");
         emitLabel(end);
     }
 
@@ -101,40 +113,40 @@ public final class MlogCodeGenerator {
      */
     private void emitDirectUnitIteration(HirUnitIteration iteration) {
         int iterationId = unitIterationIndex++;
-        String scan = label("unit_scan");
-        String next = label("unit_next");
-        String end = label("unit_end");
+        MlogProgramBuilder.Label scan = label("unit_scan");
+        MlogProgramBuilder.Label next = label("unit_next");
+        MlogProgramBuilder.Label end = label("unit_end");
         // Source variables are prefixed with mpl_. Keep compiler temporaries outside
         // that namespace so a perfectly ordinary user variable such as unit_sentinel0
         // can never overwrite the traversal state.
         String sentinel = "__mpl_unit_sentinel" + iterationId;
 
         // UnitBindI writes null when there is no controllable unit of this type.
-        lines.add("ubind @" + iteration.mlogType());
-        emitJump(end, "strictEqual", "@unit", "null");
-        lines.add("set " + sentinel + " @unit");
+        output.unitBind("@" + iteration.mlogType());
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
+        output.set(sentinel, "@unit");
 
         emitLabel(scan);
         // Separate where calls are short-circuited in source order.
         for (HirExpression filter : iteration.filters()) {
             String accepted = emitExpression(filter);
-            emitJump(next, "equal", accepted, "0");
+            emitJump(next, JumpCondition.EQUAL, accepted, "0");
         }
         for (HirStatement statement : iteration.body()) emitStatement(statement);
 
         emitLabel(next);
         // Rebind by object rather than type: this both validates the sentinel and
         // preserves the type carousel position established by the preceding ubind.
-        lines.add("ubind " + sentinel);
-        emitJump(end, "strictEqual", "@unit", "null");
+        output.unitBind(sentinel);
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
         String sentinelDead = temporary();
-        lines.add("sensor " + sentinelDead + " @unit @dead");
-        emitJump(end, "equal", sentinelDead, "1");
+        output.sensor(sentinelDead, "@unit", "@dead");
+        emitJump(end, JumpCondition.EQUAL, sentinelDead, "1");
 
-        lines.add("ubind @" + iteration.mlogType());
-        emitJump(end, "strictEqual", "@unit", "null");
-        emitJump(end, "strictEqual", "@unit", sentinel);
-        emitJump(scan, "always", "0", "0");
+        output.unitBind("@" + iteration.mlogType());
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", sentinel);
+        emitJump(scan, JumpCondition.ALWAYS, "0", "0");
         emitLabel(end);
     }
 
@@ -157,61 +169,61 @@ public final class MlogCodeGenerator {
      */
     private void emitManagedUnitIteration(HirUnitIteration iteration) {
         int iterationId = unitIterationIndex++;
-        String reconcileScan = label("managed_reconcile_scan");
-        String reconcileTagged = label("managed_reconcile_tagged");
-        String reconcileOwned = label("managed_reconcile_owned");
-        String reconcileReject = label("managed_reconcile_reject");
-        String reconcileExcess = label("managed_reconcile_excess");
-        String reconcileNext = label("managed_reconcile_next");
-        String reconcileEnd = label("managed_reconcile_end");
-        String scan = label("managed_unit_scan");
-        String owned = label("managed_unit_owned");
-        String unclaimed = label("managed_unit_unclaimed");
-        String claimedTagged = label("managed_unit_claimed_tagged");
-        String ownedConfirmed = label("managed_unit_owned_confirmed");
-        String claimed = label("managed_unit_claimed");
-        String body = label("managed_unit_body");
-        String next = label("managed_unit_next");
-        String end = label("managed_unit_end");
+        MlogProgramBuilder.Label reconcileScan = label("managed_reconcile_scan");
+        MlogProgramBuilder.Label reconcileTagged = label("managed_reconcile_tagged");
+        MlogProgramBuilder.Label reconcileOwned = label("managed_reconcile_owned");
+        MlogProgramBuilder.Label reconcileReject = label("managed_reconcile_reject");
+        MlogProgramBuilder.Label reconcileExcess = label("managed_reconcile_excess");
+        MlogProgramBuilder.Label reconcileNext = label("managed_reconcile_next");
+        MlogProgramBuilder.Label reconcileEnd = label("managed_reconcile_end");
+        MlogProgramBuilder.Label scan = label("managed_unit_scan");
+        MlogProgramBuilder.Label owned = label("managed_unit_owned");
+        MlogProgramBuilder.Label unclaimed = label("managed_unit_unclaimed");
+        MlogProgramBuilder.Label claimedTagged = label("managed_unit_claimed_tagged");
+        MlogProgramBuilder.Label ownedConfirmed = label("managed_unit_owned_confirmed");
+        MlogProgramBuilder.Label claimed = label("managed_unit_claimed");
+        MlogProgramBuilder.Label body = label("managed_unit_body");
+        MlogProgramBuilder.Label next = label("managed_unit_next");
+        MlogProgramBuilder.Label end = label("managed_unit_end");
         String sentinel = "__mpl_managed_sentinel" + iterationId;
         String owner = "__mpl_managed_owner" + iterationId;
         String retained = "__mpl_managed_count" + iterationId;
         String limit = Integer.toString(iteration.managedLimit());
 
         emitManagedOwnerToken(owner, iterationId);
-        lines.add("set " + retained + " 0");
+        output.set(retained, "0");
 
         // Phase A: preserve qualifying units already owned by this traversal
         // before filling the remaining capacity. A stale excess tag is released
         // so lowering remains correct after reducing take(n) and recompiling.
-        lines.add("ubind @" + iteration.mlogType());
-        emitJump(reconcileEnd, "strictEqual", "@unit", "null");
-        lines.add("set " + sentinel + " @unit");
+        output.unitBind("@" + iteration.mlogType());
+        emitJump(reconcileEnd, JumpCondition.STRICT_EQUAL, "@unit", "null");
+        output.set(sentinel, "@unit");
         emitLabel(reconcileScan);
         String currentFlag = temporary();
-        lines.add("sensor " + currentFlag + " @unit @flag");
-        emitJump(reconcileTagged, "strictEqual", currentFlag, owner);
-        emitJump(reconcileNext, "always", "0", "0");
+        output.sensor(currentFlag, "@unit", "@flag");
+        emitJump(reconcileTagged, JumpCondition.STRICT_EQUAL, currentFlag, owner);
+        emitJump(reconcileNext, JumpCondition.ALWAYS, "0", "0");
 
         emitLabel(reconcileTagged);
         String currentController = temporary();
-        lines.add("sensor " + currentController + " @unit @controller");
-        emitJump(reconcileOwned, "strictEqual", currentController, "@this");
-        emitJump(reconcileNext, "always", "0", "0");
+        output.sensor(currentController, "@unit", "@controller");
+        emitJump(reconcileOwned, JumpCondition.STRICT_EQUAL, currentController, "@this");
+        emitJump(reconcileNext, JumpCondition.ALWAYS, "0", "0");
 
         emitLabel(reconcileOwned);
         emitFilterRejectionJump(iteration.filters(), reconcileReject);
-        lines.add("op add " + retained + " " + retained + " 1");
-        emitJump(reconcileNext, "lessThanEq", retained, limit);
+        output.operation(Operation.ADD, retained, retained, "1");
+        emitJump(reconcileNext, JumpCondition.LESS_THAN_EQ, retained, limit);
 
         emitLabel(reconcileExcess);
-        lines.add("ucontrol flag 0 0 0 0 0");
-        lines.add("op sub " + retained + " " + retained + " 1");
-        emitJump(reconcileNext, "always", "0", "0");
+        output.unitControl(UnitControlCommand.FLAG, "0", "0", "0", "0", "0");
+        output.operation(Operation.SUB, retained, retained, "1");
+        emitJump(reconcileNext, JumpCondition.ALWAYS, "0", "0");
 
         emitLabel(reconcileReject);
-        lines.add("ucontrol flag 0 0 0 0 0");
-        emitJump(reconcileNext, "always", "0", "0");
+        output.unitControl(UnitControlCommand.FLAG, "0", "0", "0", "0", "0");
+        emitJump(reconcileNext, JumpCondition.ALWAYS, "0", "0");
 
         emitLabel(reconcileNext);
         emitUnitScanAdvance(sentinel, iteration.mlogType(), reconcileScan, reconcileEnd);
@@ -220,40 +232,40 @@ public final class MlogCodeGenerator {
         // Phase B: only current owner-tagged units execute the MPL loop body.
         // Unflagged, qualifying candidates fill an empty slot; any foreign
         // non-zero flag is left untouched.
-        lines.add("ubind @" + iteration.mlogType());
-        emitJump(end, "strictEqual", "@unit", "null");
-        lines.add("set " + sentinel + " @unit");
+        output.unitBind("@" + iteration.mlogType());
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
+        output.set(sentinel, "@unit");
         emitLabel(scan);
         String candidateFlag = temporary();
-        lines.add("sensor " + candidateFlag + " @unit @flag");
-        emitJump(owned, "strictEqual", candidateFlag, owner);
-        emitJump(unclaimed, "strictEqual", candidateFlag, "0");
-        emitJump(next, "always", "0", "0");
+        output.sensor(candidateFlag, "@unit", "@flag");
+        emitJump(owned, JumpCondition.STRICT_EQUAL, candidateFlag, owner);
+        emitJump(unclaimed, JumpCondition.STRICT_EQUAL, candidateFlag, "0");
+        emitJump(next, JumpCondition.ALWAYS, "0", "0");
         emitLabel(unclaimed);
-        emitJump(next, "greaterThanEq", retained, limit);
+        emitJump(next, JumpCondition.GREATER_THAN_EQ, retained, limit);
         String candidateControl = temporary();
-        lines.add("sensor " + candidateControl + " @unit @controlled");
-        emitJump(next, "notEqual", candidateControl, "0");
+        output.sensor(candidateControl, "@unit", "@controlled");
+        emitJump(next, JumpCondition.NOT_EQUAL, candidateControl, "0");
         emitFilterRejectionJump(iteration.filters(), next);
-        lines.add("ucontrol flag " + owner + " 0 0 0 0");
+        output.unitControl(UnitControlCommand.FLAG, owner, "0", "0", "0", "0");
         String claimedFlag = temporary();
-        lines.add("sensor " + claimedFlag + " @unit @flag");
-        emitJump(claimedTagged, "strictEqual", claimedFlag, owner);
-        emitJump(next, "always", "0", "0");
+        output.sensor(claimedFlag, "@unit", "@flag");
+        emitJump(claimedTagged, JumpCondition.STRICT_EQUAL, claimedFlag, owner);
+        emitJump(next, JumpCondition.ALWAYS, "0", "0");
         emitLabel(claimedTagged);
         String claimedController = temporary();
-        lines.add("sensor " + claimedController + " @unit @controller");
-        emitJump(claimed, "strictEqual", claimedController, "@this");
-        emitJump(next, "always", "0", "0");
+        output.sensor(claimedController, "@unit", "@controller");
+        emitJump(claimed, JumpCondition.STRICT_EQUAL, claimedController, "@this");
+        emitJump(next, JumpCondition.ALWAYS, "0", "0");
         emitLabel(claimed);
-        lines.add("op add " + retained + " " + retained + " 1");
-        emitJump(body, "always", "0", "0");
+        output.operation(Operation.ADD, retained, retained, "1");
+        emitJump(body, JumpCondition.ALWAYS, "0", "0");
 
         emitLabel(owned);
         String ownedController = temporary();
-        lines.add("sensor " + ownedController + " @unit @controller");
-        emitJump(ownedConfirmed, "strictEqual", ownedController, "@this");
-        emitJump(next, "always", "0", "0");
+        output.sensor(ownedController, "@unit", "@controller");
+        emitJump(ownedConfirmed, JumpCondition.STRICT_EQUAL, ownedController, "@this");
+        emitJump(next, JumpCondition.ALWAYS, "0", "0");
         emitLabel(ownedConfirmed);
         emitFilterRejectionJump(iteration.filters(), next);
         emitLabel(body);
@@ -275,34 +287,35 @@ public final class MlogCodeGenerator {
         String stride = temporary();
         String row = temporary();
         String cell = temporary();
-        lines.add("op mul " + twiceX + " @thisx 2");
-        lines.add("op mul " + twiceY + " @thisy 2");
-        lines.add("op mul " + stride + " @mapw 2");
-        lines.add("op mul " + row + " " + twiceY + " " + stride);
-        lines.add("op add " + cell + " " + twiceX + " " + row);
-        lines.add("op mul " + owner + " " + cell + " 4096");
-        lines.add("op add " + owner + " " + owner + " 4000000000");
-        lines.add("op add " + owner + " " + owner + " " + iterationId);
+        output.operation(Operation.MUL, twiceX, "@thisx", "2");
+        output.operation(Operation.MUL, twiceY, "@thisy", "2");
+        output.operation(Operation.MUL, stride, "@mapw", "2");
+        output.operation(Operation.MUL, row, twiceY, stride);
+        output.operation(Operation.ADD, cell, twiceX, row);
+        output.operation(Operation.MUL, owner, cell, "4096");
+        output.operation(Operation.ADD, owner, owner, "4000000000");
+        output.operation(Operation.ADD, owner, owner, Integer.toString(iterationId));
     }
 
-    private void emitFilterRejectionJump(List<HirExpression> filters, String reject) {
+    private void emitFilterRejectionJump(List<HirExpression> filters, MlogProgramBuilder.Label reject) {
         for (HirExpression filter : filters) {
             String accepted = emitExpression(filter);
-            emitJump(reject, "equal", accepted, "0");
+            emitJump(reject, JumpCondition.EQUAL, accepted, "0");
         }
     }
 
     /** Advances a v146 {@code ubind} carousel while safely detecting wraparound/removal. */
-    private void emitUnitScanAdvance(String sentinel, String mlogType, String scan, String end) {
-        lines.add("ubind " + sentinel);
-        emitJump(end, "strictEqual", "@unit", "null");
+    private void emitUnitScanAdvance(String sentinel, String mlogType, MlogProgramBuilder.Label scan,
+                                     MlogProgramBuilder.Label end) {
+        output.unitBind(sentinel);
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
         String sentinelDead = temporary();
-        lines.add("sensor " + sentinelDead + " @unit @dead");
-        emitJump(end, "equal", sentinelDead, "1");
-        lines.add("ubind @" + mlogType);
-        emitJump(end, "strictEqual", "@unit", "null");
-        emitJump(end, "strictEqual", "@unit", sentinel);
-        emitJump(scan, "always", "0", "0");
+        output.sensor(sentinelDead, "@unit", "@dead");
+        emitJump(end, JumpCondition.EQUAL, sentinelDead, "1");
+        output.unitBind("@" + mlogType);
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", sentinel);
+        emitJump(scan, JumpCondition.ALWAYS, "0", "0");
     }
 
     private void emitUnitControl(HirUnitControl control) {
@@ -312,7 +325,7 @@ public final class MlogCodeGenerator {
         String x = emitExpression(control.arguments().get(0));
         String y = emitExpression(control.arguments().get(1));
         // v146 serializes all five ucontrol parameter slots even though move consumes x/y.
-        lines.add("ucontrol move " + x + " " + y + " 0 0 0");
+        output.unitControl(UnitControlCommand.MOVE, x, y, "0", "0", "0");
     }
 
     private String emitExpression(HirExpression expression) {
@@ -333,10 +346,10 @@ public final class MlogCodeGenerator {
 
         String result = temporary();
         String sensor = "alive".equals(member.member()) ? "dead" : member.member();
-        lines.add("sensor " + result + " @unit @" + sensor);
+        output.sensor(result, "@unit", "@" + sensor);
         if ("alive".equals(member.member())) {
             String alive = temporary();
-            lines.add("op equal " + alive + " " + result + " 0");
+            output.operation(Operation.EQUAL, alive, result, "0");
             return alive;
         }
         return result;
@@ -344,8 +357,14 @@ public final class MlogCodeGenerator {
 
     private String emitIntrinsicCall(HirIntrinsicCall call) {
         if ("Clock".equals(call.namespace())) {
+            if (!call.arguments().isEmpty()) {
+                throw new IllegalArgumentException("Clock intrinsic does not accept arguments: " + call.name());
+            }
             return switch (call.name()) {
-                case "time" -> "@time";
+                case "timeMs" -> "@time";
+                case "time" -> emitScaledTime("1000.0");
+                case "timeMinutes" -> emitScaledTime("60000.0");
+                case "timeHours" -> emitScaledTime("3600000.0");
                 case "tick" -> "@tick";
                 default -> throw new IllegalArgumentException("unsupported Clock intrinsic: " + call.name());
             };
@@ -353,22 +372,30 @@ public final class MlogCodeGenerator {
         if ("Math".equals(call.namespace()) && ("sin".equals(call.name()) || "cos".equals(call.name()))
             && call.arguments().size() == 1) {
             String result = temporary();
-            lines.add("op " + call.name() + " " + result + " " + emitExpression(call.arguments().get(0)) + " 0");
+            Operation operation = "sin".equals(call.name()) ? Operation.SIN : Operation.COS;
+            output.operation(operation, result, emitExpression(call.arguments().get(0)), "0");
             return result;
         }
         throw new IllegalArgumentException("unsupported intrinsic: " + call.namespace() + "." + call.name());
+    }
+
+    /** Converts the target's millisecond clock to a derived floating-point unit. */
+    private String emitScaledTime(String millisecondsPerUnit) {
+        String result = temporary();
+        output.operation(Operation.DIV, result, "@time", millisecondsPerUnit);
+        return result;
     }
 
     private String emitUnary(HirUnary unary) {
         String operand = emitExpression(unary.operand());
         if ("+".equals(unary.operator())) return operand;
         String temporary = temporary();
-        String operation = switch (unary.operator()) {
-            case "-" -> "sub";
-            case "!" -> "equal";
+        Operation operation = switch (unary.operator()) {
+            case "-" -> Operation.SUB;
+            case "!" -> Operation.EQUAL;
             default -> throw new IllegalArgumentException("unsupported unary operator " + unary.operator());
         };
-        lines.add("op " + operation + " " + temporary + " 0 " + operand);
+        output.operation(operation, temporary, "0", operand);
         return temporary;
     }
 
@@ -376,7 +403,7 @@ public final class MlogCodeGenerator {
         String left = emitExpression(binary.left());
         String right = emitExpression(binary.right());
         String temporary = temporary();
-        lines.add("op " + operation(binary.operator()) + " " + temporary + " " + left + " " + right);
+        output.operation(operation(binary.operator()), temporary, left, right);
         return temporary;
     }
 
@@ -384,28 +411,28 @@ public final class MlogCodeGenerator {
         String target = variable(assignment.target());
         String value = emitExpression(assignment.value());
         if ("=".equals(assignment.operator())) {
-            lines.add("set " + target + " " + value);
+            output.set(target, value);
         } else {
-            lines.add("op " + operation(assignment.operator().substring(0, 1)) + " " + target + " " + target + " " + value);
+            output.operation(operation(assignment.operator().substring(0, 1)), target, target, value);
         }
         return target;
     }
 
-    private String operation(String operator) {
+    private Operation operation(String operator) {
         return switch (operator) {
-            case "+" -> "add";
-            case "-" -> "sub";
-            case "*" -> "mul";
-            case "/" -> "div";
-            case "%" -> "mod";
-            case "==" -> "equal";
-            case "!=" -> "notEqual";
-            case "<" -> "lessThan";
-            case "<=" -> "lessThanEq";
-            case ">" -> "greaterThan";
-            case ">=" -> "greaterThanEq";
-            case "&&" -> "land";
-            case "||" -> "or";
+            case "+" -> Operation.ADD;
+            case "-" -> Operation.SUB;
+            case "*" -> Operation.MUL;
+            case "/" -> Operation.DIV;
+            case "%" -> Operation.MOD;
+            case "==" -> Operation.EQUAL;
+            case "!=" -> Operation.NOT_EQUAL;
+            case "<" -> Operation.LESS_THAN;
+            case "<=" -> Operation.LESS_THAN_EQ;
+            case ">" -> Operation.GREATER_THAN;
+            case ">=" -> Operation.GREATER_THAN_EQ;
+            case "&&" -> Operation.LAND;
+            case "||" -> Operation.OR;
             default -> throw new IllegalArgumentException("unsupported binary operator " + operator);
         };
     }
@@ -418,16 +445,16 @@ public final class MlogCodeGenerator {
         return "__mpl_tmp" + temporaryIndex++;
     }
 
-    private String label(String role) {
-        return "mpl_" + role + "_" + labelIndex++;
+    private MlogProgramBuilder.Label label(String role) {
+        return output.newLabel(role);
     }
 
-    private void emitLabel(String label) {
-        lines.add(label + ":");
+    private void emitLabel(MlogProgramBuilder.Label label) {
+        output.label(label);
     }
 
-    private void emitJump(String target, String condition, String value, String compare) {
-        lines.add("jump " + target + " " + condition + " " + value + " " + compare);
+    private void emitJump(MlogProgramBuilder.Label target, JumpCondition condition, String value, String compare) {
+        output.jump(target, condition, value, compare);
     }
 
     private String quote(String value) {

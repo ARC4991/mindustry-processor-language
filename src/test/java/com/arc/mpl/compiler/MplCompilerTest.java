@@ -1,6 +1,7 @@
 package com.arc.mpl.compiler;
 
 import com.arc.mpl.diagnostic.Severity;
+import com.arc.mpl.diagnostic.DiagnosticLanguage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -22,6 +23,9 @@ class MplCompilerTest {
         assertTrue(result.profile().isEmpty());
         assertEquals("MPL1001", result.diagnostics().get(0).code());
         assertEquals(Severity.ERROR, result.diagnostics().get(0).severity());
+        assertEquals("compiler.target.unsupported", result.diagnostics().get(0).messageKey().orElseThrow());
+        assertEquals("不支持的 Mindustry target profile：v999",
+            result.diagnostics().get(0).render(DiagnosticLanguage.ZH_CN));
     }
 
     @Test
@@ -36,6 +40,14 @@ class MplCompilerTest {
         assertTrue(result.diagnostics().isEmpty());
         assertEquals("op add __mpl_tmp0 1 2\nset mpl_total __mpl_tmp0\nop add mpl_total mpl_total 3\nstop\n",
             result.mlog().orElseThrow());
+        assertEquals("""
+            // 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。
+            // @logic.* 由所选 target profile 展开为游戏 mlog 指令。
+            @logic.op(add, __mpl_tmp0, 1, 2);
+            @logic.set(mpl_total, __mpl_tmp0);
+            @logic.op(add, mpl_total, mpl_total, 3);
+            @logic.stop();
+            """, result.mil().orElseThrow());
     }
 
     @Test
@@ -64,6 +76,22 @@ class MplCompilerTest {
     }
 
     @Test
+    void usesReadableLabelsOnlyForAnExplicitDebugBuild(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), "while (true) { }");
+
+        CompilationResult release = compiler.compile(new CompilationRequest(project, "v146"));
+        CompilationResult debug = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(release.succeeded());
+        assertTrue(debug.succeeded());
+        assertTrue(release.mlog().orElseThrow().contains("_0:"));
+        assertFalse(release.mlog().orElseThrow().contains("mpl_while_start_0"));
+        assertTrue(debug.mlog().orElseThrow().contains("mpl_while_start_0:"));
+        assertTrue(debug.mil().orElseThrow().contains("@logic.label(mpl_while_start_0);"));
+    }
+
+    @Test
     void lowersV146UnitSetTraversalWithFiltersAndUnitControl(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
@@ -74,7 +102,9 @@ class MplCompilerTest {
             }
             """);
 
-        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+        // Keep the detailed lowering golden readable; release labels are
+        // exercised in usesReadableLabelsOnlyForAnExplicitDebugBuild.
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
 
         assertTrue(result.succeeded());
         assertEquals("""
@@ -143,6 +173,7 @@ class MplCompilerTest {
 
         assertFalse(result.succeeded());
         assertTrue(result.mlog().isEmpty());
+        assertTrue(result.mil().isEmpty());
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL5001".equals(diagnostic.code())));
     }
 }
