@@ -32,5 +32,10 @@
       }
     }
   ],
-  "optimizations": []
+  "optimizations": [
+    { "name": "constantFolds", "shard": "Main", "applied": 0 },
+    { "name": "eliminatedBranches", "shard": "Main", "applied": 0 },
+    { "name": "eliminatedLoops", "shard": "Main", "applied": 0 },
+    { "name": "eliminatedStatements", "shard": "Main", "applied": 0 }
+  ]
 }

@@ -44,11 +44,11 @@
     },
     "optimization": {
       "type": "object", "additionalProperties": false,
-      "required": ["name", "shard", "estimatedInstructionsSaved"],
+      "required": ["name", "shard", "applied"],
       "properties": {
         "name": { "type": "string" },
         "shard": { "type": "string" },
-        "estimatedInstructionsSaved": { "type": "integer", "minimum": 0 }
+        "applied": { "type": "integer", "minimum": 0 }
       }
     }
   }

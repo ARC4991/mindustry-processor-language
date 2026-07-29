@@ -64,10 +64,29 @@ class BuildArtifactWriterTest {
             new OptimizationReport(3, 2, 1, 4));
 
         JsonNode report = new ObjectMapper().readTree(java.nio.file.Files.readString(temporaryDirectory.resolve("report.json")));
+        assertEquals("Main", report.path("optimizations").get(0).path("shard").asText());
         assertEquals(3, report.path("optimizations").get(0).path("applied").asInt());
         assertEquals(2, report.path("optimizations").get(1).path("applied").asInt());
         assertEquals(1, report.path("optimizations").get(2).path("applied").asInt());
         assertEquals(4, report.path("optimizations").get(3).path("applied").asInt());
+        assertTrue(report.path("optimizations").get(0).path("estimatedInstructionsSaved").isMissingNode());
+    }
+
+    @Test
+    void safelySerializesHardwareNamesAndAliasesAsStructuredJson() throws Exception {
+        TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
+        RuntimePlan plan = new RuntimePlanner().plan("print \"ok\"\n", profile);
+        HardwareContract hardware = new HardwareContract(
+            List.of(new HardwareContract.LinkDeclaration("output\\\"name", "Message", "message\\\"1")), Map.of());
+
+        new BuildArtifactWriter().write(temporaryDirectory, "print \"ok\"\n", "print(\"ok\");\n", profile,
+            hardware, plan, new ProjectMetadata("json-demo", "1.0.0"));
+
+        JsonNode deployment = new ObjectMapper().readTree(
+            java.nio.file.Files.readString(temporaryDirectory.resolve("deployment.json")));
+        JsonNode external = deployment.path("externalHardware").get(0);
+        assertEquals("output\\\"name", external.path("mplName").asText());
+        assertEquals("message\\\"1", external.path("alias").asText());
     }
 
     @Test
