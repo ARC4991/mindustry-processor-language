@@ -991,6 +991,10 @@ public final class SemanticAnalyzer {
             return new HirConstant(Long.toString(integer.value()), ValueType.INT);
         }
         if (expression instanceof FloatLiteral decimal) {
+            if (!Double.isFinite(decimal.value())) {
+                error("MPL3103", "Float 字面量必须是有限值", decimal.span());
+                return new HirConstant("0.0", ValueType.ERROR);
+            }
             return new HirConstant(Double.toString(decimal.value()), ValueType.FLOAT);
         }
         if (expression instanceof StringLiteral text) return new HirText(text.value());

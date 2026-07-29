@@ -53,6 +53,9 @@ import com.arc.mpl.codegen.MlogProgramBuilder.UnitControlCommand;
 
 /** Deterministic baseline mlog emission for the first arithmetic HIR subset. */
 public final class MlogCodeGenerator {
+    private static final String FLOAT_MAX = Double.toString(Double.MAX_VALUE);
+    private static final String FLOAT_MIN = Double.toString(-Double.MAX_VALUE);
+
     private final MlogLabelStyle labelStyle;
     private MlogProgramBuilder output;
     private int temporaryIndex;
@@ -747,6 +750,8 @@ public final class MlogCodeGenerator {
 
     /** Converts the target's millisecond clock to a derived floating-point unit. */
     private String emitScaledTime(String millisecondsPerUnit) {
+        // The denominator is a fixed positive value greater than one, so this
+        // derived Clock conversion cannot overflow a finite target time value.
         String result = temporary();
         output.operation(Operation.DIV, result, "@time", millisecondsPerUnit);
         return result;
@@ -777,6 +782,9 @@ public final class MlogCodeGenerator {
         if (binary.type() == com.arc.mpl.hir.ValueType.INT) {
             return emitIntBinary(binary.operator(), left, right);
         }
+        if (binary.type() == com.arc.mpl.hir.ValueType.FLOAT && isFloatArithmetic(binary.operator())) {
+            return emitFloatBinary(binary.operator(), left, right);
+        }
         String temporary = temporary();
         output.operation(operation(binary.operator()), temporary, left, right);
         return temporary;
@@ -804,6 +812,8 @@ public final class MlogCodeGenerator {
             String operator = assignment.operator().substring(0, 1);
             if (assignment.type() == com.arc.mpl.hir.ValueType.INT) {
                 output.set(target, emitIntBinary(operator, target, value));
+            } else if (assignment.type() == com.arc.mpl.hir.ValueType.FLOAT && isFloatArithmetic(operator)) {
+                output.set(target, emitFloatBinary(operator, target, value));
             } else {
                 output.operation(operation(operator), target, target, value);
             }
@@ -833,6 +843,154 @@ public final class MlogCodeGenerator {
         output.operation(Operation.MOD, result, left, right);
         emitLabel(end);
         return result;
+    }
+
+    /** Emits a bounded floating arithmetic operation before the target can produce Infinity. */
+    private String emitFloatBinary(String operator, String left, String right) {
+        return switch (operator) {
+            case "+" -> emitFloatAddition(left, right, false);
+            case "-" -> emitFloatAddition(left, right, true);
+            case "*" -> emitFloatMultiplication(left, right);
+            case "/" -> emitFloatDivision(left, right);
+            default -> throw new IllegalArgumentException("unsupported Float operator " + operator);
+        };
+    }
+
+    private String emitFloatAddition(String left, String right, boolean subtract) {
+        String result = temporary();
+        String threshold = temporary();
+        String prefix = subtract ? "float_sub" : "float_add";
+        MlogProgramBuilder.Label rightPositive = label(prefix + "_rhs_positive");
+        MlogProgramBuilder.Label compute = label(prefix + "_compute");
+        MlogProgramBuilder.Label positiveOverflow = label(prefix + "_positive_overflow");
+        MlogProgramBuilder.Label negativeOverflow = label(prefix + "_negative_overflow");
+        MlogProgramBuilder.Label end = label(prefix + "_end");
+
+        emitJump(rightPositive, JumpCondition.GREATER_THAN, right, "0");
+        if (subtract) {
+            output.operation(Operation.ADD, threshold, FLOAT_MAX, right);
+            emitJump(positiveOverflow, JumpCondition.GREATER_THAN, left, threshold);
+        } else {
+            output.operation(Operation.SUB, threshold, FLOAT_MIN, right);
+            emitJump(negativeOverflow, JumpCondition.LESS_THAN, left, threshold);
+        }
+        emitJump(compute, JumpCondition.ALWAYS, "0", "0");
+
+        emitLabel(rightPositive);
+        if (subtract) {
+            output.operation(Operation.ADD, threshold, FLOAT_MIN, right);
+            emitJump(negativeOverflow, JumpCondition.LESS_THAN, left, threshold);
+        } else {
+            output.operation(Operation.SUB, threshold, FLOAT_MAX, right);
+            emitJump(positiveOverflow, JumpCondition.GREATER_THAN, left, threshold);
+        }
+        emitJump(compute, JumpCondition.ALWAYS, "0", "0");
+
+        emitLabel(positiveOverflow);
+        output.set(result, FLOAT_MAX);
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(negativeOverflow);
+        output.set(result, FLOAT_MIN);
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(compute);
+        output.operation(subtract ? Operation.SUB : Operation.ADD, result, left, right);
+        emitLabel(end);
+        return result;
+    }
+
+    private String emitFloatMultiplication(String left, String right) {
+        String result = temporary();
+        String threshold = temporary();
+        MlogProgramBuilder.Label positiveLarge = label("float_mul_rhs_positive_large");
+        MlogProgramBuilder.Label negativeLarge = label("float_mul_rhs_negative_large");
+        MlogProgramBuilder.Label compute = label("float_mul_compute");
+        MlogProgramBuilder.Label positiveOverflow = label("float_mul_positive_overflow");
+        MlogProgramBuilder.Label negativeOverflow = label("float_mul_negative_overflow");
+        MlogProgramBuilder.Label end = label("float_mul_end");
+
+        emitJump(positiveLarge, JumpCondition.GREATER_THAN, right, "1");
+        emitJump(negativeLarge, JumpCondition.LESS_THAN, right, "-1");
+        emitJump(compute, JumpCondition.ALWAYS, "0", "0");
+
+        emitLabel(positiveLarge);
+        output.operation(Operation.DIV, threshold, FLOAT_MAX, right);
+        emitJump(positiveOverflow, JumpCondition.GREATER_THAN, left, threshold);
+        output.operation(Operation.DIV, threshold, FLOAT_MIN, right);
+        emitJump(negativeOverflow, JumpCondition.LESS_THAN, left, threshold);
+        emitJump(compute, JumpCondition.ALWAYS, "0", "0");
+
+        emitLabel(negativeLarge);
+        output.operation(Operation.DIV, threshold, FLOAT_MAX, right);
+        emitJump(positiveOverflow, JumpCondition.LESS_THAN, left, threshold);
+        output.operation(Operation.DIV, threshold, FLOAT_MIN, right);
+        emitJump(negativeOverflow, JumpCondition.GREATER_THAN, left, threshold);
+        emitJump(compute, JumpCondition.ALWAYS, "0", "0");
+
+        emitLabel(positiveOverflow);
+        output.set(result, FLOAT_MAX);
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(negativeOverflow);
+        output.set(result, FLOAT_MIN);
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(compute);
+        output.operation(Operation.MUL, result, left, right);
+        emitLabel(end);
+        return result;
+    }
+
+    private String emitFloatDivision(String left, String right) {
+        String result = temporary();
+        String threshold = temporary();
+        MlogProgramBuilder.Label nonZero = label("float_div_non_zero");
+        MlogProgramBuilder.Label positive = label("float_div_rhs_positive");
+        MlogProgramBuilder.Label negativeSmall = label("float_div_rhs_negative_small");
+        MlogProgramBuilder.Label positiveSmall = label("float_div_rhs_positive_small");
+        MlogProgramBuilder.Label compute = label("float_div_compute");
+        MlogProgramBuilder.Label positiveOverflow = label("float_div_positive_overflow");
+        MlogProgramBuilder.Label negativeOverflow = label("float_div_negative_overflow");
+        MlogProgramBuilder.Label end = label("float_div_end");
+
+        emitJump(nonZero, JumpCondition.NOT_EQUAL, right, "0");
+        output.set(result, "0.0");
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+
+        emitLabel(nonZero);
+        emitJump(positive, JumpCondition.GREATER_THAN, right, "0");
+        emitJump(compute, JumpCondition.LESS_THAN_EQ, right, "-1");
+        emitJump(negativeSmall, JumpCondition.ALWAYS, "0", "0");
+
+        emitLabel(positive);
+        emitJump(compute, JumpCondition.GREATER_THAN_EQ, right, "1");
+        emitJump(positiveSmall, JumpCondition.ALWAYS, "0", "0");
+
+        emitLabel(positiveSmall);
+        output.operation(Operation.MUL, threshold, FLOAT_MAX, right);
+        emitJump(positiveOverflow, JumpCondition.GREATER_THAN, left, threshold);
+        output.operation(Operation.MUL, threshold, FLOAT_MIN, right);
+        emitJump(negativeOverflow, JumpCondition.LESS_THAN, left, threshold);
+        emitJump(compute, JumpCondition.ALWAYS, "0", "0");
+
+        emitLabel(negativeSmall);
+        output.operation(Operation.MUL, threshold, FLOAT_MAX, right);
+        emitJump(positiveOverflow, JumpCondition.LESS_THAN, left, threshold);
+        output.operation(Operation.MUL, threshold, FLOAT_MIN, right);
+        emitJump(negativeOverflow, JumpCondition.GREATER_THAN, left, threshold);
+        emitJump(compute, JumpCondition.ALWAYS, "0", "0");
+
+        emitLabel(positiveOverflow);
+        output.set(result, FLOAT_MAX);
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(negativeOverflow);
+        output.set(result, FLOAT_MIN);
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(compute);
+        output.operation(Operation.DIV, result, left, right);
+        emitLabel(end);
+        return result;
+    }
+
+    private boolean isFloatArithmetic(String operator) {
+        return "+".equals(operator) || "-".equals(operator) || "*".equals(operator) || "/".equals(operator);
     }
 
     private Operation operation(String operator) {

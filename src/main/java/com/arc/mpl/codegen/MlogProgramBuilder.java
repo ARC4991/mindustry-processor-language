@@ -132,7 +132,9 @@ final class MlogProgramBuilder {
         EQUAL("equal"),
         NOT_EQUAL("notEqual"),
         LESS_THAN_EQ("lessThanEq"),
+        LESS_THAN("lessThan"),
         GREATER_THAN_EQ("greaterThanEq"),
+        GREATER_THAN("greaterThan"),
         STRICT_EQUAL("strictEqual");
 
         private final String mnemonic;

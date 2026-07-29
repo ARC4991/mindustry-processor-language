@@ -109,6 +109,64 @@ class MplCompilerTest {
     }
 
     @Test
+    void normalizesConstantFloatDivisionByZeroAndOverflow(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val zero: Float = 1.0 / 0.0;
+            val positive: Float = 1.7976931348623157e308 + 1.7976931348623157e308;
+            val negative: Float = -1.7976931348623157e308 * 2.0;
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            set mpl_zero 0.0
+            set mpl_positive 1.7976931348623157E308
+            set mpl_negative -1.7976931348623157E308
+            stop
+            """, result.mlog().orElseThrow());
+    }
+
+    @Test
+    void lowersDynamicFloatOperationsBeforeTargetOverflow(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var first: Float = Clock.timeMs;
+            var sum: Float = first + 1.0;
+            var product: Float = first * 2.0;
+            var quotient: Float = first / first;
+            var difference: Float = first - 1.0;
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("jump mpl_float_add_rhs_positive_0 greaterThan 1.0 0"));
+        assertTrue(mlog.contains("op sub __mpl_tmp1 1.7976931348623157E308 1.0"));
+        assertTrue(mlog.contains("set __mpl_tmp0 1.7976931348623157E308"));
+        assertTrue(mlog.contains("jump mpl_float_mul_rhs_positive_large_5 greaterThan 2.0 1"));
+        assertTrue(mlog.contains("op div __mpl_tmp3 1.7976931348623157E308 2.0"));
+        assertTrue(mlog.contains("jump mpl_float_div_non_zero_11 notEqual mpl_first 0"));
+        assertTrue(mlog.contains("set __mpl_tmp4 0.0"));
+        assertTrue(mlog.contains("jump mpl_float_sub_rhs_positive_19 greaterThan 1.0 0"));
+        assertTrue(mlog.contains("op add __mpl_tmp7 -1.7976931348623157E308 1.0"));
+    }
+
+    @Test
+    void rejectsNonFiniteFloatLiterals(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), "var impossible: Float = 1.0e309;");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3103")
+            && diagnostic.message().contains("Float 字面量必须是有限值")));
+    }
+
+    @Test
     void optimizesConstantExpressionsAndConstantBranchesBeforeMlogLowering(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

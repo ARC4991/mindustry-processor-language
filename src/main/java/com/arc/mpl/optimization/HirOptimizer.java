@@ -262,7 +262,7 @@ public final class HirOptimizer {
             if (type == ValueType.FLOAT && ("+".equals(operator) || "-".equals(operator))) {
                 double value = Double.parseDouble(constant.mlogLiteral());
                 double result = "-".equals(operator) ? -value : value;
-                return Double.isFinite(result) ? Optional.of(foldedFloat(result)) : Optional.empty();
+                return Optional.of(foldedFloat(result));
             }
         } catch (NumberFormatException ignored) {
             return Optional.empty();
@@ -295,7 +295,7 @@ public final class HirOptimizer {
                 double rightValue = Double.parseDouble(rightConstant.mlogLiteral());
                 if (isComparison(operator)) return Optional.of(foldedBoolean(compare(leftValue, operator, rightValue)));
                 if (type == ValueType.FLOAT && isFloatingArithmetic(operator)) {
-                    if ("/".equals(operator) && rightValue == 0.0) return Optional.empty();
+                    if ("/".equals(operator) && rightValue == 0.0) return Optional.of(foldedFloat(0.0));
                     double result = switch (operator) {
                         case "+" -> leftValue + rightValue;
                         case "-" -> leftValue - rightValue;
@@ -303,7 +303,7 @@ public final class HirOptimizer {
                         case "/" -> leftValue / rightValue;
                         default -> Double.NaN;
                     };
-                    return Double.isFinite(result) ? Optional.of(foldedFloat(result)) : Optional.empty();
+                    return Optional.of(foldedFloat(result));
                 }
                 if (("==".equals(operator) || "!=".equals(operator))) {
                     boolean equal = Double.compare(leftValue, rightValue) == 0;
@@ -333,6 +333,9 @@ public final class HirOptimizer {
 
     private HirConstant foldedFloat(double value) {
         constantFolds++;
+        if (Double.isNaN(value)) return new HirConstant("0.0", ValueType.FLOAT);
+        if (value == Double.POSITIVE_INFINITY) return new HirConstant(Double.toString(Double.MAX_VALUE), ValueType.FLOAT);
+        if (value == Double.NEGATIVE_INFINITY) return new HirConstant(Double.toString(-Double.MAX_VALUE), ValueType.FLOAT);
         return new HirConstant(Double.toString(value), ValueType.FLOAT);
     }
 
