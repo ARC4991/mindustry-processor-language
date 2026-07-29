@@ -19,6 +19,8 @@ import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
+import com.arc.mpl.hir.HirDraw;
+import com.arc.mpl.hir.HirDrawFlush;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIndexAccess;
@@ -123,6 +125,14 @@ public final class MlogCodeGenerator {
         if (statement instanceof HirPrintStatement print) {
             for (HirExpression argument : print.arguments()) output.print(emitExpression(argument));
             output.printFlush(print.linkName());
+            return;
+        }
+        if (statement instanceof HirDraw draw) {
+            emitDraw(draw);
+            return;
+        }
+        if (statement instanceof HirDrawFlush flush) {
+            output.drawFlush(flush.displayName());
             return;
         }
         if (statement instanceof HirBlock block) {
@@ -492,6 +502,23 @@ public final class MlogCodeGenerator {
     private void emitBuildingControl(HirBuildingControl control) {
         List<String> arguments = control.arguments().stream().map(this::emitExpression).toList();
         output.buildingControl(resolveBuildingTarget(control.target()), control.action(), arguments);
+    }
+
+    private void emitDraw(HirDraw draw) {
+        List<String> values = draw.arguments().stream().map(this::emitExpression).toList();
+        List<String> operands = switch (draw.command()) {
+            case CLEAR -> List.of(values.get(0), values.get(1), values.get(2), "0", "0", "0");
+            case COLOR -> List.of(values.get(0), values.get(1), values.get(2), values.get(3), "0", "0");
+            case RECT, LINE_RECT, LINE -> List.of(values.get(0), values.get(1), values.get(2), values.get(3), "0", "0");
+        };
+        String command = switch (draw.command()) {
+            case CLEAR -> "clear";
+            case COLOR -> "color";
+            case RECT -> "rect";
+            case LINE_RECT -> "lineRect";
+            case LINE -> "line";
+        };
+        output.draw(command, operands);
     }
 
     private void emitBuildingIteration(HirBuildingIteration iteration) {

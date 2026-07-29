@@ -14,6 +14,8 @@ import com.arc.mpl.hir.HirCollectionSet;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
+import com.arc.mpl.hir.HirDraw;
+import com.arc.mpl.hir.HirDrawFlush;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirFor;
@@ -100,6 +102,10 @@ public final class HirOptimizer {
         if (statement instanceof HirPrintStatement print) {
             return List.of(new HirPrintStatement(print.linkName(), optimizeExpressions(print.arguments())));
         }
+        if (statement instanceof HirDraw draw) {
+            return List.of(new HirDraw(draw.displayName(), draw.command(), optimizeExpressions(draw.arguments())));
+        }
+        if (statement instanceof HirDrawFlush flush) return List.of(flush);
         if (statement instanceof HirBlock block) return List.of(new HirBlock(optimizeStatements(block.statements())));
         if (statement instanceof HirIf branch) return optimizeIf(branch);
         if (statement instanceof HirWhile loop) return optimizeWhile(loop);

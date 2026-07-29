@@ -50,6 +50,15 @@ final class MlogProgramBuilder {
         add(new PrintFlushInstruction(target));
     }
 
+    void draw(String command, List<String> arguments) {
+        if (arguments.size() != 6) throw new IllegalArgumentException("draw 指令需要六个参数");
+        add(new DrawInstruction(command, arguments));
+    }
+
+    void drawFlush(String target) {
+        add(new DrawFlushInstruction(target));
+    }
+
     void jump(Label target, JumpCondition condition, String value, String compare) {
         add(new JumpInstruction(target, condition, value, compare));
     }
@@ -167,7 +176,7 @@ final class MlogProgramBuilder {
     }
 
     private sealed interface Instruction permits LabelInstruction, SetInstruction, PrintInstruction,
-        PrintFlushInstruction, JumpInstruction, UnitBindInstruction, SensorInstruction,
+        PrintFlushInstruction, DrawInstruction, DrawFlushInstruction, JumpInstruction, UnitBindInstruction, SensorInstruction,
         OperationInstruction, UnitControlInstruction, BuildingControlInstruction, CounterJumpInstruction,
         StopInstruction {
         String render();
@@ -201,6 +210,14 @@ final class MlogProgramBuilder {
         @Override public String render() {
             return "printflush " + target;
         }
+    }
+
+    private record DrawInstruction(String command, List<String> arguments) implements Instruction {
+        @Override public String render() { return "draw " + command + " " + String.join(" ", arguments); }
+    }
+
+    private record DrawFlushInstruction(String target) implements Instruction {
+        @Override public String render() { return "drawflush " + target; }
     }
 
     private record JumpInstruction(Label target, JumpCondition condition, String value, String compare)

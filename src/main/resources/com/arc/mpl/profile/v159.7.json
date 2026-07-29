@@ -30,6 +30,8 @@
     { "opcode": "sensor", "operands": ["output", "target", "property"], "permissions": ["normal"] },
     { "opcode": "print", "operands": ["value"], "permissions": ["normal"] },
     { "opcode": "printflush", "operands": ["message"], "permissions": ["normal"] },
+    { "opcode": "draw", "operands": ["command", "arguments"], "permissions": ["normal"] },
+    { "opcode": "drawflush", "operands": ["display"], "permissions": ["normal"] },
     { "opcode": "printchar", "operands": ["codePoint"], "permissions": ["normal"] },
     { "opcode": "format", "operands": ["value", "format"], "permissions": ["normal"] }
   ],

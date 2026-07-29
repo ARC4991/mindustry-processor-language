@@ -29,7 +29,9 @@
     { "opcode": "ucontrol", "operands": ["action", "arguments"], "permissions": ["normal", "logicUnitControl"] },
     { "opcode": "sensor", "operands": ["output", "target", "property"], "permissions": ["normal"] },
     { "opcode": "print", "operands": ["value"], "permissions": ["normal"] },
-    { "opcode": "printflush", "operands": ["message"], "permissions": ["normal"] }
+    { "opcode": "printflush", "operands": ["message"], "permissions": ["normal"] },
+    { "opcode": "draw", "operands": ["command", "arguments"], "permissions": ["normal"] },
+    { "opcode": "drawflush", "operands": ["display"], "permissions": ["normal"] }
   ],
   "contents": {
     "units": [

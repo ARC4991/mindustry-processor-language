@@ -13,6 +13,8 @@ import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
+import com.arc.mpl.hir.HirDraw;
+import com.arc.mpl.hir.HirDrawFlush;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
@@ -98,6 +100,17 @@ public final class MilCodeGenerator {
         }
         if (statement instanceof HirPrintStatement print) {
             emitPrint(writer, print);
+            return;
+        }
+        if (statement instanceof HirDraw draw) {
+            writer.append("@io.draw(@").append(identifier(draw.displayName(), "显示链接"))
+                .append(", ").append(draw.command().name().toLowerCase());
+            for (HirExpression argument : draw.arguments()) writer.append(", ").append(expression(argument));
+            writer.line(");");
+            return;
+        }
+        if (statement instanceof HirDrawFlush flush) {
+            writer.line("@io.drawFlush(@" + identifier(flush.displayName(), "显示链接") + ");");
             return;
         }
         if (statement instanceof HirBlock block) {

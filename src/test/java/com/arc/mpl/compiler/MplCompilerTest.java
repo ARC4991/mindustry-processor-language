@@ -380,6 +380,58 @@ class MplCompilerTest {
     }
 
     @Test
+    void lowersDirectDisplayDrawingWithoutLeakingRawMlog(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Screen: Display = link(\"display1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            Screen.clear(Color.black);
+            Screen.fill(Color.green);
+            Screen.fillRect(1, 2, 30, 40);
+            Screen.stroke(Color.white);
+            Screen.strokeRect(2, 3, 20, 10);
+            Screen.line(0, 0, 80, 80);
+            Screen.flush();
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            draw clear 0 0 0 0 0 0
+            draw color 0 255 0 255 0 0
+            draw rect 1 2 30 40 0 0
+            draw color 255 255 255 255 0 0
+            draw lineRect 2 3 20 10 0 0
+            draw line 0 0 80 80 0 0
+            drawflush display1
+            stop
+            """, result.mlog().orElseThrow());
+        assertTrue(result.mil().orElseThrow().contains("@io.draw(@display1, clear, 0, 0, 0);"));
+        assertTrue(result.mil().orElseThrow().contains("@io.drawFlush(@display1);"));
+    }
+
+    @Test
+    void rejectsDisplayDrawingInLoopsAndInvalidColors(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Screen: Display = link(\"display1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            while (true) {
+                Screen.fill(Color.blue);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3203")
+            && diagnostic.message().contains("循环或函数")));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3203")
+            && diagnostic.message().contains("Color 不支持常量")));
+    }
+
+    @Test
     void expandsBuildingTraversalOverDeclaredLinksOnly(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """

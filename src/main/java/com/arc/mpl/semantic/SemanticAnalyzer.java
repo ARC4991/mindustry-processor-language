@@ -47,6 +47,8 @@ import com.arc.mpl.hir.HirCollectionSet;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
+import com.arc.mpl.hir.HirDraw;
+import com.arc.mpl.hir.HirDrawFlush;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirFor;
@@ -719,6 +721,9 @@ public final class SemanticAnalyzer {
             if ("Message".equals(hardware.mplType()) && "print".equals(member.member())) {
                 return analyzePrintCall(hardware.gameAlias(), call.arguments());
             }
+            if ("Display".equals(hardware.mplType())) {
+                return analyzeDisplayCall(hardware, member.member(), call.arguments(), call.span());
+            }
             return analyzeBuildingControl(hardware, member.member(), call.arguments(), call.span());
         }
 
@@ -736,6 +741,89 @@ public final class SemanticAnalyzer {
             return analyzeUnitControl(target.name(), member.member(), call.arguments(), call.span());
         }
         return null;
+    }
+
+    private HirStatement analyzeDisplayCall(HardwareContract.LinkDeclaration display, String method,
+                                            List<Expression> sourceArguments, SourceSpan span) {
+        if (loopDepth > 0 || currentFunction != null) {
+            error("MPL3203", "第一版 Display 绘制不能位于循环或函数中；无法静态证明 draw 缓冲上界", span);
+        }
+        if ("flush".equals(method)) {
+            if (!sourceArguments.isEmpty()) error("MPL3203", "Display.flush() 不接受参数", span);
+            return new HirDrawFlush(display.gameAlias());
+        }
+        HirDraw.Command command = switch (method) {
+            case "clear" -> HirDraw.Command.CLEAR;
+            case "fill", "stroke" -> HirDraw.Command.COLOR;
+            case "fillRect" -> HirDraw.Command.RECT;
+            case "strokeRect" -> HirDraw.Command.LINE_RECT;
+            case "line" -> HirDraw.Command.LINE;
+            default -> null;
+        };
+        if (command == null) {
+            error("MPL3203", "Display 不支持绘制方法：" + method, span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (command == HirDraw.Command.CLEAR || command == HirDraw.Command.COLOR) {
+            if (sourceArguments.size() != 1) error("MPL3203", "Display." + method + "(...) 需要一个 Color 参数", span);
+            List<HirExpression> color = sourceArguments.size() == 1
+                ? analyzeColor(sourceArguments.get(0)) : List.<HirExpression>of(new HirConstant("0", ValueType.ERROR),
+                    new HirConstant("0", ValueType.ERROR), new HirConstant("0", ValueType.ERROR),
+                    new HirConstant("0", ValueType.ERROR));
+            return new HirDraw(display.gameAlias(), command, color.subList(0, command.argumentCount()));
+        }
+        if (sourceArguments.size() != command.argumentCount()) {
+            error("MPL3203", "Display." + method + "(...) 的参数数量不匹配", span);
+        }
+        List<HirExpression> arguments = new ArrayList<>();
+        for (Expression source : sourceArguments) {
+            HirExpression argument = analyzeExpression(source);
+            requireNumeric(argument.type(), source.span(), "Display." + method + " 参数");
+            arguments.add(argument);
+        }
+        while (arguments.size() < command.argumentCount()) arguments.add(new HirConstant("0", ValueType.ERROR));
+        return new HirDraw(display.gameAlias(), command, arguments.subList(0, command.argumentCount()));
+    }
+
+    private List<HirExpression> analyzeColor(Expression source) {
+        if (source instanceof MemberAccessExpression member && member.target() instanceof Identifier namespace
+            && "Color".equals(namespace.name())) {
+            return switch (member.member()) {
+                case "black" -> color(0, 0, 0, 255);
+                case "white" -> color(255, 255, 255, 255);
+                case "red" -> color(255, 0, 0, 255);
+                case "green" -> color(0, 255, 0, 255);
+                default -> invalidColor(source, "Color 不支持常量：" + member.member());
+            };
+        }
+        if (source instanceof CallExpression call && call.callee() instanceof MemberAccessExpression member
+            && member.target() instanceof Identifier namespace && "Color".equals(namespace.name()) && "rgb".equals(member.member())) {
+            if (call.arguments().size() != 3 && call.arguments().size() != 4) {
+                return invalidColor(source, "Color.rgb(...) 需要 3 或 4 个 Int 参数");
+            }
+            List<HirExpression> values = new ArrayList<>();
+            for (Expression argument : call.arguments()) {
+                if (!(argument instanceof IntegerLiteral literal) || literal.value() < 0 || literal.value() > 255) {
+                    error("MPL3203", "当前 Color.rgb(...) 仅接受 0 到 255 的 Int 字面量", argument.span());
+                }
+                HirExpression value = analyzeExpression(argument);
+                if (value.type() != ValueType.INT) error("MPL3203", "Color.rgb(...) 参数必须是 Int", argument.span());
+                values.add(value);
+            }
+            if (values.size() == 3) values.add(new HirConstant("255", ValueType.INT));
+            return List.copyOf(values);
+        }
+        return invalidColor(source, "Color 参数必须是 Color 常量或 Color.rgb(...)");
+    }
+
+    private List<HirExpression> color(int red, int green, int blue, int alpha) {
+        return List.of(new HirConstant(Integer.toString(red), ValueType.INT), new HirConstant(Integer.toString(green), ValueType.INT),
+            new HirConstant(Integer.toString(blue), ValueType.INT), new HirConstant(Integer.toString(alpha), ValueType.INT));
+    }
+
+    private List<HirExpression> invalidColor(Expression source, String message) {
+        error("MPL3203", message, source.span());
+        return color(0, 0, 0, 0);
     }
 
     private HirStatement analyzeBuildingControl(HardwareContract.LinkDeclaration link, String method,
