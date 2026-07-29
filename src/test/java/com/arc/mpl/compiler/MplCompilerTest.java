@@ -140,6 +140,43 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesCountingForAndRunsUpdateAfterContinue(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var total: Int = 0;
+            for (var i: Int = 0; i < 3; i += 1) {
+                if (i == 1) {
+                    continue;
+                }
+                total += i;
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            set mpl_total 0
+            set mpl_i 0
+            mpl_for_condition_0:
+            op lessThan __mpl_tmp0 mpl_i 3
+            jump mpl_for_end_2 equal __mpl_tmp0 0
+            op equal __mpl_tmp1 mpl_i 1
+            jump mpl_if_end_3 equal __mpl_tmp1 0
+            jump mpl_for_update_1 always 0 0
+            mpl_if_end_3:
+            op add mpl_total mpl_total mpl_i
+            mpl_for_update_1:
+            op add mpl_i mpl_i 1
+            jump mpl_for_condition_0 always 0 0
+            mpl_for_end_2:
+            stop
+            """, result.mlog().orElseThrow());
+        assertTrue(result.mil().orElseThrow().contains(
+            "for (var i: Int = 0; (i < 3); i += 1) {"));
+    }
+
+    @Test
     void compilesMessagePrintUsingTheAutomaticFirstMessageLink(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), "const AlertBoard: Message = link(\"message1\");");

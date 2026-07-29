@@ -11,6 +11,7 @@ import com.arc.mpl.ast.DoWhileStatement;
 import com.arc.mpl.ast.Expression;
 import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.ForEachStatement;
+import com.arc.mpl.ast.ForStatement;
 import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.Identifier;
 import com.arc.mpl.ast.IfStatement;
@@ -106,6 +107,9 @@ public final class MplSyntaxParser {
             if (context.ifStatement() != null) {
                 return (Statement) visit(context.ifStatement());
             }
+            if (context.forStatement() != null) {
+                return (Statement) visit(context.forStatement());
+            }
             if (context.forEachStatement() != null) {
                 return (Statement) visit(context.forEachStatement());
             }
@@ -163,6 +167,19 @@ public final class MplSyntaxParser {
             return new ForEachStatement(
                 context.name.getText(),
                 (Expression) visit(context.iterable),
+                (BlockStatement) visit(context.body),
+                span(context));
+        }
+
+        @Override
+        public ForStatement visitForStatement(MplParser.ForStatementContext context) {
+            return new ForStatement(
+                context.initializerDeclaration == null ? Optional.empty()
+                    : Optional.of((VariableDeclaration) visit(context.initializerDeclaration)),
+                context.initializerExpression == null ? Optional.empty()
+                    : Optional.of((Expression) visit(context.initializerExpression)),
+                context.condition == null ? Optional.empty() : Optional.of((Expression) visit(context.condition)),
+                context.update == null ? Optional.empty() : Optional.of((Expression) visit(context.update)),
                 (BlockStatement) visit(context.body),
                 span(context));
         }

@@ -12,6 +12,7 @@ import com.arc.mpl.ast.Expression;
 import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.ForEachStatement;
+import com.arc.mpl.ast.ForStatement;
 import com.arc.mpl.ast.Identifier;
 import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.IntegerLiteral;
@@ -37,6 +38,7 @@ import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
+import com.arc.mpl.hir.HirFor;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIf;
@@ -134,6 +136,9 @@ public final class SemanticAnalyzer {
         if (statement instanceof IfStatement branch) {
             return analyzeIf(branch);
         }
+        if (statement instanceof ForStatement loop) {
+            return analyzeFor(loop);
+        }
         if (statement instanceof ForEachStatement loop) {
             return analyzeForEach(loop);
         }
@@ -197,6 +202,23 @@ public final class SemanticAnalyzer {
             return analyzeBlock(block);
         } finally {
             loopDepth--;
+        }
+    }
+
+    private HirStatement analyzeFor(ForStatement loop) {
+        scopes.push(new HashMap<>());
+        try {
+            Optional<HirVariableDeclaration> declarationInitializer = loop.declarationInitializer()
+                .map(value -> (HirVariableDeclaration) analyzeDeclaration(value));
+            Optional<HirExpression> expressionInitializer = loop.expressionInitializer().map(this::analyzeExpression);
+            HirExpression condition = loop.condition().map(this::analyzeExpression)
+                .orElseGet(() -> new HirConstant("1", ValueType.BOOL));
+            loop.condition().ifPresent(value -> requireBool(condition.type(), value.span(), "for 条件"));
+            Optional<HirExpression> update = loop.update().map(this::analyzeExpression);
+            List<HirStatement> body = analyzeLoopBlock(loop.body());
+            return new HirFor(declarationInitializer, expressionInitializer, condition, update, body);
+        } finally {
+            scopes.pop();
         }
     }
 

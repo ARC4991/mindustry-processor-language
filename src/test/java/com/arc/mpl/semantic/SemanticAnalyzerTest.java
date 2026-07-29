@@ -62,4 +62,16 @@ class SemanticAnalyzerTest {
         assertEquals(java.util.List.of("MPL3401", "MPL3402"),
             result.diagnostics().stream().map(diagnostic -> diagnostic.code()).toList());
     }
+
+    @Test
+    void keepsCountingForInitializerInsideTheLoopScope() {
+        Program program = parser.parse("for (var i: Int = 0; i < 2; i += 1) { }\nvar leaked: Int = i;",
+            Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3102")
+            && diagnostic.message().contains("i")));
+    }
 }

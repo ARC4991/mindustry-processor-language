@@ -5,6 +5,7 @@ import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
+import com.arc.mpl.hir.HirFor;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirBreak;
@@ -86,6 +87,10 @@ public final class MlogCodeGenerator {
             emitDoWhile(loop);
             return;
         }
+        if (statement instanceof HirFor loop) {
+            emitFor(loop);
+            return;
+        }
         if (statement instanceof HirIf branch) {
             emitIf(branch);
             return;
@@ -133,6 +138,22 @@ public final class MlogCodeGenerator {
         emitLabel(condition);
         String accepted = emitExpression(loop.condition());
         emitJump(start, JumpCondition.NOT_EQUAL, accepted, "0");
+        emitLabel(end);
+    }
+
+    private void emitFor(HirFor loop) {
+        MlogProgramBuilder.Label condition = label("for_condition");
+        MlogProgramBuilder.Label update = label("for_update");
+        MlogProgramBuilder.Label end = label("for_end");
+        loop.declarationInitializer().ifPresent(this::emitStatement);
+        loop.expressionInitializer().ifPresent(this::emitExpression);
+        emitLabel(condition);
+        String accepted = emitExpression(loop.condition());
+        emitJump(end, JumpCondition.EQUAL, accepted, "0");
+        emitLoopBody(loop.body(), update, end);
+        emitLabel(update);
+        loop.update().ifPresent(this::emitExpression);
+        emitJump(condition, JumpCondition.ALWAYS, "0", "0");
         emitLabel(end);
     }
 

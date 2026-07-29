@@ -11,6 +11,7 @@ import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
+import com.arc.mpl.hir.HirFor;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
@@ -86,6 +87,23 @@ public final class MilCodeGenerator {
             writer.append("do ");
             emitBlock(writer, loop.body());
             writer.line("while (" + expression(loop.condition()) + ");");
+            return;
+        }
+        if (statement instanceof HirFor loop) {
+            writer.append("for (");
+            if (loop.declarationInitializer().isPresent()) {
+                HirVariableDeclaration initializer = loop.declarationInitializer().orElseThrow();
+                writer.append(initializer.mutable() ? "var " : "val ")
+                    .append(identifier(initializer.name(), "变量"))
+                    .append(": ").append(displayType(initializer.type()))
+                    .append(" = ").append(expression(initializer.initializer()));
+            } else if (loop.expressionInitializer().isPresent()) {
+                writer.append(expression(loop.expressionInitializer().orElseThrow()));
+            }
+            writer.append("; ").append(expression(loop.condition())).append("; ");
+            loop.update().ifPresent(value -> writer.append(expression(value)));
+            writer.append(") ");
+            emitBlock(writer, loop.body());
             return;
         }
         if (statement instanceof HirIf branch) {

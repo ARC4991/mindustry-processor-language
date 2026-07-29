@@ -3,6 +3,7 @@ package com.arc.mpl.syntax;
 import com.arc.mpl.ast.AssignmentExpression;
 import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.ExpressionStatement;
+import com.arc.mpl.ast.ForStatement;
 import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.VariableDeclaration;
 import org.junit.jupiter.api.Test;
@@ -58,5 +59,27 @@ class MplSyntaxParserTest {
         IfStatement outer = assertInstanceOf(IfStatement.class, result.program().orElseThrow().statements().get(0));
         IfStatement nested = assertInstanceOf(IfStatement.class, outer.elseBranch().orElseThrow());
         assertTrue(nested.elseBranch().isPresent());
+    }
+
+    @Test
+    void distinguishesCountingForFromForEach() {
+        ParseResult result = parser.parse("for (var i: Int = 0; i < 3; i += 1) { }", Path.of("main.mpl"));
+
+        assertTrue(result.succeeded());
+        ForStatement loop = assertInstanceOf(ForStatement.class, result.program().orElseThrow().statements().get(0));
+        assertEquals("i", loop.declarationInitializer().orElseThrow().name());
+        assertEquals("+=", assertInstanceOf(AssignmentExpression.class, loop.update().orElseThrow()).operator());
+    }
+
+    @Test
+    void acceptsOmittedCountingForSections() {
+        ParseResult result = parser.parse("for (;;) { break; }", Path.of("main.mpl"));
+
+        assertTrue(result.succeeded());
+        ForStatement loop = assertInstanceOf(ForStatement.class, result.program().orElseThrow().statements().get(0));
+        assertTrue(loop.declarationInitializer().isEmpty());
+        assertTrue(loop.expressionInitializer().isEmpty());
+        assertTrue(loop.condition().isEmpty());
+        assertTrue(loop.update().isEmpty());
     }
 }

@@ -10,6 +10,7 @@ statement
     : whileStatement
     | doWhileStatement
     | ifStatement
+    | forStatement
     | forEachStatement
     | block
     | BREAK SEMICOLON
@@ -26,6 +27,10 @@ doWhileStatement: DO body=block WHILE LPAREN condition=expression RPAREN SEMICOL
 
 ifStatement: IF LPAREN condition=expression RPAREN thenBlock=block
     (ELSE (elseBlock=block | elseIf=ifStatement))?;
+
+forStatement: FOR LPAREN
+    (initializerDeclaration=variableDeclaration | initializerExpression=expression)? SEMICOLON
+    condition=expression? SEMICOLON update=expression? RPAREN body=block;
 
 forEachStatement: FOR LPAREN VAR name=IDENTIFIER COLON iterable=expression RPAREN body=block;
 
