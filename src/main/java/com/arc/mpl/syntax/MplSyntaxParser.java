@@ -11,6 +11,7 @@ import com.arc.mpl.ast.ContinueStatement;
 import com.arc.mpl.ast.DoWhileStatement;
 import com.arc.mpl.ast.Expression;
 import com.arc.mpl.ast.ExpressionStatement;
+import com.arc.mpl.ast.ExportDeclaration;
 import com.arc.mpl.ast.ForEachStatement;
 import com.arc.mpl.ast.ForStatement;
 import com.arc.mpl.ast.FunctionDeclaration;
@@ -19,6 +20,7 @@ import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.Identifier;
 import com.arc.mpl.ast.IndexExpression;
 import com.arc.mpl.ast.IfStatement;
+import com.arc.mpl.ast.ImportDeclaration;
 import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
@@ -96,15 +98,38 @@ public final class MplSyntaxParser {
     private static final class AstBuilder extends MplParserBaseVisitor<Object> {
         @Override
         public Program visitProgram(MplParser.ProgramContext context) {
+            List<ImportDeclaration> imports = context.importDeclaration().stream()
+                .map(value -> (ImportDeclaration) visit(value)).toList();
+            List<ExportDeclaration> exports = new ArrayList<>();
             List<FunctionDeclaration> functions = new ArrayList<>();
-            for (MplParser.FunctionDeclarationContext function : context.functionDeclaration()) {
-                functions.add((FunctionDeclaration) visit(function));
-            }
             List<Statement> statements = new ArrayList<>();
-            for (MplParser.StatementContext statement : context.statement()) {
-                statements.add((Statement) visit(statement));
+            for (MplParser.TopLevelDeclarationContext declaration : context.topLevelDeclaration()) {
+                if (declaration.functionDeclaration() != null) {
+                    FunctionDeclaration function = (FunctionDeclaration) visit(declaration.functionDeclaration());
+                    functions.add(function);
+                    if (declaration.exported != null) {
+                        exports.add(new ExportDeclaration(function.name(), span(declaration)));
+                    }
+                } else if (declaration.variableDeclaration() != null) {
+                    VariableDeclaration variable = (VariableDeclaration) visit(declaration.variableDeclaration());
+                    statements.add(variable);
+                    if (declaration.exported != null) {
+                        exports.add(new ExportDeclaration(variable.name(), span(declaration)));
+                    }
+                } else {
+                    statements.add((Statement) visit(declaration.statement()));
+                }
             }
-            return new Program(functions, statements);
+            return new Program(imports, exports, functions, statements);
+        }
+
+        @Override
+        public ImportDeclaration visitImportDeclaration(MplParser.ImportDeclarationContext context) {
+            List<ImportDeclaration.HardwareArgument> hardware = context.hardwareArgument().stream()
+                .map(value -> new ImportDeclaration.HardwareArgument(value.name.getText(), value.value.getText(), span(value)))
+                .toList();
+            return new ImportDeclaration(context.importedName.stream().map(Token::getText).toList(),
+                stringValue(context.source.getText()), hardware, span(context));
         }
 
         @Override
@@ -346,6 +371,10 @@ public final class MplSyntaxParser {
         private String unescape(String text) {
             return text.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t")
                 .replace("\\\"", "\"").replace("\\\\", "\\");
+        }
+
+        private String stringValue(String token) {
+            return unescape(token.substring(1, token.length() - 1));
         }
 
         private Expression fold(org.antlr.v4.runtime.ParserRuleContext context, List<? extends ParseTree> operands) {

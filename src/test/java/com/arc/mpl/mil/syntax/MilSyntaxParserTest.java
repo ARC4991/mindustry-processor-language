@@ -15,6 +15,20 @@ class MilSyntaxParserTest {
     private final TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
 
     @Test
+    void preservesModuleDeclarationsInStructuredMil() {
+        MilParseResult result = parser.parse("""
+            import { clamp } from "./math";
+            export fun normalized(value: Float): Float { return clamp(value); }
+            """, Path.of("main.mil"), profile, MilSourceKind.USER);
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        var program = result.document().orElseThrow().program();
+        assertEquals("./math", program.imports().get(0).source());
+        assertEquals(java.util.List.of("clamp"), program.imports().get(0).names());
+        assertEquals("normalized", program.exports().get(0).name());
+    }
+
+    @Test
     void parsesStructuredControlFlowMacrosAndGameSymbols() {
         MilParseResult result = parser.parse("""
             var phase: Float = 0.0;

@@ -179,6 +179,13 @@ public final class SemanticAnalyzer {
         currentReturnType = null;
         analyzingTopLevel = true;
 
+        if (!program.imports().isEmpty() || !program.exports().isEmpty()) {
+            SourceSpan span = !program.imports().isEmpty()
+                ? program.imports().get(0).span() : program.exports().get(0).span();
+            error("MPL1400", "模块声明必须先经过 ProjectProgramLoader 链接", span);
+            return new SemanticResult(Optional.empty(), diagnostics);
+        }
+
         for (FunctionDeclaration function : program.functions()) registerFunction(function);
 
         List<HirStatement> statements = new ArrayList<>();

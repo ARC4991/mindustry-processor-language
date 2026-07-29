@@ -22,6 +22,26 @@ class MplSyntaxParserTest {
     private final MplSyntaxParser parser = new MplSyntaxParser();
 
     @Test
+    void parsesNamedImportsExportsAndHardwareInjection() {
+        ParseResult result = parser.parse("""
+            import { Dashboard, render } from "@mpl/dashboard" with {
+                screen: MainScreen
+            };
+            export fun twice(value: Int): Int { return value * 2; }
+            export val answer: Int = 42;
+            """, Path.of("main.mpl"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        var program = result.program().orElseThrow();
+        assertEquals(java.util.List.of("Dashboard", "render"), program.imports().get(0).names());
+        assertEquals("@mpl/dashboard", program.imports().get(0).source());
+        assertEquals("screen", program.imports().get(0).hardwareArguments().get(0).name());
+        assertEquals("MainScreen", program.imports().get(0).hardwareArguments().get(0).value());
+        assertEquals(java.util.List.of("twice", "answer"),
+            program.exports().stream().map(com.arc.mpl.ast.ExportDeclaration::name).toList());
+    }
+
+    @Test
     void buildsAnAstWithExpressionPrecedenceAndSourcePositions() {
         ParseResult result = parser.parse("var total: Int = 1 + 2 * 3;\ntotal += 4;", Path.of("main.mpl"));
 

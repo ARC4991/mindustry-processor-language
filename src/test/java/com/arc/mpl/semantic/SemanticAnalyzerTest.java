@@ -30,6 +30,17 @@ class SemanticAnalyzerTest {
     private final SemanticAnalyzer analyzer = new SemanticAnalyzer();
 
     @Test
+    void rejectsModuleMetadataThatBypassesTheProjectLinker() {
+        Program program = parser.parse("import { helper } from \"./helper\";\n", Path.of("main.mpl"))
+            .program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertEquals("MPL1400", result.diagnostics().get(0).code());
+    }
+
+    @Test
     void rejectsImplicitBoolToIntConversion() {
         Program program = parser.parse("var number: Int = true;", Path.of("main.mpl")).program().orElseThrow();
 

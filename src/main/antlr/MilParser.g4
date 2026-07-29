@@ -4,7 +4,19 @@ options { tokenVocab = MilLexer; }
 
 @header { package com.arc.mpl.mil.syntax; }
 
-program: (functionDeclaration | statement)* EOF;
+program: importDeclaration* topLevelDeclaration* EOF;
+
+importDeclaration: IMPORT LBRACE importedName+=IDENTIFIER (COMMA importedName+=IDENTIFIER)* RBRACE
+    FROM source=STRING_LITERAL (WITH LBRACE
+        (hardwareArgument (COMMA hardwareArgument)*)? RBRACE)? SEMICOLON;
+
+hardwareArgument: name=IDENTIFIER COLON value=IDENTIFIER;
+
+topLevelDeclaration
+    : exported=EXPORT? functionDeclaration
+    | exported=EXPORT? variableDeclaration SEMICOLON
+    | statement
+    ;
 
 functionDeclaration: FUN name=IDENTIFIER LPAREN (parameter (COMMA parameter)*)? RPAREN
     (COLON returnType=typeReference)? body=block;

@@ -16,6 +16,10 @@ RETURN: 'return';
 TRUE: 'true';
 FALSE: 'false';
 NULL: 'null';
+IMPORT: 'import';
+EXPORT: 'export';
+FROM: 'from';
+WITH: 'with';
 
 ARROW: '=>';
 PLUS_ASSIGN: '+=';

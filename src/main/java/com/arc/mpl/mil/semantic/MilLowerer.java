@@ -64,7 +64,7 @@ public final class MilLowerer {
         Program source = document.program();
         List<FunctionDeclaration> functions = source.functions().stream().map(this::lowerFunction).toList();
         List<Statement> statements = source.statements().stream().map(this::lowerStatement).toList();
-        Program program = new Program(functions, statements);
+        Program program = new Program(source.imports(), source.exports(), functions, statements);
         return new MilLoweringResult(diagnostics.isEmpty() ? Optional.of(program) : Optional.empty(), diagnostics);
     }
 
