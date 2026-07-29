@@ -48,7 +48,6 @@ import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirDraw;
-import com.arc.mpl.hir.HirDrawFlush;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirFor;
@@ -103,8 +102,6 @@ public final class SemanticAnalyzer {
     private final Map<String, Set<String>> directGlobalDependencies = new HashMap<>();
     private final List<TopLevelCall> topLevelCalls = new ArrayList<>();
     private final Set<String> initializedGlobals = new HashSet<>();
-    private int pendingDrawCommands;
-    private String pendingDrawDisplayAlias;
     private Path file;
     private Map<String, String> messages = Map.of();
     private Map<String, HardwareContract.LinkDeclaration> hardwareLinks = Map.of();
@@ -155,8 +152,6 @@ public final class SemanticAnalyzer {
         directGlobalDependencies.clear();
         topLevelCalls.clear();
         initializedGlobals.clear();
-        pendingDrawCommands = 0;
-        pendingDrawDisplayAlias = null;
         unitIterationDepth = 0;
         loopDepth = 0;
         activeUnitBinding = null;
@@ -749,14 +744,9 @@ public final class SemanticAnalyzer {
 
     private HirStatement analyzeDisplayCall(HardwareContract.LinkDeclaration display, String method,
                                             List<Expression> sourceArguments, SourceSpan span) {
-        if (loopDepth > 0 || currentFunction != null) {
-            error("MPL3203", "第一版 Display 绘制不能位于循环或函数中；无法静态证明 draw 缓冲上界", span);
-        }
         if ("flush".equals(method)) {
-            if (!sourceArguments.isEmpty()) error("MPL3203", "Display.flush() 不接受参数", span);
-            pendingDrawCommands = 0;
-            pendingDrawDisplayAlias = null;
-            return new HirDrawFlush(display.gameAlias());
+            error("MPL3203", "MPL 不提供 Display.flush()；绘制刷新由编译器 runtime 自动管理", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
         }
         HirDraw.Command command = switch (method) {
             case "clear" -> HirDraw.Command.CLEAR;
@@ -776,7 +766,6 @@ public final class SemanticAnalyzer {
                 ? analyzeColor(sourceArguments.get(0)) : List.<HirExpression>of(new HirConstant("0", ValueType.ERROR),
                     new HirConstant("0", ValueType.ERROR), new HirConstant("0", ValueType.ERROR),
                     new HirConstant("0", ValueType.ERROR));
-            recordDraw(display.gameAlias(), span);
             return new HirDraw(display.gameAlias(), command, color.subList(0, command.argumentCount()));
         }
         if (sourceArguments.size() != command.argumentCount()) {
@@ -789,19 +778,7 @@ public final class SemanticAnalyzer {
             arguments.add(argument);
         }
         while (arguments.size() < command.argumentCount()) arguments.add(new HirConstant("0", ValueType.ERROR));
-        recordDraw(display.gameAlias(), span);
         return new HirDraw(display.gameAlias(), command, arguments.subList(0, command.argumentCount()));
-    }
-
-    private void recordDraw(String displayAlias, SourceSpan span) {
-        if (pendingDrawDisplayAlias != null && !pendingDrawDisplayAlias.equals(displayAlias)) pendingDrawCommands = 0;
-        if (pendingDrawDisplayAlias == null) pendingDrawDisplayAlias = displayAlias;
-        else if (!pendingDrawDisplayAlias.equals(displayAlias)) pendingDrawDisplayAlias = displayAlias;
-        pendingDrawCommands++;
-        if (pendingDrawCommands > profile.maxGraphicsBufferCommands()) {
-            error("MPL3203", "Display 在一次 flush 前最多允许 " + profile.maxGraphicsBufferCommands()
-                + " 条绘制命令，当前为 " + pendingDrawCommands, span);
-        }
     }
 
     private List<HirExpression> analyzeColor(Expression source) {

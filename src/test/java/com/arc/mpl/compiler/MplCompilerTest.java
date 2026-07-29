@@ -391,7 +391,6 @@ class MplCompilerTest {
             Screen.stroke(Color.white);
             Screen.strokeRect(2, 3, 20, 10);
             Screen.line(0, 0, 80, 80);
-            Screen.flush();
             """);
 
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
@@ -412,27 +411,45 @@ class MplCompilerTest {
     }
 
     @Test
-    void rejectsDisplayDrawingInLoopsAndInvalidColors(@TempDir Path project) throws IOException {
+    void automaticallyFlushesDrawingInsideLoops(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
             "const Screen: Display = link(\"display1\");");
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
             while (true) {
-                Screen.fill(Color.blue);
+                Screen.fill(Color.green);
+                Screen.fillRect(1, 2, 3, 4);
             }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.indexOf("draw rect 1 2 3 4 0 0") < mlog.indexOf("drawflush display1"));
+        assertTrue(mlog.indexOf("drawflush display1") < mlog.indexOf("jump _0 always 0 0"));
+        assertTrue(result.mil().orElseThrow().contains("@io.drawFlush(@display1);"));
+    }
+
+    @Test
+    void rejectsExplicitDisplayFlushBecauseItIsRuntimeManaged(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Screen: Display = link(\"display1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            Screen.flush();
+            Screen.fill(Color.blue);
             """);
 
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
         assertFalse(result.succeeded());
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3203")
-            && diagnostic.message().contains("循环或函数")));
-        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3203")
-            && diagnostic.message().contains("Color 不支持常量")));
+            && diagnostic.message().contains("不提供 Display.flush")));
     }
 
     @Test
-    void rejectsDisplayDrawBuffersThatExceedTheTargetLimit(@TempDir Path project) throws IOException {
+    void splitsDisplayDrawBuffersAtTheTargetLimit(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
             "const Screen: Display = link(\"display1\");");
@@ -441,9 +458,9 @@ class MplCompilerTest {
 
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
-        assertFalse(result.succeeded());
-        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3203")
-            && diagnostic.message().contains("最多允许 256 条")));
+        assertTrue(result.succeeded());
+        assertEquals(2, result.mlog().orElseThrow().lines()
+            .filter(line -> line.equals("drawflush display1")).count());
     }
 
     @Test

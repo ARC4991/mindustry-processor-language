@@ -17,6 +17,7 @@ import com.arc.mpl.syntax.ParseResult;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.optimization.HirOptimizationResult;
 import com.arc.mpl.optimization.HirOptimizer;
+import com.arc.mpl.runtime.DisplayRuntimeLowerer;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -69,7 +70,8 @@ public final class MplCompiler {
         }
         if (analyzed.program().isEmpty()) return new CompilationResult(profile, analyzed.diagnostics(), Optional.empty());
         HirOptimizationResult optimized = new HirOptimizer().optimize(analyzed.program().orElseThrow());
-        HirProgram program = optimized.program();
+        HirProgram program = new DisplayRuntimeLowerer(profile.orElseThrow().maxGraphicsBufferCommands())
+            .lower(optimized.program());
         MlogLabelStyle labelStyle = request.debug() ? MlogLabelStyle.DEBUG : MlogLabelStyle.RELEASE;
         String mil = new MilCodeGenerator().generate(program);
         String mlog = new MlogCodeGenerator(labelStyle).generate(program);
