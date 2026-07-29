@@ -12,6 +12,9 @@ import java.util.zip.DeflaterOutputStream;
 
 /** Writes the audited v146 .msch wire format for the compiler runtime topology. */
 public final class MindustrySchematicWriter {
+    private static final int PROCESSOR_X = 1;
+    private static final int PROCESSOR_Y = 1;
+
     /** Writes the current automatic single-shard topology. */
     public byte[] write(String mlog, RuntimePlan plan, String name, String buildHash) throws IOException {
         List<Tile> tiles = new ArrayList<>();
@@ -21,15 +24,16 @@ public final class MindustrySchematicWriter {
             case LOGIC -> "logic-processor";
             case HYPER -> "hyper-processor";
         };
-        tiles.add(new Tile(processor, 1, 1, null));
+        tiles.add(new Tile(processor, PROCESSOR_X, PROCESSOR_Y, null));
         int x = 4;
         for (PhysicalMemoryLayout.Segment segment : plan.physicalMemoryLayout().segments()) {
             boolean cell = segment.kind() == RuntimePreferences.MemoryKind.CELL;
             tiles.add(new Tile(cell ? "memory-cell" : "memory-bank", x, 1, null));
-            links.add(new Link(segment.alias(), x, 1));
+            // LogicBlock.config() serializes links relative to the processor tile.
+            links.add(new Link(segment.alias(), x - PROCESSOR_X, 1 - PROCESSOR_Y));
             x += cell ? 2 : 3;
         }
-        tiles.set(0, new Tile(processor, 1, 1, logicConfig(mlog, links)));
+        tiles.set(0, new Tile(processor, PROCESSOR_X, PROCESSOR_Y, logicConfig(mlog, links)));
         return schematic(tiles, Math.max(3, x), 3, name, buildHash);
     }
 

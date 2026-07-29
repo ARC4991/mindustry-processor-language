@@ -113,7 +113,8 @@ class BuildArtifactWriterTest {
         assertEquals(512, segment.path("capacity").asInt());
         assertEquals(3, segment.path("usedSlots").asInt());
         assertEquals("__mpl_mem0", segment.path("bindings").get(0).path("alias").asText());
-        assertEquals(List.of("__mpl_mem0"), readProcessorLinks(temporaryDirectory.resolve("runtime.msch")));
+        assertEquals(List.of(new LogicLink("__mpl_mem0", 3, 0)),
+            readProcessorLinks(temporaryDirectory.resolve("runtime.msch")));
     }
 
     private Map<String, String> readTags(Path file) throws Exception {
@@ -128,7 +129,7 @@ class BuildArtifactWriterTest {
         }
     }
 
-    private List<String> readProcessorLinks(Path file) throws Exception {
+    private List<LogicLink> readProcessorLinks(Path file) throws Exception {
         byte[] bytes = java.nio.file.Files.readAllBytes(file);
         try (DataInputStream stream = new DataInputStream(
             new InflaterInputStream(new ByteArrayInputStream(bytes, 5, bytes.length - 5)))) {
@@ -155,18 +156,19 @@ class BuildArtifactWriterTest {
         throw new IllegalStateException("蓝图中缺少处理器配置");
     }
 
-    private List<String> readLogicLinks(byte[] config) throws Exception {
+    private List<LogicLink> readLogicLinks(byte[] config) throws Exception {
         try (DataInputStream stream = new DataInputStream(new InflaterInputStream(new ByteArrayInputStream(config)))) {
             stream.readUnsignedByte();
             stream.skipNBytes(stream.readInt());
             int linkCount = stream.readInt();
-            List<String> links = new java.util.ArrayList<>();
+            List<LogicLink> links = new java.util.ArrayList<>();
             for (int index = 0; index < linkCount; index++) {
-                links.add(stream.readUTF());
-                stream.readShort();
-                stream.readShort();
+                links.add(new LogicLink(stream.readUTF(), stream.readShort(), stream.readShort()));
             }
             return List.copyOf(links);
         }
+    }
+
+    private record LogicLink(String alias, int relativeX, int relativeY) {
     }
 }
