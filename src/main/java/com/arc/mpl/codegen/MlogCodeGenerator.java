@@ -126,7 +126,7 @@ public final class MlogCodeGenerator {
             return;
         }
         if (statement instanceof HirPrintStatement print) {
-            for (HirExpression argument : print.arguments()) output.print(emitExpression(argument));
+            for (HirExpression argument : print.arguments()) emitPrintValue(argument);
             output.printFlush(print.linkName());
             return;
         }
@@ -524,6 +524,35 @@ public final class MlogCodeGenerator {
             case LINE -> "line";
         };
         output.draw(command, operands);
+    }
+
+    /** Emits a print-only String concatenation without allocating a target String value. */
+    private void emitPrintValue(HirExpression expression) {
+        List<HirExpression> leaves = new java.util.ArrayList<>();
+        collectPrintLeaves(expression, leaves);
+        StringBuilder pendingText = new StringBuilder();
+        for (HirExpression leaf : leaves) {
+            if (leaf instanceof HirText text) {
+                pendingText.append(text.value());
+                continue;
+            }
+            if (!pendingText.isEmpty()) {
+                output.print(quote(pendingText.toString()));
+                pendingText.setLength(0);
+            }
+            output.print(emitExpression(leaf));
+        }
+        if (!pendingText.isEmpty()) output.print(quote(pendingText.toString()));
+    }
+
+    private void collectPrintLeaves(HirExpression expression, List<HirExpression> leaves) {
+        if (expression instanceof HirBinary binary && binary.type() == com.arc.mpl.hir.ValueType.STRING
+            && "+".equals(binary.operator())) {
+            collectPrintLeaves(binary.left(), leaves);
+            collectPrintLeaves(binary.right(), leaves);
+            return;
+        }
+        leaves.add(expression);
     }
 
     /** The target owns one graphics buffer, so runtime flushes it before switching Displays and at exit. */

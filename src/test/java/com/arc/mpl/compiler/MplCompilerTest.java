@@ -626,6 +626,45 @@ class MplCompilerTest {
     }
 
     @Test
+    void lowersStringConcatenationInMessagePrintWithoutAnIntermediateValue(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const AlertBoard: Message = link(\"message1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val title: String = "MPL";
+            AlertBoard.print("运行 ", title + " v" + "1");
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            set mpl_title "MPL"
+            print "运行 "
+            print mpl_title
+            print " v1"
+            printflush message1
+            stop
+            """, result.mlog().orElseThrow());
+        assertTrue(result.mil().orElseThrow().contains("@io.print(@message1, \"运行 \""));
+    }
+
+    @Test
+    void rejectsDynamicStringConcatenationOutsideMessagePrint(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val title: String = "MPL";
+            val banner: String = title + " v1";
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3103")
+            && diagnostic.message().contains("动态拼接需要 String runtime")));
+    }
+
+    @Test
     void rejectsStaticPrintTextThatExceedsTheTargetMessageLimit(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
@@ -638,6 +677,21 @@ class MplCompilerTest {
         assertFalse(result.succeeded());
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3202")
             && diagnostic.message().contains("400")));
+    }
+
+    @Test
+    void checksTheStaticMessageLimitAcrossPrintOnlyStringConcatenation(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const AlertBoard: Message = link(\"message1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"),
+            "val prefix: String = \"x\";\nAlertBoard.print(prefix + \"" + "x".repeat(400) + "\");");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3202")
+            && diagnostic.message().contains("401")));
     }
 
     @Test

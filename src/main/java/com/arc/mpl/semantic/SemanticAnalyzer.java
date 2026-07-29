@@ -885,7 +885,7 @@ public final class SemanticAnalyzer {
     private HirStatement analyzePrintCall(String linkName, List<Expression> sourceArguments) {
         List<HirExpression> arguments = new ArrayList<>();
         for (Expression argument : sourceArguments) {
-            HirExpression value = analyzeExpression(argument);
+            HirExpression value = analyzePrintValue(argument);
             if (value.type() != ValueType.INT && value.type() != ValueType.FLOAT && value.type() != ValueType.BOOL
                 && value.type() != ValueType.STRING
                 && !(value instanceof HirText)) {
@@ -899,6 +899,26 @@ public final class SemanticAnalyzer {
                 + profile.id() + " 的 " + profile.maxMessageUtf16CodeUnits() + " 个上限", sourceArguments.get(0).span());
         }
         return new HirPrintStatement(linkName, arguments);
+    }
+
+    /**
+     * A print call is the one String-concatenation context that does not need
+     * a String value at runtime. The target emitter appends each leaf in order.
+     */
+    private HirExpression analyzePrintValue(Expression source) {
+        if (source instanceof BinaryExpression binary && "+".equals(binary.operator())) {
+            HirExpression left = analyzePrintValue(binary.left());
+            HirExpression right = analyzePrintValue(binary.right());
+            if (left.type() == ValueType.STRING && right.type() == ValueType.STRING) {
+                if (left instanceof HirText leftText && right instanceof HirText rightText) {
+                    return new HirText(leftText.value() + rightText.value());
+                }
+                return new HirBinary(left, "+", right, ValueType.STRING);
+            }
+            error("MPL3103", "print 中的 String 拼接两侧都必须是 String", binary.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        return analyzeExpression(source);
     }
 
     private HirStatement analyzeUnitControl(String sourceBinding, String command, List<Expression> sourceArguments, SourceSpan span) {
@@ -1572,6 +1592,9 @@ public final class SemanticAnalyzer {
     /** Static bound is known only for immutable literal-backed strings in the first String slice. */
     private int staticStringLength(HirExpression expression) {
         if (expression instanceof HirText text) return text.value().length();
+        if (expression instanceof HirBinary binary && binary.type() == ValueType.STRING && "+".equals(binary.operator())) {
+            return staticStringLength(binary.left()) + staticStringLength(binary.right());
+        }
         if (expression instanceof HirVariable variable && variable.type() == ValueType.STRING) {
             Symbol symbol = lookup(variable.name());
             return symbol == null || symbol.staticStringCodeUnits() == null ? 0 : symbol.staticStringCodeUnits();
