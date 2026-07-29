@@ -91,6 +91,19 @@
       "lowering": ["ucontrol"]
     },
     {
+      "name": "@unit.count",
+      "visibility": "public",
+      "body": "none",
+      "parameters": [
+        { "name": "type", "type": "GameUnitType" },
+        { "name": "binding", "type": "UnitBinding" },
+        { "name": "filters", "type": "UnitFilter[]" }
+      ],
+      "effects": ["readsWorld", "bindsUnit"],
+      "maxCost": { "instructions": 18, "virtualSlots": 5, "physicalSlots": 0 },
+      "lowering": ["ubind", "sensor", "op", "jump"]
+    },
+    {
       "name": "@io.print",
       "visibility": "public",
       "body": "none",
