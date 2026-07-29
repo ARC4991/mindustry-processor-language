@@ -25,4 +25,14 @@ class MlogProgramBuilderTest {
             stop
             """, builder.render());
     }
+
+    @Test
+    void rendersPhysicalMemoryOperationsAsStructuredInstructions() {
+        MlogProgramBuilder builder = new MlogProgramBuilder(MlogLabelStyle.RELEASE);
+
+        builder.write("value", "__mpl_mem0", "7");
+        builder.read("result", "__mpl_mem0", "7");
+
+        assertEquals("write value __mpl_mem0 7\nread result __mpl_mem0 7\n", builder.render());
+    }
 }

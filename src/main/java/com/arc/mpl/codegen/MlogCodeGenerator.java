@@ -21,6 +21,8 @@ import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirDraw;
 import com.arc.mpl.hir.HirDrawFlush;
+import com.arc.mpl.hir.HirDynamicCollectionSet;
+import com.arc.mpl.hir.HirDynamicIndexAccess;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIndexAccess;
@@ -38,6 +40,7 @@ import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
+import com.arc.mpl.memory.PhysicalMemoryLayout;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -57,6 +60,7 @@ public final class MlogCodeGenerator {
     private static final String FLOAT_MIN = Double.toString(-Double.MAX_VALUE);
 
     private final MlogLabelStyle labelStyle;
+    private final PhysicalMemoryLayout memoryLayout;
     private MlogProgramBuilder output;
     private int temporaryIndex;
     private int unitIterationIndex;
@@ -71,12 +75,18 @@ public final class MlogCodeGenerator {
 
     /** Creates a compact release emitter, suitable for deployment to a processor. */
     public MlogCodeGenerator() {
-        this(MlogLabelStyle.RELEASE);
+        this(MlogLabelStyle.RELEASE, PhysicalMemoryLayout.empty());
     }
 
     /** Creates an emitter with an explicit jump-label spelling policy. */
     public MlogCodeGenerator(MlogLabelStyle labelStyle) {
+        this(labelStyle, PhysicalMemoryLayout.empty());
+    }
+
+    /** Creates an emitter backed by the exact physical layout used by the runtime blueprint. */
+    public MlogCodeGenerator(MlogLabelStyle labelStyle, PhysicalMemoryLayout memoryLayout) {
         this.labelStyle = java.util.Objects.requireNonNull(labelStyle, "labelStyle");
+        this.memoryLayout = java.util.Objects.requireNonNull(memoryLayout, "memoryLayout");
     }
 
     public String generate(HirProgram program) {
@@ -182,7 +192,11 @@ public final class MlogCodeGenerator {
             return;
         }
         if (statement instanceof HirCollectionSet update) {
-            output.set(aggregateSlot(update.target(), update.index()), emitExpression(update.value()));
+            storeAggregateElement(update.target(), update.index(), emitExpression(update.value()));
+            return;
+        }
+        if (statement instanceof HirDynamicCollectionSet update) {
+            emitDynamicCollectionSet(update);
             return;
         }
         if (statement instanceof HirBreak) {
@@ -621,6 +635,7 @@ public final class MlogCodeGenerator {
         }
         if (expression instanceof HirVariable variable) return variable(variable.name());
         if (expression instanceof HirIndexAccess access) return emitIndexAccess(access);
+        if (expression instanceof HirDynamicIndexAccess access) return emitDynamicIndexAccess(access);
         if (expression instanceof HirCollectionContains contains) return emitCollectionContains(contains);
         if (expression instanceof HirUnary unary) return emitUnary(unary);
         if (expression instanceof HirBinary binary) return emitBinary(binary);
@@ -632,7 +647,7 @@ public final class MlogCodeGenerator {
 
     private void emitAggregateDeclaration(String name, List<HirExpression> elements) {
         for (int index = 0; index < elements.size(); index++) {
-            output.set(aggregateSlot(name, index), emitExpression(elements.get(index)));
+            storeAggregateElement(name, index, emitExpression(elements.get(index)));
         }
     }
 
@@ -640,7 +655,7 @@ public final class MlogCodeGenerator {
         MlogProgramBuilder.Label end = label("aggregate_end");
         for (int index = 0; index < iteration.size(); index++) {
             MlogProgramBuilder.Label next = label("aggregate_next");
-            output.set(variable(iteration.bindingName()), aggregateSlot(iteration.source().name(), index));
+            output.set(variable(iteration.bindingName()), loadAggregateElement(iteration.source().name(), index));
             emitLoopBody(iteration.body(), next, end);
             emitLabel(next);
         }
@@ -657,7 +672,95 @@ public final class MlogCodeGenerator {
         } catch (NumberFormatException | ArithmeticException exception) {
             throw new IllegalArgumentException("invalid aggregate index: " + index.mlogLiteral(), exception);
         }
-        return aggregateSlot(variable.name(), position);
+        return loadAggregateElement(variable.name(), position);
+    }
+
+    private String emitDynamicIndexAccess(HirDynamicIndexAccess access) {
+        if (!(access.target() instanceof HirVariable variable)) {
+            throw new IllegalArgumentException("dynamic Array access target must be a variable");
+        }
+        PhysicalMemoryLayout.Allocation allocation = allocation(variable.name());
+        String index = emitExpression(access.index());
+        String result = temporary();
+        List<PhysicalMemoryLayout.Slice> slices = allocation.slices();
+        MlogProgramBuilder.Label end = slices.size() > 1 ? label("memory_read_end") : null;
+        for (int sliceIndex = 0; sliceIndex < slices.size(); sliceIndex++) {
+            PhysicalMemoryLayout.Slice slice = slices.get(sliceIndex);
+            boolean last = sliceIndex == slices.size() - 1;
+            MlogProgramBuilder.Label next = last ? null : label("memory_read_next");
+            if (!last) {
+                emitJump(next, JumpCondition.GREATER_THAN_EQ, index,
+                    Integer.toString(slice.logicalStart() + slice.length()));
+            }
+            output.read(result, segment(slice).alias(), physicalIndex(index, slice));
+            if (!last) emitJump(end, JumpCondition.ALWAYS, "0", "0");
+            if (next != null) emitLabel(next);
+        }
+        if (end != null) emitLabel(end);
+        return result;
+    }
+
+    private void emitDynamicCollectionSet(HirDynamicCollectionSet update) {
+        PhysicalMemoryLayout.Allocation allocation = allocation(update.target());
+        String index = temporary();
+        output.set(index, emitExpression(update.index()));
+        String value = emitExpression(update.value());
+        List<PhysicalMemoryLayout.Slice> slices = allocation.slices();
+        MlogProgramBuilder.Label end = slices.size() > 1 ? label("memory_write_end") : null;
+        for (int sliceIndex = 0; sliceIndex < slices.size(); sliceIndex++) {
+            PhysicalMemoryLayout.Slice slice = slices.get(sliceIndex);
+            boolean last = sliceIndex == slices.size() - 1;
+            MlogProgramBuilder.Label next = last ? null : label("memory_write_next");
+            if (!last) {
+                emitJump(next, JumpCondition.GREATER_THAN_EQ, index,
+                    Integer.toString(slice.logicalStart() + slice.length()));
+            }
+            output.write(value, segment(slice).alias(), physicalIndex(index, slice));
+            if (!last) emitJump(end, JumpCondition.ALWAYS, "0", "0");
+            if (next != null) emitLabel(next);
+        }
+        if (end != null) emitLabel(end);
+    }
+
+    private void storeAggregateElement(String name, int index, String value) {
+        java.util.Optional<PhysicalMemoryLayout.Allocation> allocation = memoryLayout.allocation(currentFunction, name);
+        if (allocation.isEmpty()) {
+            output.set(aggregateSlot(name, index), value);
+            return;
+        }
+        PhysicalMemoryLayout.Slice slice = constantSlice(allocation.orElseThrow(), index);
+        output.write(value, segment(slice).alias(), Integer.toString(slice.offset() + index - slice.logicalStart()));
+    }
+
+    private String loadAggregateElement(String name, int index) {
+        java.util.Optional<PhysicalMemoryLayout.Allocation> allocation = memoryLayout.allocation(currentFunction, name);
+        if (allocation.isEmpty()) return aggregateSlot(name, index);
+        PhysicalMemoryLayout.Slice slice = constantSlice(allocation.orElseThrow(), index);
+        String result = temporary();
+        output.read(result, segment(slice).alias(), Integer.toString(slice.offset() + index - slice.logicalStart()));
+        return result;
+    }
+
+    private PhysicalMemoryLayout.Allocation allocation(String name) {
+        return memoryLayout.allocation(currentFunction, name)
+            .orElseThrow(() -> new IllegalArgumentException("dynamic Array lacks physical Memory allocation: " + name));
+    }
+
+    private PhysicalMemoryLayout.Slice constantSlice(PhysicalMemoryLayout.Allocation allocation, int index) {
+        return allocation.slices().stream().filter(slice -> slice.contains(index)).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Array index lies outside its physical Memory allocation: " + index));
+    }
+
+    private PhysicalMemoryLayout.Segment segment(PhysicalMemoryLayout.Slice slice) {
+        return memoryLayout.segments().get(slice.segmentIndex());
+    }
+
+    private String physicalIndex(String logicalIndex, PhysicalMemoryLayout.Slice slice) {
+        int adjustment = slice.offset() - slice.logicalStart();
+        if (adjustment == 0) return logicalIndex;
+        String result = temporary();
+        output.operation(Operation.ADD, result, logicalIndex, Integer.toString(adjustment));
+        return result;
     }
 
     private String emitCollectionContains(HirCollectionContains contains) {
@@ -670,7 +773,7 @@ public final class MlogCodeGenerator {
         output.set(result, "0");
         for (int index = 0; index < contains.size(); index++) {
             String equal = temporary();
-            output.operation(Operation.EQUAL, equal, aggregateSlot(variable.name(), index), candidate);
+            output.operation(Operation.EQUAL, equal, loadAggregateElement(variable.name(), index), candidate);
             output.operation(Operation.OR, result, result, equal);
         }
         return result;

@@ -59,6 +59,14 @@ final class MlogProgramBuilder {
         add(new DrawFlushInstruction(target));
     }
 
+    void read(String result, String memory, String index) {
+        add(new ReadInstruction(result, memory, index));
+    }
+
+    void write(String value, String memory, String index) {
+        add(new WriteInstruction(value, memory, index));
+    }
+
     void jump(Label target, JumpCondition condition, String value, String compare) {
         add(new JumpInstruction(target, condition, value, compare));
     }
@@ -184,7 +192,7 @@ final class MlogProgramBuilder {
 
     private sealed interface Instruction permits LabelInstruction, SetInstruction, PrintInstruction,
         PrintFlushInstruction, DrawInstruction, DrawFlushInstruction, JumpInstruction, UnitBindInstruction, SensorInstruction,
-        OperationInstruction, UnitControlInstruction, BuildingControlInstruction, CounterJumpInstruction,
+        ReadInstruction, WriteInstruction, OperationInstruction, UnitControlInstruction, BuildingControlInstruction, CounterJumpInstruction,
         StopInstruction {
         String render();
     }
@@ -225,6 +233,14 @@ final class MlogProgramBuilder {
 
     private record DrawFlushInstruction(String target) implements Instruction {
         @Override public String render() { return "drawflush " + target; }
+    }
+
+    private record ReadInstruction(String result, String memory, String index) implements Instruction {
+        @Override public String render() { return "read " + result + " " + memory + " " + index; }
+    }
+
+    private record WriteInstruction(String value, String memory, String index) implements Instruction {
+        @Override public String render() { return "write " + value + " " + memory + " " + index; }
     }
 
     private record JumpInstruction(Label target, JumpCondition condition, String value, String compare)
