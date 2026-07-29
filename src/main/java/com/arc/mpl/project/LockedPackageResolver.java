@@ -23,6 +23,7 @@ public final class LockedPackageResolver {
     private final ProjectSourceLoader sources = new ProjectSourceLoader();
     private final PackageContentHasher hashes = new PackageContentHasher();
     private final PackageLockFile lockFiles = new PackageLockFile();
+    private final HardwareLoader hardware = new HardwareLoader();
 
     public ResolvedPackageGraph resolve(Path projectDirectory, TargetProfile profile) throws IOException {
         Path root = projectDirectory.toAbsolutePath().normalize();
@@ -79,10 +80,14 @@ public final class LockedPackageResolver {
             }
             String sourceText = specification.substring("workspace:".length());
             if (sourceText.isBlank()) throw new IllegalArgumentException("workspace 依赖路径不能为空：" + name);
-            Path requestedRoot = owner.resolve(sourceText).toAbsolutePath().normalize();
+            Path sourcePath = Path.of(sourceText);
+            if (sourcePath.isAbsolute()) throw new IllegalArgumentException("workspace 依赖必须使用相对路径：" + name);
+            Path requestedRoot = owner.resolve(sourcePath).toAbsolutePath().normalize();
             PackageLock.LockedPackage locked = locks.get(name);
             if (locked == null) throw new IllegalArgumentException("mpl.lock 未锁定依赖：" + name);
-            Path lockedRoot = root.resolve(locked.source().substring("workspace:".length())).toAbsolutePath().normalize();
+            Path lockedPath = Path.of(locked.source().substring("workspace:".length()));
+            if (lockedPath.isAbsolute()) throw new IllegalArgumentException("mpl.lock workspace 来源必须是相对路径：" + name);
+            Path lockedRoot = root.resolve(lockedPath).toAbsolutePath().normalize();
             if (!requestedRoot.equals(lockedRoot)) {
                 throw new IllegalArgumentException("mpl.lock 来源与 manifest 不一致：" + name);
             }
@@ -124,6 +129,9 @@ public final class LockedPackageResolver {
             if (!hashes.fileDigest(hardware).equals(locked.hardwareSha256())) {
                 throw new IllegalArgumentException("锁定包硬件接口摘要不匹配：" + manifest.name() + "，请执行 mpl install");
             }
+            PackageHardwareInterface hardwareInterface = LockedPackageResolver.this.hardware
+                .loadPackageInterface(packageRoot, manifest);
+            PackageHardwareValidator.validate(hardwareInterface, profile, manifest.name());
 
             Set<String> direct = resolveDependencies(packageRoot, manifest.dependencies());
             Map<String, String> exact = new TreeMap<>();
@@ -135,7 +143,8 @@ public final class LockedPackageResolver {
             if (!Files.isRegularFile(catalog.entryFile())) {
                 throw new IllegalArgumentException("锁定包入口不存在：" + manifest.name() + " -> " + manifest.entry());
             }
-            resolved.put(manifest.name(), new ResolvedPackageGraph.ResolvedPackage(packageRoot, manifest, catalog, direct));
+            resolved.put(manifest.name(), new ResolvedPackageGraph.ResolvedPackage(
+                packageRoot, manifest, catalog, hardwareInterface, direct));
         }
 
         private ResolvedPackageGraph finish(Set<String> direct) {

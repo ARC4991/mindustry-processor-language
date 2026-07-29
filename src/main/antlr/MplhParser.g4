@@ -8,6 +8,7 @@ hardwareFile: declaration* EOF;
 
 declaration
     : hardwareConstant
+    | hardwareRequirement
     ;
 
 hardwareConstant
@@ -17,3 +18,10 @@ hardwareConstant
 
 displayRow: LBRACKET IDENTIFIER (COMMA IDENTIFIER)* RBRACKET;
 displayMatrix: LBRACKET displayRow (COMMA displayRow)* RBRACKET;
+
+hardwareRequirement
+    : REQUIRE name=IDENTIFIER COLON type=(IDENTIFIER | DISPLAY) LPAREN
+      (requirementArgument (COMMA requirementArgument)*)? RPAREN SEMICOLON
+    ;
+
+requirementArgument: name=IDENTIFIER COLON value=(IDENTIFIER | INT_LITERAL);

@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -63,8 +64,12 @@ public final class PackageLockFile {
         Path temporary = Files.createTempFile(project, ".mpl-lock-", ".tmp");
         try {
             Files.write(temporary, bytes);
-            Files.move(temporary, project.resolve("mpl.lock"), StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE);
+            try {
+                Files.move(temporary, project.resolve("mpl.lock"), StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException exception) {
+                Files.move(temporary, project.resolve("mpl.lock"), StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException exception) {
             Files.deleteIfExists(temporary);
             throw exception;

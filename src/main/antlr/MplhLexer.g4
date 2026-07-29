@@ -4,6 +4,7 @@ lexer grammar MplhLexer;
 
 EXPORT: 'export';
 CONST: 'const';
+REQUIRE: 'require';
 MEMORY: 'memory';
 PHYSICAL: 'physical';
 VIRTUAL: 'virtual';

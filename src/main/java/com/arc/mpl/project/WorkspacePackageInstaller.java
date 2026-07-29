@@ -20,6 +20,7 @@ public final class WorkspacePackageInstaller {
     private final ProjectManifestLoader manifests = new ProjectManifestLoader();
     private final PackageContentHasher hashes = new PackageContentHasher();
     private final PackageLockFile lockFile = new PackageLockFile();
+    private final HardwareLoader hardware = new HardwareLoader();
 
     public PackageLock install(Path projectDirectory) throws IOException {
         Path root = projectDirectory.toAbsolutePath().normalize();
@@ -62,7 +63,9 @@ public final class WorkspacePackageInstaller {
             }
             String sourceText = specification.substring("workspace:".length());
             if (sourceText.isBlank()) throw new IllegalArgumentException("workspace 依赖路径不能为空：" + requestedName);
-            Path packageRoot = owner.resolve(sourceText).toAbsolutePath().normalize();
+            Path sourcePath = Path.of(sourceText);
+            if (sourcePath.isAbsolute()) throw new IllegalArgumentException("workspace 依赖必须使用相对路径：" + requestedName);
+            Path packageRoot = owner.resolve(sourcePath).toAbsolutePath().normalize();
             if (!Files.isDirectory(packageRoot) || !Files.isRegularFile(packageRoot.resolve("mpl.json"))) {
                 throw new IllegalArgumentException("找不到 workspace 包：" + requestedName + " -> " + packageRoot);
             }
@@ -91,6 +94,9 @@ public final class WorkspacePackageInstaller {
             if (!Files.isRegularFile(hardware) || !hardware.getFileName().toString().endsWith(".mplh")) {
                 throw new IllegalArgumentException("外部包必须提供 .mplh 硬件接口：" + manifest.name() + " -> " + manifest.hardware());
             }
+            PackageHardwareInterface hardwareInterface = WorkspacePackageInstaller.this.hardware
+                .loadPackageInterface(packageRoot, manifest);
+            PackageHardwareValidator.validate(hardwareInterface, target, manifest.name());
             resolveInside(packageRoot, manifest.entry(), "entry");
             stack.addLast(requestedName);
             Map<String, String> dependencies;

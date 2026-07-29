@@ -24,12 +24,12 @@ public final class ProjectManifestLoader {
     public ProjectManifest load(Path projectDirectory) throws IOException {
         Path project = projectDirectory.toAbsolutePath().normalize();
         Path file = project.resolve("mpl.json");
-        if (!Files.isRegularFile(file)) return defaults(project);
+        if (!Files.isRegularFile(file)) return defaults();
         JsonNode root = JSON.readTree(Files.readString(file));
         if (!root.isObject()) throw new IllegalArgumentException("mpl.json 顶层必须是对象");
 
         int schemaVersion = integer(root, "schemaVersion", 1);
-        String name = text(root, "name", defaultName(project));
+        String name = text(root, "name", defaultName());
         String version = text(root, "version", "0.0.0");
         Optional<String> target = optionalNestedText(root.path("target"), "mindustry", "target.mindustry");
         String entry = text(root, "entry", "src/main.mpl");
@@ -40,13 +40,13 @@ public final class ProjectManifestLoader {
         return new ProjectManifest(schemaVersion, name, version, target, entry, hardware, dependencies, requires, runtime);
     }
 
-    private ProjectManifest defaults(Path project) {
-        return new ProjectManifest(1, defaultName(project), "0.0.0", Optional.empty(),
+    private ProjectManifest defaults() {
+        return new ProjectManifest(1, defaultName(), "0.0.0", Optional.empty(),
             "src/main.mpl", "src/hardware.mplh", Map.of(), ProjectManifest.PackageRequirements.none(),
             RuntimePreferences.defaults());
     }
 
-    private String defaultName(Path project) {
+    private String defaultName() {
         return "mpl-project";
     }
 

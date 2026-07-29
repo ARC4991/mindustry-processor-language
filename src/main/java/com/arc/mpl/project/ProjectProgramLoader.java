@@ -65,10 +65,12 @@ public final class ProjectProgramLoader {
         entryFile = catalog.entryFile().toAbsolutePath().normalize();
         profile = targetProfile;
         hardware = hardwareContract;
-        rootScope = new ModuleScope("$root", catalog, packages.rootDependencies(), true);
+        rootScope = new ModuleScope("$root", catalog, packages.rootDependencies(), true,
+            PackageHardwareInterface.empty());
         register(rootScope);
         packages.packages().forEach((name, value) -> {
-            ModuleScope scope = new ModuleScope(name, value.sources(), value.dependencies(), false);
+            ModuleScope scope = new ModuleScope(name, value.sources(), value.dependencies(), false,
+                value.hardwareInterface());
             packageScopes.put(name, scope);
             register(scope);
         });
@@ -135,7 +137,7 @@ public final class ProjectProgramLoader {
         MilParseResult parsed = new MilSyntaxParser().parse(source, file, profile, MilSourceKind.USER);
         diagnostics.addAll(parsed.diagnostics());
         if (!parsed.succeeded()) return Optional.empty();
-        HardwareContract visibleHardware = owner(file).root() ? hardware : new HardwareContract(List.of(), Map.of());
+        HardwareContract visibleHardware = owner(file).visibleHardware(hardware);
         MilLoweringResult lowered = new MilLowerer().lower(parsed.document().orElseThrow(), file, profile, visibleHardware);
         diagnostics.addAll(lowered.diagnostics());
         return lowered.program();
@@ -154,10 +156,7 @@ public final class ProjectProgramLoader {
                 error("MPL1401", "外部包尚未安装或锁定：" + request, importer, declaration.span());
                 return Optional.empty();
             }
-            if (!declaration.hardwareArguments().isEmpty()) {
-                error("MPL1413", "包硬件 with 注入尚未实现，不能忽略参数：" + request,
-                    importer, declaration.span());
-            }
+            bindPackageHardware(owner, target, declaration, importer);
             return Optional.of(target.catalog().entryFile().toAbsolutePath().normalize());
         }
         if (!declaration.hardwareArguments().isEmpty()) {
@@ -181,6 +180,58 @@ public final class ProjectProgramLoader {
             return Optional.empty();
         }
         return Optional.of(candidates.get(0));
+    }
+
+    private void bindPackageHardware(ModuleScope importerScope, ModuleScope packageScope,
+                                     ImportDeclaration declaration, Path importer) {
+        Map<String, PackageHardwareInterface.Requirement> required = packageScope.hardwareInterface().requirements();
+        Map<String, String> supplied = new LinkedHashMap<>();
+        for (ImportDeclaration.HardwareArgument argument : declaration.hardwareArguments()) {
+            if (supplied.putIfAbsent(argument.name(), argument.value()) != null) {
+                error("MPL1413", "with 重复硬件参数：" + argument.name(), importer, argument.span());
+            }
+        }
+        Set<String> missing = new LinkedHashSet<>(required.keySet());
+        missing.removeAll(supplied.keySet());
+        Set<String> extra = new LinkedHashSet<>(supplied.keySet());
+        extra.removeAll(required.keySet());
+        if (!missing.isEmpty()) error("MPL1413", "with 缺少包硬件参数：" + missing, importer, declaration.span());
+        if (!extra.isEmpty()) error("MPL1413", "with 包含未声明的硬件参数：" + extra, importer, declaration.span());
+
+        Map<String, String> resolved = new LinkedHashMap<>();
+        for (Map.Entry<String, PackageHardwareInterface.Requirement> entry : required.entrySet()) {
+            String suppliedName = supplied.get(entry.getKey());
+            if (suppliedName == null) continue;
+            String rootName = importerScope.root() ? suppliedName : importerScope.hardwareBindings().get(suppliedName);
+            HardwareContract.LinkDeclaration link = rootName == null ? null : hardware.links().stream()
+                .filter(candidate -> candidate.mplName().equals(rootName)).findFirst().orElse(null);
+            if (link == null) {
+                error("MPL1415", "with 只能传入当前模块可见的硬件常量：" + suppliedName,
+                    importer, declaration.span());
+                continue;
+            }
+            PackageHardwareInterface.Requirement requirement = entry.getValue();
+            if (!requirement.type().equals(link.mplType())) {
+                error("MPL1415", "with 硬件类型不匹配：" + entry.getKey() + " 要求 " + requirement.type()
+                    + "，实际为 " + link.mplType(), importer, declaration.span());
+                continue;
+            }
+            if (!PackageHardwareValidator.supportsAccess(requirement, profile)) {
+                error("MPL1415", "target 中的硬件类型不满足访问要求：" + requirement.name()
+                    + "（" + requirement.access() + "）", importer, declaration.span());
+                continue;
+            }
+            if (requirement.minimumWidth() > 0 || requirement.minimumHeight() > 0) {
+                error("MPL1416", "Display 尺寸约束尚未接入组合屏布局验证：" + requirement.name(),
+                    importer, declaration.span());
+                continue;
+            }
+            resolved.put(entry.getKey(), rootName);
+        }
+        if (resolved.size() == required.size() && !packageScope.bindHardware(resolved)) {
+            error("MPL1417", "同一个包的多次 import 必须使用完全一致的 with 硬件绑定：" + packageScope.id(),
+                importer, declaration.span());
+        }
     }
 
     private List<Path> candidates(Path requested) {
@@ -241,6 +292,9 @@ public final class ProjectProgramLoader {
         if (owner(path).root() && hardwareName(name)) {
             error("MPL1412", "模块顶层名称与全局硬件常量冲突：" + name, path, span);
         }
+        if (!owner(path).root() && owner(path).hardwareInterface().requirements().containsKey(name)) {
+            error("MPL1412", "包顶层名称与 require 硬件常量冲突：" + name, path, span);
+        }
         String candidate = path.equals(entryFile) ? name : canonical(path, name);
         int suffix = 1;
         while (!used.add(candidate)) candidate = canonical(path, name) + "_" + suffix++;
@@ -293,6 +347,11 @@ public final class ProjectProgramLoader {
                         error("MPL1412", "import 名称与全局硬件常量冲突：" + name, path, declaration.span());
                         continue;
                     }
+                    if (!owner(path).root() && owner(path).hardwareInterface().requirements().containsKey(name)) {
+                        error("MPL1412", "import 名称与包 require 硬件常量冲突：" + name,
+                            path, declaration.span());
+                        continue;
+                    }
                     String linked = exports.getOrDefault(target, Map.of()).get(name);
                     if (linked == null) {
                         error("MPL1409", "模块 " + moduleName(target) + " 未 export：" + name,
@@ -303,6 +362,7 @@ public final class ProjectProgramLoader {
                 }
             }
             if (!owner(path).root()) {
+                owner(path).hardwareBindings().forEach(names::putIfAbsent);
                 hardware.links().forEach(link -> names.putIfAbsent(link.mplName(),
                     "__package_hardware_unavailable_" + canonical(path, link.mplName())));
             }
@@ -356,9 +416,69 @@ public final class ProjectProgramLoader {
     private record SourceModule(Path path, Program program, Map<ImportDeclaration, Path> targets) {
     }
 
-    private record ModuleScope(String id, ProjectSourceCatalog catalog, Set<String> dependencies, boolean root) {
-        private ModuleScope {
-            dependencies = Set.copyOf(dependencies);
+    private static final class ModuleScope {
+        private final String id;
+        private final ProjectSourceCatalog catalog;
+        private final Set<String> dependencies;
+        private final boolean root;
+        private final PackageHardwareInterface hardwareInterface;
+        private Map<String, String> hardwareBindings = Map.of();
+        private boolean hardwareBound;
+
+        private ModuleScope(String id, ProjectSourceCatalog catalog, Set<String> dependencies, boolean root,
+                            PackageHardwareInterface hardwareInterface) {
+            this.id = id;
+            this.catalog = catalog;
+            this.dependencies = Set.copyOf(dependencies);
+            this.root = root;
+            this.hardwareInterface = hardwareInterface;
+        }
+
+        private String id() {
+            return id;
+        }
+
+        private ProjectSourceCatalog catalog() {
+            return catalog;
+        }
+
+        private Set<String> dependencies() {
+            return dependencies;
+        }
+
+        private boolean root() {
+            return root;
+        }
+
+        private PackageHardwareInterface hardwareInterface() {
+            return hardwareInterface;
+        }
+
+        private Map<String, String> hardwareBindings() {
+            return hardwareBindings;
+        }
+
+        private boolean bindHardware(Map<String, String> bindings) {
+            Map<String, String> normalized = Map.copyOf(bindings);
+            if (!hardwareBound) {
+                hardwareBindings = normalized;
+                hardwareBound = true;
+                return true;
+            }
+            return hardwareBindings.equals(normalized);
+        }
+
+        private HardwareContract visibleHardware(HardwareContract rootHardware) {
+            if (root) return rootHardware;
+            List<HardwareContract.LinkDeclaration> links = new ArrayList<>();
+            Map<String, String> messages = new LinkedHashMap<>();
+            for (Map.Entry<String, String> binding : hardwareBindings.entrySet()) {
+                HardwareContract.LinkDeclaration rootLink = rootHardware.links().stream()
+                    .filter(link -> link.mplName().equals(binding.getValue())).findFirst().orElseThrow();
+                links.add(new HardwareContract.LinkDeclaration(binding.getKey(), rootLink.mplType(), rootLink.gameAlias()));
+                if (rootLink.mplType().equals("Message")) messages.put(binding.getKey(), rootLink.gameAlias());
+            }
+            return new HardwareContract(links, messages);
         }
     }
 

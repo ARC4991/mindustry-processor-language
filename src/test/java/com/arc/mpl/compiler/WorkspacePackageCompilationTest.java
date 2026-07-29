@@ -12,6 +12,106 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkspacePackageCompilationTest {
     @Test
+    void injectsARequiredPackageHardwareConstant(@TempDir Path workspace) throws Exception {
+        Path app = project(workspace.resolve("app"), "app", "v146",
+            "\"notifier\": \"workspace:../notifier\"", "main.mpl", """
+                import { notify } from "notifier" with { output: StatusBoard };
+                notify();
+                """);
+        Files.writeString(app.resolve("src/hardware.mplh"),
+            "const StatusBoard: Message = link(\"message1\");\n");
+        Path notifier = project(workspace.resolve("notifier"), "notifier", null, "", "index.mpl", """
+            export fun notify(): Void { output.print("package ready"); }
+            """);
+        Files.writeString(notifier.resolve("src/hardware.mplh"),
+            "require output: Message(access: write);\n");
+        new WorkspacePackageInstaller().install(app);
+
+        CompilationResult result = new MplCompiler().compile(new CompilationRequest(app, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertTrue(result.mlog().orElseThrow().contains("printflush message1"));
+        assertTrue(result.mil().orElseThrow().contains("@io.print(@message1, \"package ready\")"));
+    }
+
+    @Test
+    void forwardsInjectedHardwareThroughATransitivePackage(@TempDir Path workspace) throws Exception {
+        Path app = project(workspace.resolve("app"), "app", "v146",
+            "\"wrapper\": \"workspace:../wrapper\"", "main.mpl", """
+                import { notify } from "wrapper" with { sink: StatusBoard };
+                notify();
+                """);
+        Files.writeString(app.resolve("src/hardware.mplh"),
+            "const StatusBoard: Message = link(\"message1\");\n");
+        Path leaf = project(workspace.resolve("leaf"), "leaf", null, "", "index.mpl", """
+            export fun leafNotify(): Void { output.print("forwarded"); }
+            """);
+        Files.writeString(leaf.resolve("src/hardware.mplh"),
+            "require output: Message(access: write);\n");
+        Path wrapper = project(workspace.resolve("wrapper"), "wrapper", null,
+            "\"leaf\": \"workspace:../leaf\"", "index.mpl", """
+                import { leafNotify } from "leaf" with { output: sink };
+                export fun notify(): Void { leafNotify(); }
+                """);
+        Files.writeString(wrapper.resolve("src/hardware.mplh"),
+            "require sink: Message(access: write);\n");
+        new WorkspacePackageInstaller().install(app);
+
+        CompilationResult result = new MplCompiler().compile(new CompilationRequest(app, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertTrue(result.mlog().orElseThrow().contains("printflush message1"));
+    }
+
+    @Test
+    void validatesWithKeysTypesAndSingletonBindingsStrictly(@TempDir Path workspace) throws Exception {
+        Path app = project(workspace.resolve("app"), "app", "v146",
+            "\"notifier\": \"workspace:../notifier\"", "main.mpl", """
+                import { notify } from "notifier";
+                notify();
+                """);
+        Files.writeString(app.resolve("src/hardware.mplh"), """
+            const First: Message = link("message1");
+            const Second: Message = link("message2");
+            const Canvas: Display = link("display1");
+            """);
+        Path notifier = project(workspace.resolve("notifier"), "notifier", null, "", "index.mpl", """
+            export fun notify(): Void { output.print("strict"); }
+            """);
+        Files.writeString(notifier.resolve("src/hardware.mplh"),
+            "require output: Message(access: write);\n");
+        new WorkspacePackageInstaller().install(app);
+
+        CompilationResult missing = new MplCompiler().compile(new CompilationRequest(app, "v146"));
+        assertTrue(missing.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL1413")));
+
+        Files.writeString(app.resolve("src/main.mpl"), """
+            import { notify } from "notifier" with { output: Canvas };
+            notify();
+            """);
+        CompilationResult wrongType = new MplCompiler().compile(new CompilationRequest(app, "v146"));
+        assertTrue(wrongType.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL1415")
+            && diagnostic.message().contains("类型不匹配")));
+
+        Files.writeString(app.resolve("src/main.mpl"), """
+            import { first } from "./first";
+            import { second } from "./second";
+            first();
+            second();
+            """);
+        Files.writeString(app.resolve("src/first.mpl"), """
+            import { notify } from "notifier" with { output: First };
+            export fun first(): Void { notify(); }
+            """);
+        Files.writeString(app.resolve("src/second.mpl"), """
+            import { notify } from "notifier" with { output: Second };
+            export fun second(): Void { notify(); }
+            """);
+        CompilationResult inconsistent = new MplCompiler().compile(new CompilationRequest(app, "v146"));
+        assertTrue(inconsistent.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL1417")));
+    }
+
+    @Test
     void linksTransitiveMplAndMilWorkspacePackages(@TempDir Path workspace) throws Exception {
         Path app = project(workspace.resolve("app"), "app", "v146",
             "\"panel\": \"workspace:../panel\"", "main.mpl", """

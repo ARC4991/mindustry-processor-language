@@ -24,12 +24,14 @@ public record ResolvedPackageGraph(Set<String> rootDependencies, Map<String, Res
         Path root,
         ProjectManifest manifest,
         ProjectSourceCatalog sources,
+        PackageHardwareInterface hardwareInterface,
         Set<String> dependencies
     ) {
         public ResolvedPackage {
             root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
             Objects.requireNonNull(manifest, "manifest");
             Objects.requireNonNull(sources, "sources");
+            Objects.requireNonNull(hardwareInterface, "hardwareInterface");
             dependencies = Collections.unmodifiableSet(new LinkedHashSet<>(
                 Objects.requireNonNull(dependencies, "dependencies")));
         }

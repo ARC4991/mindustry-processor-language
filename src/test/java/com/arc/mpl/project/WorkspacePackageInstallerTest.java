@@ -72,6 +72,12 @@ class WorkspacePackageInstallerTest {
         assertTrue(registry.getMessage().contains("registry 依赖尚未实现"));
 
         Files.writeString(app.resolve("mpl.json"), manifest("app", "0.1.0", "v146",
+            "\"absolute\": \"workspace:" + workspace.resolve("a") + "\"", ""));
+        IllegalArgumentException absolute = assertThrows(IllegalArgumentException.class,
+            () -> new WorkspacePackageInstaller().install(app));
+        assertTrue(absolute.getMessage().contains("必须使用相对路径"));
+
+        Files.writeString(app.resolve("mpl.json"), manifest("app", "0.1.0", "v146",
             "\"a\": \"workspace:../a\"", ""));
         Files.writeString(workspace.resolve("a/mpl.json"), manifest("a", "1.0.0", null, "",
             "\"requires\": { \"capabilities\": [\"format\"] },"));
