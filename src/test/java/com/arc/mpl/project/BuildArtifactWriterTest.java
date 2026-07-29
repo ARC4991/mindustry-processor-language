@@ -2,6 +2,7 @@ package com.arc.mpl.project;
 
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
+import com.arc.mpl.optimization.OptimizationReport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -50,6 +51,22 @@ class BuildArtifactWriterTest {
         assertEquals("v146", parsed.path("targetProfile").asText());
         assertTrue(report.contains("\n  \"compiler\" : {"));
         assertTrue(deployment.contains("\n  \"runtimeTopology\" : {"));
+    }
+
+    @Test
+    void recordsAppliedOptimizerStatisticsInTheBuildReport() throws Exception {
+        TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
+        RuntimePlan plan = new RuntimePlanner().plan("set value 1\n", profile);
+
+        new BuildArtifactWriter().write(temporaryDirectory, "set value 1\n", "set value 1\n", profile,
+            new HardwareContract(List.of(), Map.of()), plan, new ProjectMetadata("optimization-demo", "1.0.0"),
+            new OptimizationReport(3, 2, 1, 4));
+
+        JsonNode report = new ObjectMapper().readTree(java.nio.file.Files.readString(temporaryDirectory.resolve("report.json")));
+        assertEquals(3, report.path("optimizations").get(0).path("applied").asInt());
+        assertEquals(2, report.path("optimizations").get(1).path("applied").asInt());
+        assertEquals(1, report.path("optimizations").get(2).path("applied").asInt());
+        assertEquals(4, report.path("optimizations").get(3).path("applied").asInt());
     }
 
     private Map<String, String> readTags(Path file) throws Exception {

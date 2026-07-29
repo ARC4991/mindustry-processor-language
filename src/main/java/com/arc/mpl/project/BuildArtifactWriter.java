@@ -1,6 +1,7 @@
 package com.arc.mpl.project;
 
 import com.arc.mpl.profile.TargetProfile;
+import com.arc.mpl.optimization.OptimizationReport;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -24,22 +25,31 @@ public final class BuildArtifactWriter {
 
     public void write(Path directory, String mlog, String mil, TargetProfile profile,
                       HardwareContract hardware, RuntimePlan plan, ProjectMetadata metadata) throws IOException {
+        write(directory, mlog, mil, profile, hardware, plan, metadata, OptimizationReport.NONE);
+    }
+
+    public void write(Path directory, String mlog, String mil, TargetProfile profile,
+                      HardwareContract hardware, RuntimePlan plan, ProjectMetadata metadata,
+                      OptimizationReport optimizationReport) throws IOException {
         Files.createDirectories(directory);
         Files.writeString(directory.resolve("Main.mlog"), mlog);
         Files.writeString(directory.resolve("Main.mil"), mil);
         String digest = digest(mlog + "\n" + mil + "\n" + profile.id() + "\n" + metadata.name() + "\n" + metadata.version());
         String blueprintName = "MPL-" + metadata.name() + "-" + metadata.version() + "-" + digest.substring(0, 12);
         Files.write(directory.resolve("runtime.msch"), new MindustrySchematicWriter().write(mlog, plan, blueprintName, digest));
-        writeFormattedJson(directory.resolve("report.json"), report(profile, plan, digest));
+        writeFormattedJson(directory.resolve("report.json"), report(profile, plan, digest, optimizationReport));
         writeFormattedJson(directory.resolve("deployment.json"), deployment(profile, hardware, plan, digest));
         log.info("构建产物已写入：{}（blueprint={}，processor={}，instructions={}）", directory, blueprintName, plan.processorId(), plan.instructions());
     }
 
-    private String report(TargetProfile profile, RuntimePlan plan, String digest) {
+    private String report(TargetProfile profile, RuntimePlan plan, String digest, OptimizationReport optimizationReport) {
         String resources = "{\"instructions\":%d,\"labels\":%d,\"virtualSlots\":%d,\"physicalSlots\":%d,\"objectPoolSlots\":0,\"stringSlots\":0,\"runtimeSlots\":0}"
             .formatted(plan.instructions(), plan.labels(), plan.virtualSlots(), plan.physicalSlots());
-        return "{\"schemaVersion\":1,\"compiler\":{\"version\":\"0.1.0-SNAPSHOT\"},\"inputDigest\":\"%s\",\"targetProfile\":\"%s\",\"success\":true,\"diagnosticSummary\":{\"errors\":0,\"warnings\":0},\"totals\":%s,\"shards\":[{\"id\":\"Main\",\"processor\":\"%s\",\"mlog\":\"Main.mlog\",\"ipt\":%d,\"maxTokensPerStatement\":%d,\"resources\":%s}],\"optimizations\":[]}"
-            .formatted(digest, profile.id(), resources, plan.processorId(), profile.instructionsPerTick(plan.processor()), plan.maxTokensPerStatement(), resources);
+        String optimizations = "[{\"name\":\"constantFolds\",\"applied\":%d},{\"name\":\"eliminatedBranches\",\"applied\":%d},{\"name\":\"eliminatedLoops\",\"applied\":%d},{\"name\":\"eliminatedStatements\",\"applied\":%d}]"
+            .formatted(optimizationReport.constantFolds(), optimizationReport.eliminatedBranches(),
+                optimizationReport.eliminatedLoops(), optimizationReport.eliminatedStatements());
+        return "{\"schemaVersion\":1,\"compiler\":{\"version\":\"0.1.0-SNAPSHOT\"},\"inputDigest\":\"%s\",\"targetProfile\":\"%s\",\"success\":true,\"diagnosticSummary\":{\"errors\":0,\"warnings\":0},\"totals\":%s,\"shards\":[{\"id\":\"Main\",\"processor\":\"%s\",\"mlog\":\"Main.mlog\",\"ipt\":%d,\"maxTokensPerStatement\":%d,\"resources\":%s}],\"optimizations\":%s}"
+            .formatted(digest, profile.id(), resources, plan.processorId(), profile.instructionsPerTick(plan.processor()), plan.maxTokensPerStatement(), resources, optimizations);
     }
 
     private String deployment(TargetProfile profile, HardwareContract hardware, RuntimePlan plan, String digest) {

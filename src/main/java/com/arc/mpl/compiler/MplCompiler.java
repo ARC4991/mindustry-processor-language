@@ -15,6 +15,8 @@ import com.arc.mpl.semantic.SemanticResult;
 import com.arc.mpl.syntax.MplSyntaxParser;
 import com.arc.mpl.syntax.ParseResult;
 import com.arc.mpl.hir.HirProgram;
+import com.arc.mpl.optimization.HirOptimizationResult;
+import com.arc.mpl.optimization.HirOptimizer;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -66,7 +68,8 @@ public final class MplCompiler {
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
         if (analyzed.program().isEmpty()) return new CompilationResult(profile, analyzed.diagnostics(), Optional.empty());
-        HirProgram program = analyzed.program().orElseThrow();
+        HirOptimizationResult optimized = new HirOptimizer().optimize(analyzed.program().orElseThrow());
+        HirProgram program = optimized.program();
         MlogLabelStyle labelStyle = request.debug() ? MlogLabelStyle.DEBUG : MlogLabelStyle.RELEASE;
         String mil = new MilCodeGenerator().generate(program);
         String mlog = new MlogCodeGenerator(labelStyle).generate(program);
@@ -75,7 +78,7 @@ public final class MplCompiler {
         boolean hasError = diagnostics.stream().anyMatch(diagnostic -> diagnostic.severity() == Severity.ERROR);
         return new CompilationResult(profile, diagnostics,
             hasError ? Optional.empty() : Optional.of(mlog),
-            hasError ? Optional.empty() : Optional.of(mil));
+            hasError ? Optional.empty() : Optional.of(mil), optimized.report());
     }
 
     private String exceptionMessage(IOException exception) {

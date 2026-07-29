@@ -38,14 +38,38 @@ class MplCompilerTest {
         assertTrue(result.succeeded());
         assertEquals("v146", result.profile().orElseThrow().id());
         assertTrue(result.diagnostics().isEmpty());
-        assertEquals("op add __mpl_tmp0 1 2\nset mpl_total __mpl_tmp0\nop add mpl_total mpl_total 3\nstop\n",
+        assertEquals("set mpl_total 3\nop add mpl_total mpl_total 3\nstop\n",
             result.mlog().orElseThrow());
         assertEquals("""
             // 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。
             // 普通结构保留为 MIL；@unit.* 与 @io.* 是由 target profile 展开的受限宏。
-            var total: Int = (1 + 2);
+            var total: Int = 3;
             total += 3;
             """, result.mil().orElseThrow());
+    }
+
+    @Test
+    void optimizesConstantExpressionsAndConstantBranchesBeforeMlogLowering(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var value: Int = 1 + 2 * 3;
+            if (false) {
+                value = 99;
+            } else {
+                value += 1;
+            }
+            while (false) {
+                value += 100;
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals("set mpl_value 7\nop add mpl_value mpl_value 1\nstop\n", result.mlog().orElseThrow());
+        assertEquals(2, result.optimizationReport().constantFolds());
+        assertEquals(1, result.optimizationReport().eliminatedBranches());
+        assertEquals(1, result.optimizationReport().eliminatedLoops());
     }
 
     @Test
@@ -65,16 +89,11 @@ class MplCompilerTest {
         assertTrue(result.succeeded());
         assertEquals("""
             set mpl_total 0
-            jump mpl_if_else_0 equal 1 0
             set mpl_total 1
-            jump mpl_if_end_1 always 0 0
-            mpl_if_else_0:
-            set mpl_total 2
-            mpl_if_end_1:
             stop
             """, result.mlog().orElseThrow());
-        assertTrue(result.mil().orElseThrow().contains("if (true) {"));
-        assertTrue(result.mil().orElseThrow().contains("else {"));
+        assertFalse(result.mil().orElseThrow().contains("if (true) {"));
+        assertFalse(result.mil().orElseThrow().contains("else {"));
     }
 
     @Test

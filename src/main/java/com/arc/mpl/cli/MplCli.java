@@ -90,7 +90,8 @@ public final class MplCli {
                 RuntimePlan plan = new RuntimePlanner().plan(result.mlog().orElseThrow(), result.profile().orElseThrow(),
                     new RuntimePreferencesLoader().load(Path.of(build.projectDirectory())));
                 new BuildArtifactWriter().write(outputDirectory, result.mlog().orElseThrow(), result.mil().orElseThrow(),
-                    result.profile().orElseThrow(), hardware, plan, ProjectMetadata.load(Path.of(build.projectDirectory())));
+                    result.profile().orElseThrow(), hardware, plan, ProjectMetadata.load(Path.of(build.projectDirectory())),
+                    result.optimizationReport());
                 Path mlogOutput = outputDirectory.resolve("Main.mlog");
                 Path milOutput = outputDirectory.resolve("Main.mil");
                 System.out.println(message(language, "cli.mil.written", milOutput));

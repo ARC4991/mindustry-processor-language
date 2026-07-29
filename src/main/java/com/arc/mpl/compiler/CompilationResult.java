@@ -2,6 +2,7 @@ package com.arc.mpl.compiler;
 
 import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.Severity;
+import com.arc.mpl.optimization.OptimizationReport;
 import com.arc.mpl.profile.TargetProfile;
 
 import java.util.List;
@@ -13,13 +14,15 @@ public record CompilationResult(
     Optional<TargetProfile> profile,
     List<Diagnostic> diagnostics,
     Optional<String> mlog,
-    Optional<String> mil
+    Optional<String> mil,
+    OptimizationReport optimizationReport
 ) {
     public CompilationResult {
         profile = profile == null ? Optional.empty() : profile;
         diagnostics = List.copyOf(Objects.requireNonNull(diagnostics, "diagnostics"));
         mlog = mlog == null ? Optional.empty() : mlog;
         mil = mil == null ? Optional.empty() : mil;
+        optimizationReport = optimizationReport == null ? OptimizationReport.NONE : optimizationReport;
     }
 
     /**
@@ -30,9 +33,19 @@ public record CompilationResult(
     public CompilationResult(
         Optional<TargetProfile> profile,
         List<Diagnostic> diagnostics,
+        Optional<String> mlog,
+        Optional<String> mil
+    ) {
+        this(profile, diagnostics, mlog, mil, OptimizationReport.NONE);
+    }
+
+    /** Compatibility constructor for callers that only receive a final mlog artifact. */
+    public CompilationResult(
+        Optional<TargetProfile> profile,
+        List<Diagnostic> diagnostics,
         Optional<String> mlog
     ) {
-        this(profile, diagnostics, mlog, Optional.empty());
+        this(profile, diagnostics, mlog, Optional.empty(), OptimizationReport.NONE);
     }
 
     public boolean succeeded() {
