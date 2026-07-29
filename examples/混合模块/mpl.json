@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "name": "mixed-modules",
+  "version": "0.1.0",
+  "target": {
+    "mindustry": "v146"
+  },
+  "entry": "src/main.mpl",
+  "hardware": "src/hardware.mplh",
+  "runtime": {
+    "goal": "minResources",
+    "processors": {
+      "micro": 1
+    },
+    "memory": {
+      "cell": 1
+    }
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,30 @@
+# MPL shard: Main / build: c60b68eb7d46
+_2:
+sensor __mpl_hw0 message1 @type
+jump _2 notEqual __mpl_hw0 @message
+set mpl___module_math_mpl_Factor 2
+set __mpl_tmp0 21
+set __mpl_fn0_arg0 __mpl_tmp0
+op add __mpl_fn0_return @counter 1
+set @counter 17
+set __mpl_tmp1 __mpl_fn0_result
+op add __mpl_tmp2 __mpl_tmp1 mpl___module_math_mpl_Factor
+op min __mpl_tmp2 __mpl_tmp2 2147483647
+op max __mpl_tmp2 __mpl_tmp2 -2147483648
+set mpl_result __mpl_tmp2
+set __mpl_tmp3 mpl_result
+set __mpl_fn1_arg0 __mpl_tmp3
+op add __mpl_fn1_return @counter 1
+set @counter 22
+stop
+_0:
+op mul __mpl_tmp4 __mpl_fn0_arg0 mpl___module_math_mpl_Factor
+op min __mpl_tmp4 __mpl_tmp4 2147483647
+op max __mpl_tmp4 __mpl_tmp4 -2147483648
+set __mpl_fn0_result __mpl_tmp4
+set @counter __mpl_fn0_return
+_1:
+print "mixed module value="
+print __mpl_fn1_arg0
+printflush message1
+set @counter __mpl_fn1_return

@@ -1,0 +1,11 @@
+// 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。
+// 普通结构保留为 MIL；@unit.* 与 @io.* 是由 target profile 展开的受限宏。
+fun __module_math_mpl_scale(value: Int): Int {
+    return (value * __module_math_mpl_Factor);
+}
+fun __module_output_mil_announce(value: Int) {
+    @io.print(@message1, "mixed module value=", value);
+}
+val __module_math_mpl_Factor: Int = 2;
+val result: Int = (__module_math_mpl_scale(21) + __module_math_mpl_Factor);
+__module_output_mil_announce(result);

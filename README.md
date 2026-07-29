@@ -6,7 +6,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 ## 快速试用
 
-当前原型支持初始化项目、基础数值/控制流、Message/Display I/O，以及 Unit/Building 对象查询。`Set<Unit<T>>` 与 `LinkedBuildingSet<T>` 均可保存、过滤、计数、索引和遍历；可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
+当前原型支持初始化项目、基础数值/控制流、项目内 MPL/MIL 混合模块、Message/Display I/O，以及 Unit/Building 对象查询。`Set<Unit<T>>` 与 `LinkedBuildingSet<T>` 均可保存、过滤、计数、索引和遍历；可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
 
 ```bash
 # 默认使用 v146；目录必须不存在或为空。
@@ -16,7 +16,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 ./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/output.mlog'
 ```
 
-`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。手写 MIL 使用独立 ANTLR 前端，只能调用 target profile 公开宏；它与 MPL 一样经过严格类型、硬件契约、优化、Runtime、内存规划和 mlog 限制校验。当前尚未实现跨文件 `import/export`，因此一次构建只执行一个入口文件。
+`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。入口可用 `import { name } from "./module";` 递归链接 `src` 内显式 `export fun` / `export val` 的 MPL 或 MIL 模块；依赖顶层初始化只执行一次，私有符号由链接器隔离。手写 MIL 使用独立 ANTLR 前端，只能调用 target profile 公开宏；它与 MPL 一样经过严格类型、硬件契约、优化、Runtime、内存规划和 mlog 限制校验。外部 registry 包、`mpl.lock` 和 `with` 硬件注入尚未实现。
 
 `build` 的最后一个参数仍是 mlog 输出路径；编译器会在同一目录自动生成同名的 `.mil` 文件。例如 `build/... output.mlog` 会产生 `output.mil` 与 `output.mlog`。`.mil` 是便于检查高级糖降级和运行时展开的源级中间产物：普通变量、表达式及 `if`/`while`/`for` 等仍保持结构化写法，只有需要映射游戏能力的高级糖变为所选 profile 的宏调用。它不是把每条 mlog 指令换一种写法的包装格式；游戏中只粘贴 `.mlog`。
 
@@ -28,7 +28,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 编译信息默认使用中文；`--lang=zh-CN` 可显式指定该 catalogue，并为后续语言目录保留稳定的命令行接口。错误码不随翻译改变。
 
-`src/hardware.mplh` 中的 `const AlertBoard: Message = link("message1");` 将 MPL 硬件名绑定到游戏提供的链接变量。可参考 [消息输出演示](examples/message-output-demo)。
+`src/hardware.mplh` 中的 `const AlertBoard: Message = link("message1");` 将 MPL 硬件名绑定到游戏提供的链接变量。可参考 [基础输出示例](examples/基础输出)。
 
 ## 文档
 
@@ -55,8 +55,9 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - [基础语法示例](docs/示例/基础语法示例.mpl)：讨论中的最小表面语法示例，未承诺可编译。
 - [完整语法示例](docs/示例/完整语法示例.mpl)：以一个顶层程序串联模块注入、类、函数、严格数值类型、控制流、单位遍历、内存、绘图与消息输出。
 - [完整示例：项目配置](docs/示例/完整项目配置示例.json)、[硬件声明](docs/示例/完整硬件声明.mplh)、[主程序](docs/示例/完整主程序.mpl)、[外部包源码](docs/示例/外部包需求示例.mpl) 与 [外部包硬件声明](docs/示例/外部包硬件声明示例.mplh)：展示硬件注入、全局内存预算、对象、单位遍历和图形输出如何协作。
-- [Alpha 受损单位监控示例项目](examples/alpha-monitor)：可独立阅读的项目目录，包含配置、硬件声明、入口程序和本地演示包。
-- [Dagger 三单位绕圈示例](examples/dagger-circle)：`Unit.getAllDagger()`、持续循环和单位移动的 v146 游戏内验收输入，以及部署限制说明。
+- [组合屏幕契约示例](examples/组合屏幕契约)：展示组合 Display 的硬件声明、绘制代码和蓝图构建产物。
+- [Dagger 三单位绕圈示例](examples/单位绕圈)：`Unit.getAllDagger()`、持续循环和单位移动的 v146 游戏内验收输入，以及部署限制说明。
+- [MPL/MIL 混合模块示例](examples/混合模块)：展示相对 import、导出常量、跨语言函数、硬件 alias 与完整蓝图构建产物。
 
 ## 当前范围
 

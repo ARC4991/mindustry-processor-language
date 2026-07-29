@@ -1,0 +1,34 @@
+{
+  "schemaVersion" : 1,
+  "compiler" : {
+    "version" : "0.1.0-SNAPSHOT"
+  },
+  "inputDigest" : "c60b68eb7d46c42e29a5a1bce4aace6ec7510fb3e787bb8f393a8c4925b77e92",
+  "targetProfile" : "v146",
+  "layoutFingerprint" : "876b8819585ee6634e598c9130e4c5bba66571570c21c52220cf683f1429d005",
+  "runtimeTopology" : {
+    "blueprint" : {
+      "file" : "runtime.msch",
+      "blocks" : [ "processor" ]
+    },
+    "shards" : [ {
+      "id" : "Main",
+      "processor" : "micro",
+      "mlog" : "Main.mlog",
+      "roles" : [ "main" ],
+      "blueprintPosition" : {
+        "x" : 1,
+        "y" : 1
+      }
+    } ],
+    "memorySegments" : [ ]
+  },
+  "externalHardware" : [ {
+    "mplName" : "Status",
+    "ownerShard" : "Main",
+    "alias" : "message1",
+    "type" : "Message",
+    "access" : "write"
+  } ],
+  "prerequisites" : [ ]
+}

@@ -1,0 +1,55 @@
+{
+  "schemaVersion" : 1,
+  "compiler" : {
+    "version" : "0.1.0-SNAPSHOT"
+  },
+  "inputDigest" : "c60b68eb7d46c42e29a5a1bce4aace6ec7510fb3e787bb8f393a8c4925b77e92",
+  "targetProfile" : "v146",
+  "success" : true,
+  "diagnosticSummary" : {
+    "errors" : 0,
+    "warnings" : 0
+  },
+  "totals" : {
+    "instructions" : 26,
+    "labels" : 3,
+    "virtualSlots" : 13,
+    "physicalSlots" : 0,
+    "objectPoolSlots" : 0,
+    "stringSlots" : 0,
+    "runtimeSlots" : 0
+  },
+  "shards" : [ {
+    "id" : "Main",
+    "processor" : "micro",
+    "mlog" : "Main.mlog",
+    "ipt" : 2,
+    "maxTokensPerStatement" : 5,
+    "resources" : {
+      "instructions" : 26,
+      "labels" : 3,
+      "virtualSlots" : 13,
+      "physicalSlots" : 0,
+      "objectPoolSlots" : 0,
+      "stringSlots" : 0,
+      "runtimeSlots" : 0
+    }
+  } ],
+  "optimizations" : [ {
+    "name" : "constantFolds",
+    "shard" : "Main",
+    "applied" : 0
+  }, {
+    "name" : "eliminatedBranches",
+    "shard" : "Main",
+    "applied" : 0
+  }, {
+    "name" : "eliminatedLoops",
+    "shard" : "Main",
+    "applied" : 0
+  }, {
+    "name" : "eliminatedStatements",
+    "shard" : "Main",
+    "applied" : 0
+  } ]
+}
