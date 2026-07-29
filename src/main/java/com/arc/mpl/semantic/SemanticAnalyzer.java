@@ -1089,6 +1089,10 @@ public final class SemanticAnalyzer {
             || !(member.target() instanceof Identifier target)) {
             return null;
         }
+        if (unavailablePackageHardware(target.name())) {
+            error("MPL1414", "包代码不能访问未通过 with 注入的根项目硬件", call.span());
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
         HardwareContract.LinkDeclaration hardware = hardwareLinks.get(target.name());
         if (hardware != null) {
             if ("Message".equals(hardware.mplType()) && "print".equals(member.member())) {
@@ -1279,6 +1283,10 @@ public final class SemanticAnalyzer {
     }
 
     private HirStatement analyzeLegacyMethodCall(MethodCallExpression call) {
+        if (unavailablePackageHardware(call.target())) {
+            error("MPL1414", "包代码不能访问未通过 with 注入的根项目硬件", call.span());
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
         String linkName = messages.get(call.target());
         if (linkName != null && "print".equals(call.method())) {
             return analyzePrintCall(linkName, call.arguments());
@@ -1572,6 +1580,10 @@ public final class SemanticAnalyzer {
             return clockIntrinsic(member.member(), List.of(), member.span());
         }
         if (member.target() instanceof Identifier identifier) {
+            if (unavailablePackageHardware(identifier.name())) {
+                error("MPL1414", "包代码不能访问未通过 with 注入的根项目硬件", member.span());
+                return new HirConstant("0", ValueType.ERROR);
+            }
             HardwareContract.LinkDeclaration hardware = hardwareLinks.get(identifier.name());
             if (hardware != null) {
                 TargetProfile.BuildingType building = profile.buildingType(hardware.mplType()).orElse(null);
@@ -1670,6 +1682,10 @@ public final class SemanticAnalyzer {
         }
         error("MPL3201", "当前阶段不支持该成员访问", member.span());
         return new HirConstant("0", ValueType.ERROR);
+    }
+
+    private boolean unavailablePackageHardware(String name) {
+        return name.startsWith("__package_hardware_unavailable_");
     }
 
     private HirExpression analyzeCallExpression(CallExpression call) {

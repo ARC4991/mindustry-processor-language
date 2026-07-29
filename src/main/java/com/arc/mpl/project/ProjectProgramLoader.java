@@ -41,24 +41,37 @@ public final class ProjectProgramLoader {
     private final Map<Path, VisitState> states = new HashMap<>();
     private final Deque<Path> stack = new ArrayDeque<>();
     private final List<Path> order = new ArrayList<>();
-    private Set<Path> sourceFiles = Set.of();
-    private Path sourceRoot;
+    private final Map<Path, ModuleScope> scopesByFile = new HashMap<>();
+    private final Map<String, ModuleScope> packageScopes = new LinkedHashMap<>();
+    private ModuleScope rootScope;
     private Path entryFile;
     private TargetProfile profile;
     private HardwareContract hardware;
 
     public ProjectProgramResult load(ProjectSourceCatalog catalog, TargetProfile targetProfile,
                                      HardwareContract hardwareContract) {
+        return load(catalog, targetProfile, hardwareContract, ResolvedPackageGraph.empty());
+    }
+
+    public ProjectProgramResult load(ProjectSourceCatalog catalog, TargetProfile targetProfile,
+                                     HardwareContract hardwareContract, ResolvedPackageGraph packages) {
         diagnostics.clear();
         modules.clear();
         states.clear();
         stack.clear();
         order.clear();
-        sourceRoot = catalog.sourceRoot().toAbsolutePath().normalize();
+        scopesByFile.clear();
+        packageScopes.clear();
         entryFile = catalog.entryFile().toAbsolutePath().normalize();
-        sourceFiles = Set.copyOf(catalog.sourceFiles());
         profile = targetProfile;
         hardware = hardwareContract;
+        rootScope = new ModuleScope("$root", catalog, packages.rootDependencies(), true);
+        register(rootScope);
+        packages.packages().forEach((name, value) -> {
+            ModuleScope scope = new ModuleScope(name, value.sources(), value.dependencies(), false);
+            packageScopes.put(name, scope);
+            register(scope);
+        });
 
         visit(entryFile, null, null);
         if (!diagnostics.isEmpty()) return result(Optional.empty());
@@ -122,25 +135,41 @@ public final class ProjectProgramLoader {
         MilParseResult parsed = new MilSyntaxParser().parse(source, file, profile, MilSourceKind.USER);
         diagnostics.addAll(parsed.diagnostics());
         if (!parsed.succeeded()) return Optional.empty();
-        MilLoweringResult lowered = new MilLowerer().lower(parsed.document().orElseThrow(), file, profile, hardware);
+        HardwareContract visibleHardware = owner(file).root() ? hardware : new HardwareContract(List.of(), Map.of());
+        MilLoweringResult lowered = new MilLowerer().lower(parsed.document().orElseThrow(), file, profile, visibleHardware);
         diagnostics.addAll(lowered.diagnostics());
         return lowered.program();
     }
 
     private Optional<Path> resolve(Path importer, ImportDeclaration declaration) {
         String request = declaration.source();
+        ModuleScope owner = owner(importer);
         if (!request.startsWith(".")) {
-            error("MPL1401", "外部包尚未安装或锁定：" + request, importer, declaration.span());
-            return Optional.empty();
+            if (!owner.dependencies().contains(request)) {
+                error("MPL1401", "模块未声明外部包依赖：" + request, importer, declaration.span());
+                return Optional.empty();
+            }
+            ModuleScope target = packageScopes.get(request);
+            if (target == null) {
+                error("MPL1401", "外部包尚未安装或锁定：" + request, importer, declaration.span());
+                return Optional.empty();
+            }
+            if (!declaration.hardwareArguments().isEmpty()) {
+                error("MPL1413", "包硬件 with 注入尚未实现，不能忽略参数：" + request,
+                    importer, declaration.span());
+            }
+            return Optional.of(target.catalog().entryFile().toAbsolutePath().normalize());
         }
         if (!declaration.hardwareArguments().isEmpty()) {
             error("MPL1410", "with 硬件注入只能用于外部包 import", importer, declaration.span());
         }
         Path requested = importer.getParent().resolve(request).normalize();
+        Path sourceRoot = owner.catalog().sourceRoot().toAbsolutePath().normalize();
         if (!requested.startsWith(sourceRoot)) {
-            error("MPL1403", "相对 import 不得越出 src：" + request, importer, declaration.span());
+            error("MPL1403", "相对 import 不得越出所属包的 src：" + request, importer, declaration.span());
             return Optional.empty();
         }
+        Set<Path> sourceFiles = Set.copyOf(owner.catalog().sourceFiles());
         List<Path> candidates = candidates(requested).stream().filter(sourceFiles::contains).toList();
         if (candidates.isEmpty()) {
             error("MPL1402", "找不到导入模块：" + request, importer, declaration.span());
@@ -209,7 +238,7 @@ public final class ProjectProgramLoader {
             error("MPL1406", "模块顶层名称重复：" + name, path, span);
             return;
         }
-        if (hardwareName(name)) {
+        if (owner(path).root() && hardwareName(name)) {
             error("MPL1412", "模块顶层名称与全局硬件常量冲突：" + name, path, span);
         }
         String candidate = path.equals(entryFile) ? name : canonical(path, name);
@@ -260,7 +289,7 @@ public final class ProjectProgramLoader {
                         error("MPL1408", "同一 import 重复名称：" + name, path, declaration.span());
                         continue;
                     }
-                    if (hardwareName(name)) {
+                    if (owner(path).root() && hardwareName(name)) {
                         error("MPL1412", "import 名称与全局硬件常量冲突：" + name, path, declaration.span());
                         continue;
                     }
@@ -272,6 +301,10 @@ public final class ProjectProgramLoader {
                         error("MPL1408", "import 名称与当前模块绑定冲突：" + name, path, declaration.span());
                     }
                 }
+            }
+            if (!owner(path).root()) {
+                hardware.links().forEach(link -> names.putIfAbsent(link.mplName(),
+                    "__package_hardware_unavailable_" + canonical(path, link.mplName())));
             }
             result.put(path, Map.copyOf(names));
         }
@@ -288,7 +321,26 @@ public final class ProjectProgramLoader {
     }
 
     private String moduleName(Path path) {
-        return sourceRoot.relativize(path).toString().replace('\\', '/');
+        ModuleScope owner = owner(path);
+        String relative = owner.catalog().sourceRoot().toAbsolutePath().normalize().relativize(path)
+            .toString().replace('\\', '/');
+        return owner.root() ? relative : owner.id() + "/" + relative;
+    }
+
+    private void register(ModuleScope scope) {
+        for (Path source : scope.catalog().sourceFiles()) {
+            Path normalized = source.toAbsolutePath().normalize();
+            ModuleScope previous = scopesByFile.putIfAbsent(normalized, scope);
+            if (previous != null && previous != scope) {
+                throw new IllegalArgumentException("源码文件同时属于多个包：" + normalized);
+            }
+        }
+    }
+
+    private ModuleScope owner(Path file) {
+        ModuleScope result = scopesByFile.get(file.toAbsolutePath().normalize());
+        if (result == null) throw new IllegalStateException("模块不属于已验证的源码根：" + file);
+        return result;
     }
 
     private void error(String code, String message, Path file, SourceSpan span) {
@@ -302,6 +354,12 @@ public final class ProjectProgramLoader {
     }
 
     private record SourceModule(Path path, Program program, Map<ImportDeclaration, Path> targets) {
+    }
+
+    private record ModuleScope(String id, ProjectSourceCatalog catalog, Set<String> dependencies, boolean root) {
+        private ModuleScope {
+            dependencies = Set.copyOf(dependencies);
+        }
     }
 
     private enum VisitState {

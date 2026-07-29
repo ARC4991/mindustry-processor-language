@@ -17,7 +17,10 @@ import java.util.Map;
 /** Parses the restricted project hardware language into a deployment contract. */
 public final class HardwareLoader {
     public HardwareContract load(Path projectDirectory) throws IOException {
-        ProjectManifest manifest = new ProjectManifestLoader().load(projectDirectory);
+        return load(projectDirectory, new ProjectManifestLoader().load(projectDirectory));
+    }
+
+    public HardwareContract load(Path projectDirectory, ProjectManifest manifest) throws IOException {
         Path project = projectDirectory.toAbsolutePath().normalize();
         Path file = WorkspacePackageInstaller.resolveInside(project, manifest.hardware(), "hardware");
         if (!Files.isRegularFile(file)) return emptyContract();

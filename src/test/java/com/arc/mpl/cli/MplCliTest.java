@@ -14,6 +14,37 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MplCliTest {
     @Test
+    void installWritesAWorkspaceLock(@TempDir Path workspace) throws IOException {
+        Path app = Files.createDirectories(workspace.resolve("app/src"));
+        Path library = Files.createDirectories(workspace.resolve("library/src"));
+        Files.writeString(app.getParent().resolve("mpl.json"), """
+            {
+              "name": "app", "version": "1.0.0",
+              "target": { "mindustry": "v146" },
+              "entry": "src/main.mpl", "hardware": "src/hardware.mplh",
+              "dependencies": { "library": "workspace:../library" }
+            }
+            """);
+        Files.writeString(app.resolve("main.mpl"), "");
+        Files.writeString(app.resolve("hardware.mplh"), "");
+        Files.writeString(library.getParent().resolve("mpl.json"), """
+            {
+              "name": "library", "version": "1.0.0",
+              "entry": "src/index.mpl", "hardware": "src/hardware.mplh",
+              "dependencies": {}
+            }
+            """);
+        Files.writeString(library.resolve("index.mpl"), "export val value: Int = 1;\n");
+        Files.writeString(library.resolve("hardware.mplh"), "");
+
+        MplCli.main(new String[]{"install", "--lang=zh-CN", app.getParent().toString()});
+
+        assertTrue(Files.isRegularFile(app.getParent().resolve("mpl.lock")));
+        assertEquals(1, new ObjectMapper().readTree(Files.readString(app.getParent().resolve("mpl.lock")))
+            .path("packages").size());
+    }
+
+    @Test
     void buildAcceptsAMilEntryAndWritesTheNormalBlueprintBundle(@TempDir Path project) throws IOException {
         Path sourceDirectory = Files.createDirectories(project.resolve("src"));
         Files.writeString(project.resolve("mpl.json"), """

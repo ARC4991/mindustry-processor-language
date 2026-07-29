@@ -15,6 +15,7 @@ import com.arc.mpl.project.RuntimePlan;
 import com.arc.mpl.project.RuntimePlanner;
 import com.arc.mpl.project.RuntimePreferencesLoader;
 import com.arc.mpl.project.ProjectMetadata;
+import com.arc.mpl.project.WorkspacePackageInstaller;
 
 import java.nio.file.Path;
 import java.nio.file.Files;
@@ -68,6 +69,17 @@ public final class MplCli {
             }
             return;
         }
+        if (args.length == 2 && "install".equals(args[0])) {
+            try {
+                var lock = new WorkspacePackageInstaller().install(Path.of(args[1]));
+                System.out.println(message(language, "cli.install.success", lock.packages().size(),
+                    Path.of(args[1]).toAbsolutePath().normalize().resolve("mpl.lock")));
+            } catch (IOException | IllegalArgumentException exception) {
+                System.err.println(message(language, "cli.install.failed", exceptionMessage(exception)));
+                System.exit(1);
+            }
+            return;
+        }
         if (args.length == 3 && "check".equals(args[0]) && args[1].startsWith("--target=")) {
             String target = args[1].substring("--target=".length());
             CompilationResult result = new MplCompiler().compile(new CompilationRequest(Path.of(args[2]), target));
@@ -110,6 +122,7 @@ public final class MplCli {
 
     private static void printUsage(DiagnosticLanguage language) {
         System.err.println(message(language, "cli.usage.init"));
+        System.err.println(message(language, "cli.usage.install"));
         System.err.println(message(language, "cli.usage.check"));
         System.err.println(message(language, "cli.usage.build"));
     }

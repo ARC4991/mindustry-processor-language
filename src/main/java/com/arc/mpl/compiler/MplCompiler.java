@@ -17,12 +17,15 @@ import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.project.HardwareContract;
 import com.arc.mpl.project.HardwareLoader;
+import com.arc.mpl.project.LockedPackageResolver;
+import com.arc.mpl.project.ProjectManifest;
+import com.arc.mpl.project.ProjectManifestLoader;
 import com.arc.mpl.project.ProjectSourceCatalog;
 import com.arc.mpl.project.ProjectSourceLoader;
 import com.arc.mpl.project.ProjectProgramLoader;
 import com.arc.mpl.project.ProjectProgramResult;
+import com.arc.mpl.project.ResolvedPackageGraph;
 import com.arc.mpl.project.RuntimePreferences;
-import com.arc.mpl.project.RuntimePreferencesLoader;
 import com.arc.mpl.runtime.DisplayRuntimeLowerer;
 import com.arc.mpl.semantic.SemanticAnalyzer;
 import com.arc.mpl.semantic.SemanticResult;
@@ -48,14 +51,24 @@ public final class MplCompiler {
                 Optional.empty());
         }
 
+        ProjectManifest manifest;
         ProjectSourceCatalog sources;
         try {
-            sources = new ProjectSourceLoader().load(request.projectDirectory());
+            manifest = new ProjectManifestLoader().load(request.projectDirectory());
+            sources = new ProjectSourceLoader().load(request.projectDirectory(), manifest);
         } catch (IOException | IllegalArgumentException exception) {
             Path metadata = request.projectDirectory().resolve("mpl.json");
             return new CompilationResult(profile, List.of(Diagnostic.localized(
                 Severity.ERROR, "MPL1105", "compiler.source.config", List.of(exceptionMessage(exception)),
                 Optional.of(metadata), Optional.empty())), Optional.empty());
+        }
+        ResolvedPackageGraph packages;
+        try {
+            packages = new LockedPackageResolver().resolve(request.projectDirectory(), manifest, profile.orElseThrow());
+        } catch (IOException | IllegalArgumentException exception) {
+            return new CompilationResult(profile, List.of(Diagnostic.localized(
+                Severity.ERROR, "MPL1401", "compiler.package.resolve", List.of(exceptionMessage(exception)),
+                Optional.of(request.projectDirectory().resolve("mpl.lock")), Optional.empty())), Optional.empty());
         }
         Path sourceFile = sources.entryFile();
         if (!Files.isRegularFile(sourceFile)) {
@@ -63,17 +76,10 @@ public final class MplCompiler {
                 Severity.ERROR, "MPL1101", "compiler.entry.missing", List.of(sourceFile),
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
-        RuntimePreferences runtimePreferences;
-        try {
-            runtimePreferences = new RuntimePreferencesLoader().load(request.projectDirectory());
-        } catch (IOException | IllegalArgumentException exception) {
-            return new CompilationResult(profile, List.of(Diagnostic.localized(
-                Severity.ERROR, "MPL1104", "compiler.runtime.read", List.of(exceptionMessage(exception)),
-                Optional.of(request.projectDirectory().resolve("mpl.json")), Optional.empty())), Optional.empty());
-        }
+        RuntimePreferences runtimePreferences = manifest.runtime();
         HardwareContract hardware;
         try {
-            hardware = new HardwareLoader().load(request.projectDirectory());
+            hardware = new HardwareLoader().load(request.projectDirectory(), manifest);
             List<Diagnostic> hardwareDiagnostics = validateHardware(hardware, profile.orElseThrow(), sourceFile);
             if (!hardwareDiagnostics.isEmpty()) return new CompilationResult(profile, hardwareDiagnostics, Optional.empty());
         } catch (IOException exception) {
@@ -81,7 +87,8 @@ public final class MplCompiler {
                 Severity.ERROR, "MPL1103", "compiler.hardware.read", List.of(exceptionMessage(exception)),
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
-        ProjectProgramResult projectProgram = new ProjectProgramLoader().load(sources, profile.orElseThrow(), hardware);
+        ProjectProgramResult projectProgram = new ProjectProgramLoader().load(
+            sources, profile.orElseThrow(), hardware, packages);
         if (!projectProgram.succeeded()) {
             return new CompilationResult(profile, projectProgram.diagnostics(), Optional.empty());
         }

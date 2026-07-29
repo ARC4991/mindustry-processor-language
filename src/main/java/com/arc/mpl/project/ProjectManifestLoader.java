@@ -47,8 +47,7 @@ public final class ProjectManifestLoader {
     }
 
     private String defaultName(Path project) {
-        Path fileName = project.getFileName();
-        return fileName == null || fileName.toString().isBlank() ? "mpl-project" : fileName.toString();
+        return "mpl-project";
     }
 
     private ProjectManifest.PackageRequirements requirements(JsonNode node) {
