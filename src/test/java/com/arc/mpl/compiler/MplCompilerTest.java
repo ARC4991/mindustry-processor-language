@@ -1106,6 +1106,36 @@ class MplCompilerTest {
     }
 
     @Test
+    void sharesOneManagedUnitSetAcrossSizeGetAndIteration(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val squad: Set<Unit<Dagger>> = Unit.getAllDagger().where(_.alive).take(3);
+            val count: Int = squad.size;
+            val leader: Unit<Dagger>? = squad.get(0);
+            for (var unit : squad) {
+                unit.move(10.0, 20.0);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("@unit.countManaged(@dagger, _, 3, @unit.alive(_))"));
+        assertTrue(mil.contains("@unit.getManaged(@dagger, _, 0, 3, @unit.alive(_))"));
+        assertTrue(mil.contains("@unit.eachManaged(@dagger, unit, 3, @unit.alive(unit))"));
+        assertFalse(mil.contains("managedId"));
+        assertFalse(mil.contains("flag"));
+
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("__mpl_managed_owner0"));
+        assertFalse(mlog.contains("__mpl_managed_owner1"));
+        assertTrue(mlog.contains("set mpl_count __mpl_managed_count"));
+        assertTrue(mlog.contains("set mpl_leader __mpl_tmp"));
+        assertTrue(mlog.contains("ucontrol move 10.0 20.0 0 0 0"));
+    }
+
+    @Test
     void savesReusesAndCountsALazyUnitSet(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

@@ -110,7 +110,7 @@ public final class DisplayRuntimeLowerer {
         }
         if (statement instanceof HirUnitIteration iteration) {
             return new HirUnitIteration(iteration.bindingName(), iteration.unitType(), iteration.mlogType(),
-                iteration.filters(), iteration.managedLimit(), lowerStatements(iteration.body()));
+                iteration.filters(), iteration.managedLimit(), iteration.managedId(), lowerStatements(iteration.body()));
         }
         if (statement instanceof HirAggregateIteration iteration) {
             return new HirAggregateIteration(iteration.bindingName(), iteration.source(), iteration.elementType(), iteration.size(),

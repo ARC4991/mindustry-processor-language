@@ -396,7 +396,14 @@ public final class MlogCodeGenerator {
      * candidate on a later tick.</p>
      */
     private void emitManagedUnitIteration(HirUnitIteration iteration) {
-        int iterationId = unitIterationIndex++;
+        ManagedUnitQuery query = new ManagedUnitQuery(iteration.mlogType(), iteration.filters(),
+            iteration.managedLimit(), iteration.managedId());
+        emitManagedUnitScan(query, (next, end) -> emitLoopBody(iteration.body(), next, end));
+    }
+
+    /** Reconciles and fills one stable owner set, then visits every retained member. */
+    private String emitManagedUnitScan(ManagedUnitQuery query, ManagedUnitVisitor visitor) {
+        int scanId = unitIterationIndex++;
         MlogProgramBuilder.Label reconcileScan = label("managed_reconcile_scan");
         MlogProgramBuilder.Label reconcileTagged = label("managed_reconcile_tagged");
         MlogProgramBuilder.Label reconcileOwned = label("managed_reconcile_owned");
@@ -413,18 +420,18 @@ public final class MlogCodeGenerator {
         MlogProgramBuilder.Label body = label("managed_unit_body");
         MlogProgramBuilder.Label next = label("managed_unit_next");
         MlogProgramBuilder.Label end = label("managed_unit_end");
-        String sentinel = "__mpl_managed_sentinel" + iterationId;
-        String owner = "__mpl_managed_owner" + iterationId;
-        String retained = "__mpl_managed_count" + iterationId;
-        String limit = Integer.toString(iteration.managedLimit());
+        String sentinel = "__mpl_managed_sentinel" + scanId;
+        String owner = "__mpl_managed_owner" + query.managedId();
+        String retained = "__mpl_managed_count" + scanId;
+        String limit = Integer.toString(query.limit());
 
-        emitManagedOwnerToken(owner, iterationId);
+        emitManagedOwnerToken(owner, query.managedId());
         output.set(retained, "0");
 
         // Phase A: preserve qualifying units already owned by this traversal
         // before filling the remaining capacity. A stale excess tag is released
         // so lowering remains correct after reducing take(n) and recompiling.
-        output.unitBind("@" + iteration.mlogType());
+        output.unitBind("@" + query.mlogType());
         emitJump(reconcileEnd, JumpCondition.STRICT_EQUAL, "@unit", "null");
         output.set(sentinel, "@unit");
         emitLabel(reconcileScan);
@@ -440,7 +447,7 @@ public final class MlogCodeGenerator {
         emitJump(reconcileNext, JumpCondition.ALWAYS, "0", "0");
 
         emitLabel(reconcileOwned);
-        emitFilterRejectionJump(iteration.filters(), reconcileReject);
+        emitFilterRejectionJump(query.filters(), reconcileReject);
         output.operation(Operation.ADD, retained, retained, "1");
         emitJump(reconcileNext, JumpCondition.LESS_THAN_EQ, retained, limit);
 
@@ -454,13 +461,13 @@ public final class MlogCodeGenerator {
         emitJump(reconcileNext, JumpCondition.ALWAYS, "0", "0");
 
         emitLabel(reconcileNext);
-        emitUnitScanAdvance(sentinel, iteration.mlogType(), reconcileScan, reconcileEnd);
+        emitUnitScanAdvance(sentinel, query.mlogType(), reconcileScan, reconcileEnd);
         emitLabel(reconcileEnd);
 
         // Phase B: only current owner-tagged units execute the MPL loop body.
         // Unflagged, qualifying candidates fill an empty slot; any foreign
         // non-zero flag is left untouched.
-        output.unitBind("@" + iteration.mlogType());
+        output.unitBind("@" + query.mlogType());
         emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
         output.set(sentinel, "@unit");
         emitLabel(scan);
@@ -474,7 +481,7 @@ public final class MlogCodeGenerator {
         String candidateControl = temporary();
         output.sensor(candidateControl, "@unit", "@controlled");
         emitJump(next, JumpCondition.NOT_EQUAL, candidateControl, "0");
-        emitFilterRejectionJump(iteration.filters(), next);
+        emitFilterRejectionJump(query.filters(), next);
         output.unitControl(UnitControlCommand.FLAG, owner, "0", "0", "0", "0");
         String claimedFlag = temporary();
         output.sensor(claimedFlag, "@unit", "@flag");
@@ -495,13 +502,14 @@ public final class MlogCodeGenerator {
         emitJump(ownedConfirmed, JumpCondition.STRICT_EQUAL, ownedController, "@this");
         emitJump(next, JumpCondition.ALWAYS, "0", "0");
         emitLabel(ownedConfirmed);
-        emitFilterRejectionJump(iteration.filters(), next);
+        emitFilterRejectionJump(query.filters(), next);
         emitLabel(body);
-        emitLoopBody(iteration.body(), next, end);
+        visitor.emit(next, end);
 
         emitLabel(next);
-        emitUnitScanAdvance(sentinel, iteration.mlogType(), scan, end);
+        emitUnitScanAdvance(sentinel, query.mlogType(), scan, end);
         emitLabel(end);
+        return retained;
     }
 
     /** Builds a stable, numeric owner token without exposing target internals to MPL. */
@@ -704,6 +712,10 @@ public final class MlogCodeGenerator {
     }
 
     private String emitUnitQuerySize(HirUnitQuery query) {
+        if (query.hasManagedLimit()) {
+            return emitManagedUnitScan(new ManagedUnitQuery(query.mlogType(), query.filters(),
+                query.managedLimit(), query.managedId()), (next, end) -> { });
+        }
         int queryId = unitIterationIndex++;
         MlogProgramBuilder.Label scan = label("unit_count_scan");
         MlogProgramBuilder.Label next = label("unit_count_next");
@@ -726,6 +738,7 @@ public final class MlogCodeGenerator {
 
     private String emitUnitQueryGet(HirUnitQueryGet get) {
         HirUnitQuery query = get.query();
+        if (query.hasManagedLimit()) return emitManagedUnitQueryGet(get);
         int queryId = unitIterationIndex++;
         MlogProgramBuilder.Label scan = label("unit_get_scan");
         MlogProgramBuilder.Label found = label("unit_get_found");
@@ -753,6 +766,31 @@ public final class MlogCodeGenerator {
         emitJump(end, JumpCondition.ALWAYS, "0", "0");
         emitLabel(next);
         emitUnitScanAdvance(sentinel, query.mlogType(), scan, end);
+        emitLabel(end);
+        return result;
+    }
+
+    private String emitManagedUnitQueryGet(HirUnitQueryGet get) {
+        HirUnitQuery query = get.query();
+        String result = temporary();
+        String index = temporary();
+        String position = temporary();
+        MlogProgramBuilder.Label found = label("managed_unit_get_found");
+        MlogProgramBuilder.Label end = label("managed_unit_get_end");
+
+        output.set(result, "null");
+        output.set(index, emitExpression(get.index()));
+        emitJump(end, JumpCondition.LESS_THAN, index, "0");
+        output.set(position, "0");
+        emitManagedUnitScan(new ManagedUnitQuery(query.mlogType(), query.filters(),
+            query.managedLimit(), query.managedId()), (next, scanEnd) -> {
+                emitJump(found, JumpCondition.EQUAL, position, index);
+                output.operation(Operation.ADD, position, position, "1");
+                emitJump(next, JumpCondition.ALWAYS, "0", "0");
+                emitLabel(found);
+                output.set(result, "@unit");
+                emitJump(scanEnd, JumpCondition.ALWAYS, "0", "0");
+            });
         emitLabel(end);
         return result;
     }
@@ -1308,5 +1346,21 @@ public final class MlogCodeGenerator {
     }
 
     private record LoopTarget(MlogProgramBuilder.Label continueTarget, MlogProgramBuilder.Label breakTarget) {
+    }
+
+    private record ManagedUnitQuery(String mlogType, List<HirExpression> filters, int limit, int managedId) {
+        private ManagedUnitQuery {
+            java.util.Objects.requireNonNull(mlogType, "mlogType");
+            filters = List.copyOf(java.util.Objects.requireNonNull(filters, "filters"));
+            if (limit <= 0) throw new IllegalArgumentException("managed Unit query limit must be positive");
+            if (managedId < 0 || managedId >= 4096) {
+                throw new IllegalArgumentException("managed Unit query id must be in [0, 4096)");
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface ManagedUnitVisitor {
+        void emit(MlogProgramBuilder.Label next, MlogProgramBuilder.Label end);
     }
 }

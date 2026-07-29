@@ -126,7 +126,8 @@ public final class HirOptimizer {
         }
         if (statement instanceof HirUnitIteration iteration) {
             return List.of(new HirUnitIteration(iteration.bindingName(), iteration.unitType(), iteration.mlogType(),
-                optimizeExpressions(iteration.filters()), iteration.managedLimit(), optimizeStatements(iteration.body())));
+                optimizeExpressions(iteration.filters()), iteration.managedLimit(), iteration.managedId(),
+                optimizeStatements(iteration.body())));
         }
         if (statement instanceof HirBuildingIteration iteration) {
             if (iteration.buildings().isEmpty()) {
@@ -245,7 +246,7 @@ public final class HirOptimizer {
 
     private HirUnitQuery optimizeUnitQuery(HirUnitQuery query) {
         return new HirUnitQuery(query.bindingName(), query.unitType(), query.mlogType(),
-            optimizeExpressions(query.filters()), query.managedLimit());
+            optimizeExpressions(query.filters()), query.managedLimit(), query.managedId());
     }
 
     private HirExpression optimizeBinary(HirBinary binary) {

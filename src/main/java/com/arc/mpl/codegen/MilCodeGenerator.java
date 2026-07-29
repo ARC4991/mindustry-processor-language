@@ -305,18 +305,20 @@ public final class MilCodeGenerator {
         if (value instanceof HirUnitQuery query) return unitQuery(query);
         if (value instanceof HirUnitQueryGet get) {
             HirUnitQuery query = get.query();
-            StringBuilder result = new StringBuilder("@unit.get(@")
+            StringBuilder result = new StringBuilder(query.hasManagedLimit() ? "@unit.getManaged(@" : "@unit.get(@")
                 .append(identifier(query.mlogType(), "单位内容名"))
                 .append(", ").append(identifier(query.bindingName(), "单位绑定变量"))
                 .append(", ").append(expression(get.index()));
+            if (query.hasManagedLimit()) result.append(", ").append(query.managedLimit());
             for (HirExpression filter : query.filters()) result.append(", ").append(expression(filter));
             return result.append(')').toString();
         }
         if (value instanceof HirUnitQuerySize size) {
             HirUnitQuery query = size.query();
-            StringBuilder result = new StringBuilder("@unit.count(@")
+            StringBuilder result = new StringBuilder(query.hasManagedLimit() ? "@unit.countManaged(@" : "@unit.count(@")
                 .append(identifier(query.mlogType(), "单位内容名"))
                 .append(", ").append(identifier(query.bindingName(), "单位绑定变量"));
+            if (query.hasManagedLimit()) result.append(", ").append(query.managedLimit());
             for (HirExpression filter : query.filters()) result.append(", ").append(expression(filter));
             return result.append(')').toString();
         }

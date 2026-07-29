@@ -13,6 +13,7 @@ public record HirUnitIteration(
     String mlogType,
     List<HirExpression> filters,
     int managedLimit,
+    int managedId,
     List<HirStatement> body
 ) implements HirStatement {
     public HirUnitIteration {
@@ -23,7 +24,15 @@ public record HirUnitIteration(
         if (managedLimit < 0) {
             throw new IllegalArgumentException("managedLimit must not be negative");
         }
+        if (managedLimit == 0 && managedId != -1 || managedLimit > 0 && managedId < 0) {
+            throw new IllegalArgumentException("managedId must identify exactly the managed traversals");
+        }
         body = List.copyOf(Objects.requireNonNull(body, "body"));
+    }
+
+    public HirUnitIteration(String bindingName, String unitType, String mlogType, List<HirExpression> filters,
+                            int managedLimit, List<HirStatement> body) {
+        this(bindingName, unitType, mlogType, filters, managedLimit, managedLimit > 0 ? 0 : -1, body);
     }
 
     /**
@@ -41,7 +50,7 @@ public record HirUnitIteration(
         List<HirExpression> filters,
         List<HirStatement> body
     ) {
-        this(bindingName, unitType, mlogType, filters, 0, body);
+        this(bindingName, unitType, mlogType, filters, 0, -1, body);
     }
 
     public boolean hasManagedLimit() {

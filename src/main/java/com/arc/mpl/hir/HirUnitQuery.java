@@ -9,7 +9,8 @@ public record HirUnitQuery(
     String unitType,
     String mlogType,
     List<HirExpression> filters,
-    int managedLimit
+    int managedLimit,
+    int managedId
 ) implements HirExpression {
     public HirUnitQuery {
         Objects.requireNonNull(bindingName, "bindingName");
@@ -17,6 +18,14 @@ public record HirUnitQuery(
         Objects.requireNonNull(mlogType, "mlogType");
         filters = List.copyOf(Objects.requireNonNull(filters, "filters"));
         if (managedLimit < 0) throw new IllegalArgumentException("managedLimit must not be negative");
+        if (managedLimit == 0 && managedId != -1 || managedLimit > 0 && managedId < 0) {
+            throw new IllegalArgumentException("managedId must identify exactly the managed queries");
+        }
+    }
+
+    public HirUnitQuery(String bindingName, String unitType, String mlogType, List<HirExpression> filters,
+                        int managedLimit) {
+        this(bindingName, unitType, mlogType, filters, managedLimit, managedLimit > 0 ? 0 : -1);
     }
 
     @Override

@@ -398,11 +398,9 @@ class SemanticAnalyzerTest {
     }
 
     @Test
-    void rejectsMutableOrUnsafelyScannedUnitSets() {
+    void rejectsMutableOrFunctionScannedUnitSets() {
         Program program = parser.parse("""
             var mutable = Unit.getAllDagger();
-            val managed = Unit.getAllDagger().take(3);
-            var managedSize: Int = managed.size;
             fun countUnits(): Int {
                 val local = Unit.getAllDagger();
                 return mutable.size;
@@ -414,9 +412,44 @@ class SemanticAnalyzerTest {
         assertTrue(result.program().isEmpty());
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3301")
             && diagnostic.message().contains("只能使用 val")));
-        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3307")
-            && diagnostic.message().contains("take(n)")));
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3508")));
+    }
+
+    @Test
+    void preservesManagedSetIdentityAcrossSizeGetAndIteration() {
+        Program program = parser.parse("""
+            val squad = Unit.getAllDagger().where(_.alive).take(3);
+            val count = squad.size;
+            val leader = squad.get(0);
+            for (var unit : squad) {
+                unit.move(1.0, 2.0);
+            }
+            val reserve = Unit.getAllDagger().where(_.alive).take(3);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        HirUnitQuery squad = assertInstanceOf(HirUnitQuery.class,
+            assertInstanceOf(HirVariableDeclaration.class,
+                result.program().orElseThrow().statements().get(0)).initializer());
+        HirUnitQuerySize size = assertInstanceOf(HirUnitQuerySize.class,
+            assertInstanceOf(HirVariableDeclaration.class,
+                result.program().orElseThrow().statements().get(1)).initializer());
+        HirUnitQueryGet get = assertInstanceOf(HirUnitQueryGet.class,
+            assertInstanceOf(HirVariableDeclaration.class,
+                result.program().orElseThrow().statements().get(2)).initializer());
+        HirUnitIteration iteration = assertInstanceOf(HirUnitIteration.class,
+            result.program().orElseThrow().statements().get(3));
+        HirUnitQuery reserve = assertInstanceOf(HirUnitQuery.class,
+            assertInstanceOf(HirVariableDeclaration.class,
+                result.program().orElseThrow().statements().get(4)).initializer());
+
+        assertEquals(new UnitSetType("Dagger"), squad.type());
+        assertEquals(squad.managedId(), size.query().managedId());
+        assertEquals(squad.managedId(), get.query().managedId());
+        assertEquals(squad.managedId(), iteration.managedId());
+        assertTrue(reserve.managedId() != squad.managedId());
     }
 
     @Test
@@ -475,7 +508,7 @@ class SemanticAnalyzerTest {
     }
 
     @Test
-    void rejectsManagedNestedAndFunctionUnitGets() {
+    void rejectsNestedAndFunctionUnitGets() {
         Program program = parser.parse("""
             val managed = Unit.getAllDagger().take(3);
             val selected = managed.get(0);
@@ -490,7 +523,6 @@ class SemanticAnalyzerTest {
         SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
 
         assertTrue(result.program().isEmpty());
-        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3307".equals(diagnostic.code())));
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3306".equals(diagnostic.code())));
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3508".equals(diagnostic.code())));
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3602".equals(diagnostic.code())));

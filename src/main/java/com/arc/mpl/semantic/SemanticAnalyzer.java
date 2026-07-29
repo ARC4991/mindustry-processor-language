@@ -115,6 +115,7 @@ public final class SemanticAnalyzer {
     private Map<String, String> messages = Map.of();
     private Map<String, HardwareContract.LinkDeclaration> hardwareLinks = Map.of();
     private int unitIterationDepth;
+    private int nextManagedQueryId;
     private int loopDepth;
     private String activeUnitBinding;
     private String activeBuildingBinding;
@@ -163,6 +164,7 @@ public final class SemanticAnalyzer {
         initializedGlobals.clear();
         arrayBoundsProofs.clear();
         unitIterationDepth = 0;
+        nextManagedQueryId = 0;
         loopDepth = 0;
         activeUnitBinding = null;
         activeBuildingBinding = null;
@@ -498,6 +500,7 @@ public final class SemanticAnalyzer {
                 type.mlogName(),
                 filters,
                 query.managedLimit(),
+                query.managedId(),
                 body);
         } finally {
             scopes.pop();
@@ -521,7 +524,7 @@ public final class SemanticAnalyzer {
             List<HirExpression> filters = query.filters().stream()
                 .map(filter -> renameUnitBinding(filter, query.bindingName(), loop.name())).toList();
             return new HirUnitIteration(loop.name(), query.unitType(), query.mlogType(), filters,
-                query.managedLimit(), analyzeBlock(loop.body()));
+                query.managedLimit(), query.managedId(), analyzeBlock(loop.body()));
         } finally {
             scopes.pop();
             unitIterationDepth--;
@@ -550,6 +553,7 @@ public final class SemanticAnalyzer {
         List<HirExpression> filters = new ArrayList<>(base.filters().stream()
             .map(filter -> renameUnitBinding(filter, base.bindingName(), bindingName)).toList());
         int managedLimit = base.managedLimit();
+        int managedId = base.managedId();
         String previousBinding = activeUnitBinding;
         activeUnitBinding = bindingName;
         try {
@@ -578,11 +582,12 @@ public final class SemanticAnalyzer {
                     continue;
                 }
                 managedLimit = (int) literal.value();
+                managedId = nextManagedQueryId++;
             }
         } finally {
             activeUnitBinding = previousBinding;
         }
-        return new HirUnitQuery(bindingName, base.unitType(), base.mlogType(), filters, managedLimit);
+        return new HirUnitQuery(bindingName, base.unitType(), base.mlogType(), filters, managedLimit, managedId);
     }
 
     private HirStatement analyzeBuildingForEach(ForEachStatement loop, BuildingQuery query) {
@@ -700,7 +705,8 @@ public final class SemanticAnalyzer {
             managedLimit = (int) literal.value();
         }
 
-        return Optional.of(new UnitQuery(typeName, type.orElseThrow(), List.copyOf(filters), managedLimit));
+        int managedId = managedLimit > 0 ? nextManagedQueryId++ : -1;
+        return Optional.of(new UnitQuery(typeName, type.orElseThrow(), List.copyOf(filters), managedLimit, managedId));
     }
 
     private Optional<BuildingQuery> parseBuildingQuery(Expression iterable) {
@@ -846,7 +852,8 @@ public final class SemanticAnalyzer {
         try {
             List<HirExpression> filters = query.filters().stream()
                 .map(filter -> analyzeUnitFilter(filter, bindingName)).toList();
-            return new HirUnitQuery(bindingName, query.typeName(), query.type().mlogName(), filters, query.managedLimit());
+            return new HirUnitQuery(bindingName, query.typeName(), query.type().mlogName(), filters,
+                query.managedLimit(), query.managedId());
         } finally {
             activeUnitBinding = previousBinding;
         }
@@ -868,9 +875,6 @@ public final class SemanticAnalyzer {
         }
         if (unitIterationDepth > 0) {
             error("MPL3306", "Set<Unit<T>>.get(index) 不能嵌套在 Unit 遍历中", span);
-        }
-        if (query.hasManagedLimit()) {
-            error("MPL3307", "带 take(n) 的 Set<Unit<T>>.get(index) 需要稳定所有权索引 Runtime，当前尚未启用", span);
         }
         return new HirUnitQueryGet(query, index);
     }
@@ -1394,10 +1398,6 @@ public final class SemanticAnalyzer {
                 }
                 if (unitIterationDepth > 0) {
                     error("MPL3306", "Set<Unit<T>>.size 不能嵌套在 Unit 遍历中", member.span());
-                    return new HirConstant("0", ValueType.ERROR);
-                }
-                if (query.hasManagedLimit()) {
-                    error("MPL3307", "带 take(n) 的 Set<Unit<T>>.size 需要稳定所有权计数 Runtime，当前尚未启用", member.span());
                     return new HirConstant("0", ValueType.ERROR);
                 }
                 return new HirUnitQuerySize(query);
@@ -2048,7 +2048,8 @@ public final class SemanticAnalyzer {
     private record ArrayBoundsProof(String index, String array) {
     }
 
-    private record UnitQuery(String typeName, TargetProfile.UnitType type, List<Expression> filters, int managedLimit) {
+    private record UnitQuery(String typeName, TargetProfile.UnitType type, List<Expression> filters, int managedLimit,
+                             int managedId) {
     }
 
     private record BuildingQuery(String typeName, List<Expression> filters) {
