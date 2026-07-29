@@ -95,4 +95,20 @@ class MilSyntaxParserTest {
         assertEquals(java.util.List.of("@unit.get", "@unit.alive", "@unit.refRead", "@unit.refMove"),
             result.document().orElseThrow().macroCalls().stream().map(MilDocument.MacroCall::name).toList());
     }
+
+    @Test
+    void acceptsLinkedBuildingSetMacros() {
+        MilParseResult result = parser.parse("""
+            val count: Int = @building.count(@duo, building, @building.read(building, enabled));
+            val first: Building<Duo>? = @building.get(@duo, building, 0, @building.read(building, enabled));
+            @building.each(@duo, building, @building.read(building, enabled)) {
+                @building.control(building, enabled, false);
+            }
+            """, Path.of("main.mil"), profile, MilSourceKind.USER);
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertTrue(result.document().orElseThrow().macroCalls().stream().map(MilDocument.MacroCall::name)
+            .collect(java.util.stream.Collectors.toSet()).containsAll(java.util.Set.of(
+                "@building.count", "@building.get", "@building.each", "@building.read", "@building.control")));
+    }
 }

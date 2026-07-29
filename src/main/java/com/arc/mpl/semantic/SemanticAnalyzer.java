@@ -41,6 +41,9 @@ import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirBuildingIteration;
+import com.arc.mpl.hir.HirBuildingQuery;
+import com.arc.mpl.hir.HirBuildingQueryGet;
+import com.arc.mpl.hir.HirBuildingQuerySize;
 import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
@@ -79,7 +82,9 @@ import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.MplType;
+import com.arc.mpl.hir.BuildingType;
 import com.arc.mpl.hir.CollectionType;
+import com.arc.mpl.hir.LinkedBuildingSetType;
 import com.arc.mpl.hir.TupleType;
 import com.arc.mpl.hir.UnitSetType;
 import com.arc.mpl.hir.UnitType;
@@ -156,7 +161,7 @@ public final class SemanticAnalyzer {
                 throw new IllegalArgumentException("重复的硬件常量：" + link.mplName());
             }
         }
-        hardwareLinks = Map.copyOf(links);
+        hardwareLinks = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(links));
         functions.clear();
         callGraph.clear();
         directGlobalDependencies.clear();
@@ -261,7 +266,7 @@ public final class SemanticAnalyzer {
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
                 MplType type = signature.parameterTypes().get(index);
-                declare(parameter.name(), new Symbol(type, false, null, null, null, false, parameter.span()), parameter.span());
+                declare(parameter.name(), new Symbol(type, false, null, null, null, null, false, parameter.span()), parameter.span());
                 parameters.add(new HirFunctionParameter(parameter.name(), type));
             }
             List<HirStatement> body = analyzeBlock(function.body());
@@ -375,10 +380,14 @@ public final class SemanticAnalyzer {
         boolean nonNullBranch = "!=".equals(binary.operator()) == conditionResult;
         if (!nonNullBranch) return Map.of();
         Symbol symbol = lookup(identifier.name());
-        if (symbol == null || symbol.mutable() || !(symbol.type() instanceof UnitType unit) || !unit.nullable()) {
-            return Map.of();
+        if (symbol == null || symbol.mutable()) return Map.of();
+        if (symbol.type() instanceof UnitType unit && unit.nullable()) {
+            return Map.of(identifier.name(), symbol.withType(unit.nonNullable()));
         }
-        return Map.of(identifier.name(), symbol.withType(unit.nonNullable()));
+        if (symbol.type() instanceof BuildingType building && building.nullable()) {
+            return Map.of(identifier.name(), symbol.withType(building.nonNullable()));
+        }
+        return Map.of();
     }
 
     private <T> T analyzeWithNarrowing(Map<String, Symbol> narrowing, java.util.function.Supplier<T> analysis) {
@@ -470,6 +479,8 @@ public final class SemanticAnalyzer {
         if (query.isPresent()) {
             return analyzeUnitForEach(loop, query.orElseThrow());
         }
+        HirBuildingQuery savedBuildingQuery = resolveSavedBuildingQuery(loop.iterable(), loop.name());
+        if (savedBuildingQuery != null) return analyzeBuildingForEach(loop, savedBuildingQuery);
         Optional<BuildingQuery> buildingQuery = parseBuildingQuery(loop.iterable());
         if (buildingQuery.isPresent()) return analyzeBuildingForEach(loop, buildingQuery.orElseThrow());
         return analyzeAggregateForEach(loop);
@@ -487,7 +498,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, null, null, false, loop.span()), loop.span());
             List<HirExpression> filters = new ArrayList<>();
             for (Expression filter : query.filters()) {
                 filters.add(analyzeUnitFilter(filter, loop.name()));
@@ -520,7 +531,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, null, null, false, loop.span()), loop.span());
             List<HirExpression> filters = query.filters().stream()
                 .map(filter -> renameUnitBinding(filter, query.bindingName(), loop.name())).toList();
             return new HirUnitIteration(loop.name(), query.unitType(), query.mlogType(), filters,
@@ -598,19 +609,47 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.BUILDING, false, null, null, null, false, loop.span()), loop.span());
-            List<HirHardwareLink> buildings = hardwareLinks.values().stream()
-                .filter(link -> query.typeName().equals(link.mplType()))
-                .map(link -> new HirHardwareLink(link.mplName(), link.gameAlias(), link.mplType())).toList();
+            declare(loop.name(), new Symbol(ValueType.BUILDING, false, null, null, null, null, false, loop.span()), loop.span());
+            List<HirHardwareLink> buildings = linkedBuildings(query.typeName());
             List<HirExpression> filters = query.filters().stream()
                 .map(filter -> analyzeBuildingFilter(filter, loop.name(), query.typeName())).toList();
-            return new HirBuildingIteration(loop.name(), query.typeName(), buildings, filters, analyzeBlock(loop.body()));
+            String mlogType = profile.buildingType(query.typeName()).orElseThrow().mlogName();
+            return new HirBuildingIteration(loop.name(), query.typeName(), mlogType, buildings, filters,
+                analyzeBlock(loop.body()));
         } finally {
             scopes.pop();
             loopDepth--;
             activeBuildingBinding = previousBinding;
             activeBuildingType = previousType;
         }
+    }
+
+    private HirStatement analyzeBuildingForEach(ForEachStatement loop, HirBuildingQuery query) {
+        String previousBinding = activeBuildingBinding;
+        String previousType = activeBuildingType;
+        activeBuildingBinding = loop.name();
+        activeBuildingType = query.buildingType();
+        loopDepth++;
+        scopes.push(new HashMap<>());
+        try {
+            declare(loop.name(), new Symbol(ValueType.BUILDING, false, null, null, null, null, false, loop.span()), loop.span());
+            List<HirExpression> filters = query.filters().stream()
+                .map(filter -> renameBuildingBinding(filter, query.bindingName(), loop.name())).toList();
+            return new HirBuildingIteration(loop.name(), query.buildingType(), query.mlogType(), query.buildings(), filters,
+                analyzeBlock(loop.body()));
+        } finally {
+            scopes.pop();
+            loopDepth--;
+            activeBuildingBinding = previousBinding;
+            activeBuildingType = previousType;
+        }
+    }
+
+    private List<HirHardwareLink> linkedBuildings(String buildingType) {
+        return hardwareLinks.values().stream()
+            .filter(link -> buildingType.equals(link.mplType()))
+            .map(link -> new HirHardwareLink(link.mplName(), link.gameAlias(), link.mplType()))
+            .toList();
     }
 
     private HirStatement analyzeAggregateForEach(ForEachStatement loop) {
@@ -628,7 +667,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(elementType, false, null, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(elementType, false, null, null, null, null, false, loop.span()), loop.span());
             return new HirAggregateIteration(loop.name(), source, elementType, size, analyzeBlock(loop.body()));
         } finally {
             scopes.pop();
@@ -751,27 +790,92 @@ public final class SemanticAnalyzer {
         return Optional.of(new BuildingQuery(typeName, List.copyOf(filters)));
     }
 
+    private HirBuildingQuery declaredBuildingQuery(Expression expression) {
+        if (!(expression instanceof Identifier identifier)) return null;
+        Symbol symbol = lookup(identifier.name());
+        return symbol == null ? null : symbol.buildingQuery();
+    }
+
+    private HirBuildingQuery resolveSavedBuildingQuery(Expression expression, String bindingName) {
+        List<CallExpression> modifiers = new ArrayList<>();
+        Expression current = expression;
+        while (current instanceof CallExpression call && call.callee() instanceof MemberAccessExpression member
+            && "where".equals(member.member())) {
+            modifiers.add(call);
+            current = member.target();
+        }
+        HirBuildingQuery base = declaredBuildingQuery(current);
+        if (base == null) return null;
+
+        List<HirExpression> filters = new ArrayList<>(base.filters().stream()
+            .map(filter -> renameBuildingBinding(filter, base.bindingName(), bindingName)).toList());
+        for (int index = modifiers.size() - 1; index >= 0; index--) {
+            CallExpression modifier = modifiers.get(index);
+            if (modifier.arguments().size() != 1) {
+                error("MPL3201", "LinkedBuildingSet<T>.where(...) 需要恰好一个过滤 lambda", modifier.span());
+                continue;
+            }
+            filters.add(analyzeBuildingFilter(modifier.arguments().get(0), bindingName, base.buildingType()));
+        }
+        return new HirBuildingQuery(bindingName, base.buildingType(), base.mlogType(), base.buildings(), filters);
+    }
+
+    private HirBuildingQuery analyzeBuildingQuery(BuildingQuery query, String bindingName) {
+        String previousBinding = activeBuildingBinding;
+        String previousType = activeBuildingType;
+        activeBuildingBinding = bindingName;
+        activeBuildingType = query.typeName();
+        try {
+            List<HirExpression> filters = query.filters().stream()
+                .map(filter -> analyzeBuildingFilter(filter, bindingName, query.typeName())).toList();
+            String mlogType = profile.buildingType(query.typeName()).orElseThrow().mlogName();
+            return new HirBuildingQuery(bindingName, query.typeName(), mlogType, linkedBuildings(query.typeName()), filters);
+        } finally {
+            activeBuildingBinding = previousBinding;
+            activeBuildingType = previousType;
+        }
+    }
+
+    private HirBuildingQuery resolveBuildingQuery(Expression expression, String bindingName) {
+        HirBuildingQuery saved = resolveSavedBuildingQuery(expression, bindingName);
+        if (saved != null) return saved;
+        return parseBuildingQuery(expression).map(query -> analyzeBuildingQuery(query, bindingName)).orElse(null);
+    }
+
+    private HirExpression analyzeBuildingQueryGet(HirBuildingQuery query, Expression sourceIndex, SourceSpan span) {
+        HirExpression index = analyzeExpression(sourceIndex);
+        if (index.type() != ValueType.INT && index.type() != ValueType.ERROR) {
+            error("MPL3210", "LinkedBuildingSet<T>.get(index) 的 index 必须是 Int", sourceIndex.span());
+        }
+        return new HirBuildingQueryGet(query, index);
+    }
+
     /** Validates a side-effect-free predicate over one statically expanded linked building. */
     private HirExpression analyzeBuildingFilter(Expression source, String bindingName, String buildingType) {
-        if (!(source instanceof LambdaExpression lambda)) {
-            error("MPL3201", "Building 查询的 .where(...) 参数必须是 lambda", source.span());
-            return new HirConstant("0", ValueType.ERROR);
+        String parameter = "_";
+        Expression predicate = source;
+        if (source instanceof LambdaExpression lambda) {
+            parameter = lambda.parameter();
+            predicate = lambda.body();
         }
         String previousBinding = activeBuildingBinding;
         String previousType = activeBuildingType;
-        activeBuildingBinding = lambda.parameter();
+        activeBuildingBinding = parameter;
         activeBuildingType = buildingType;
         scopes.push(new HashMap<>());
         try {
-            declare(lambda.parameter(), new Symbol(ValueType.BUILDING, false, null, null, null, false, source.span()), source.span());
-            HirExpression result = analyzeExpression(lambda.body());
+            declare(parameter, new Symbol(ValueType.BUILDING, false, null, null, null, null, false, source.span()), source.span());
+            HirExpression result = analyzeExpression(predicate);
             if (result.type() != ValueType.BOOL) {
-                error("MPL3201", "Building 查询的 .where(...) 过滤条件必须是 Bool", lambda.body().span());
+                error("MPL3201", "Building 查询的 .where(...) 过滤条件必须是 Bool", predicate.span());
             }
-            if (!isPureBuildingFilter(result, lambda.parameter())) {
+            if (!(source instanceof LambdaExpression) && !referencesBuildingBinding(result, parameter)) {
+                error("MPL3201", "Building 查询的过滤条件必须是 lambda，或使用引用 _ 的简写", source.span());
+            }
+            if (!isPureBuildingFilter(result, parameter)) {
                 error("MPL3201", "Building 查询的 .where(...) 只能读取当前建筑字段与 val 标量", source.span());
             }
-            return renameBuildingBinding(result, lambda.parameter(), bindingName);
+            return renameBuildingBinding(result, parameter, bindingName);
         } finally {
             scopes.pop();
             activeBuildingBinding = previousBinding;
@@ -779,12 +883,29 @@ public final class SemanticAnalyzer {
         }
     }
 
+    private boolean referencesBuildingBinding(HirExpression expression, String bindingName) {
+        if (expression instanceof HirVariable variable) {
+            return variable.type() == ValueType.BUILDING && bindingName.equals(variable.name());
+        }
+        if (expression instanceof HirMemberAccess member) {
+            return referencesBuildingBinding(member.target(), bindingName);
+        }
+        if (expression instanceof HirIntrinsicCall call) {
+            return call.arguments().stream().anyMatch(argument -> referencesBuildingBinding(argument, bindingName));
+        }
+        if (expression instanceof HirUnary unary) return referencesBuildingBinding(unary.operand(), bindingName);
+        if (expression instanceof HirBinary binary) {
+            return referencesBuildingBinding(binary.left(), bindingName)
+                || referencesBuildingBinding(binary.right(), bindingName);
+        }
+        return false;
+    }
+
     private boolean isPureBuildingFilter(HirExpression expression, String bindingName) {
         if (expression instanceof HirConstant || expression instanceof HirText) return true;
         if (expression instanceof HirVariable variable) {
             if (variable.type() == ValueType.BUILDING) return bindingName.equals(variable.name());
-            Symbol symbol = lookup(variable.name());
-            return symbol != null && !symbol.mutable();
+            return isImmutableFilterScalar(variable.name());
         }
         if (expression instanceof HirMemberAccess member) return isPureBuildingFilter(member.target(), bindingName);
         if (expression instanceof HirIntrinsicCall call) {
@@ -832,7 +953,7 @@ public final class SemanticAnalyzer {
         scopes.push(new HashMap<>());
         try {
             // Lambda parameters deliberately shadow the enclosing loop binding.
-            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null, null, null, false, source.span()));
+            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null, null, null, null, false, source.span()));
             HirExpression result = analyzeExpression(predicate);
             if (result.type() != ValueType.BOOL) {
                 error("MPL3303", "Set<Unit<T>>.where(...) 的过滤条件必须是 Bool", predicate.span());
@@ -905,8 +1026,7 @@ public final class SemanticAnalyzer {
         if (expression instanceof HirConstant || expression instanceof HirText) return true;
         if (expression instanceof HirVariable variable) {
             if (variable.type() == ValueType.UNIT) return bindingName.equals(variable.name());
-            Symbol symbol = lookup(variable.name());
-            return symbol != null && !symbol.mutable();
+            return isImmutableFilterScalar(variable.name());
         }
         if (expression instanceof HirMemberAccess member) {
             return isPureUnitFilter(member.target(), bindingName);
@@ -920,6 +1040,13 @@ public final class SemanticAnalyzer {
             return isPureUnitFilter(binary.left(), bindingName) && isPureUnitFilter(binary.right(), bindingName);
         }
         return false;
+    }
+
+    private boolean isImmutableFilterScalar(String variableName) {
+        Symbol symbol = lookup(variableName);
+        if (symbol == null || symbol.mutable()) return false;
+        return symbol.type() == ValueType.INT || symbol.type() == ValueType.FLOAT
+            || symbol.type() == ValueType.BOOL || symbol.type() == ValueType.STRING;
     }
 
     private HirStatement analyzeExpressionStatement(Expression expression) {
@@ -936,6 +1063,10 @@ public final class SemanticAnalyzer {
         }
         if (value.type() instanceof UnitSetType) {
             error("MPL3301", "Set<Unit<T>> 查询只能保存为 val、读取 size 或作为 for 遍历目标", expression.span());
+        }
+        if (value.type() instanceof LinkedBuildingSetType) {
+            error("MPL3201", "LinkedBuildingSet<T> 查询只能保存为 val、读取 size/get 或作为 for 遍历目标",
+                expression.span());
         }
         return new HirExpressionStatement(value);
     }
@@ -978,6 +1109,14 @@ public final class SemanticAnalyzer {
                 error("MPL3306", "第一版不能在函数或 Unit 遍历体中重绑已保存的 UnitRef", call.span());
             }
             return analyzeUnitControl(target.name(), true, member.member(), call.arguments(), call.span());
+        }
+        if (targetSymbol != null && targetSymbol.type() instanceof BuildingType building) {
+            if (building.nullable()) {
+                error("MPL3211", "可空 " + building.displayName() + " 必须先通过 != null 检查", call.span());
+                return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+            }
+            return analyzeBuildingControl(new HirVariable(target.name(), building), building.buildingType(), target.name(),
+                member.member(), call.arguments(), call.span());
         }
         return null;
     }
@@ -1210,9 +1349,16 @@ public final class SemanticAnalyzer {
                 .map(query -> analyzeUnitQuery(query, "_"))
                 .orElse(null);
         }
-        HirExpression initializer = unitQuery == null
-            ? analyzeInitializer(declaration.initializer(), declaredType)
-            : unitQuery;
+        HirBuildingQuery buildingQuery = unitQuery == null
+            ? resolveSavedBuildingQuery(declaration.initializer(), "_") : null;
+        if (unitQuery == null && buildingQuery == null) {
+            buildingQuery = parseBuildingQuery(declaration.initializer())
+                .map(query -> analyzeBuildingQuery(query, "_"))
+                .orElse(null);
+        }
+        HirExpression initializer = unitQuery != null ? unitQuery
+            : buildingQuery != null ? buildingQuery
+            : analyzeInitializer(declaration.initializer(), declaredType);
         if (initializer.type() == ValueType.BUILDING) {
             error("MPL3201", "硬件常量不能赋给普通变量；请直接读取字段或调用控制方法", declaration.initializer().span());
         }
@@ -1241,10 +1387,17 @@ public final class SemanticAnalyzer {
         if (type instanceof UnitSetType && unitQuery == null) {
             error("MPL3301", "Set<Unit<T>> 变量必须由 Unit.getAll类型(...) 查询初始化", declaration.initializer().span());
         }
+        if (type instanceof LinkedBuildingSetType && declaration.mutable()) {
+            error("MPL3201", "LinkedBuildingSet<T> 是不可变的惰性查询描述符，只能使用 val 声明", declaration.span());
+        }
+        if (type instanceof LinkedBuildingSetType && buildingQuery == null) {
+            error("MPL3201", "LinkedBuildingSet<T> 变量必须由 Building.getAll类型(...) 查询初始化",
+                declaration.initializer().span());
+        }
         boolean global = currentFunction == null && scopes.size() == 1;
         if (declare(declaration.name(),
             new Symbol(type, declaration.mutable(), staticStringLength(initializer), staticAggregateSize(initializer), unitQuery,
-                global, declaration.span()),
+                buildingQuery, global, declaration.span()),
             declaration.span()) && global) {
             // The initializer has already been analyzed, so calls inside it
             // deliberately do not observe this variable as initialized.
@@ -1402,6 +1555,8 @@ public final class SemanticAnalyzer {
                 }
                 return new HirUnitQuerySize(query);
             }
+            HirBuildingQuery buildingQuery = resolveBuildingQuery(member.target(), "_");
+            if (buildingQuery != null) return new HirBuildingQuerySize(buildingQuery);
         }
         HirExpression target = analyzeExpression(member.target());
         if ("size".equals(member.member()) && isAggregate(target.type())) {
@@ -1443,6 +1598,20 @@ public final class SemanticAnalyzer {
             }
             return new HirMemberAccess(target, member.member(), type.orElseThrow());
         }
+        if (target.type() instanceof BuildingType buildingReference) {
+            if (buildingReference.nullable()) {
+                error("MPL3211", "可空 " + buildingReference.displayName() + " 必须先通过 != null 检查", member.span());
+                return new HirMemberAccess(target, member.member(), ValueType.ERROR);
+            }
+            TargetProfile.BuildingType building = profile.buildingType(buildingReference.buildingType()).orElseThrow();
+            ValueType type = building.propertyTypes().get(member.member());
+            if (type == null) {
+                error("MPL3201", "建筑 " + buildingReference.buildingType() + " 不支持只读属性：" + member.member(),
+                    member.span());
+                return new HirMemberAccess(target, member.member(), ValueType.ERROR);
+            }
+            return new HirMemberAccess(target, member.member(), type);
+        }
         if (target.type() == ValueType.BUILDING && target instanceof HirVariable variable
             && variable.name().equals(activeBuildingBinding) && activeBuildingType != null) {
             TargetProfile.BuildingType building = profile.buildingType(activeBuildingType).orElseThrow();
@@ -1464,12 +1633,19 @@ public final class SemanticAnalyzer {
             && call.arguments().size() == 1) {
             HirUnitQuery query = resolveUnitQuery(member.target(), "_");
             if (query != null) return analyzeUnitQueryGet(query, call.arguments().get(0), call.span());
+            HirBuildingQuery buildingQuery = resolveBuildingQuery(member.target(), "_");
+            if (buildingQuery != null) return analyzeBuildingQueryGet(buildingQuery, call.arguments().get(0), call.span());
             return analyzeIndexAccess(member.target(), call.arguments().get(0), call.span());
         }
         if (call.callee() instanceof MemberAccessExpression member && "get".equals(member.member())) {
             HirUnitQuery query = resolveUnitQuery(member.target(), "_");
             if (query != null) {
                 error("MPL3309", "Set<Unit<T>>.get(index) 需要恰好一个 Int 参数", call.span());
+                return new HirConstant("null", ValueType.ERROR);
+            }
+            HirBuildingQuery buildingQuery = resolveBuildingQuery(member.target(), "_");
+            if (buildingQuery != null) {
+                error("MPL3210", "LinkedBuildingSet<T>.get(index) 需要恰好一个 Int 参数", call.span());
                 return new HirConstant("null", ValueType.ERROR);
             }
         }
@@ -1645,11 +1821,32 @@ public final class SemanticAnalyzer {
             && leftUnit.unitType().equals(rightUnit.unitType())) {
             return true;
         }
+        if (left instanceof BuildingType building && right == ValueType.NULL) {
+            if (building.nullable()) return true;
+            error("MPL3103", "非空 " + building.displayName() + " 不需要与 null 比较", span);
+            return false;
+        }
+        if (right instanceof BuildingType building && left == ValueType.NULL) {
+            if (building.nullable()) return true;
+            error("MPL3103", "非空 " + building.displayName() + " 不需要与 null 比较", span);
+            return false;
+        }
+        if (left instanceof BuildingType leftBuilding && right instanceof BuildingType rightBuilding
+            && leftBuilding.buildingType().equals(rightBuilding.buildingType())) {
+            return true;
+        }
         error("MPL3103", "不能比较 " + display(left) + " 与 " + display(right), span);
         return false;
     }
 
     private MplType parseType(String name, SourceSpan span) {
+        if (name.startsWith("LinkedBuildingSet<") && name.endsWith(">")) {
+            String buildingType = name.substring("LinkedBuildingSet<".length(), name.length() - 1);
+            if (profile.buildingType(buildingType).isEmpty()) {
+                return typeError("当前 target 不支持 Building 类型：" + buildingType, span);
+            }
+            return new LinkedBuildingSetType(buildingType);
+        }
         if (name.startsWith("Set<Unit<") && name.endsWith(">>")) {
             String unitType = name.substring("Set<Unit<".length(), name.length() - 2);
             if (profile.unitType(unitType).filter(TargetProfile.UnitType::logicControllable).isEmpty()) {
@@ -1666,7 +1863,14 @@ public final class SemanticAnalyzer {
             }
             return new UnitType(unitType, nullable);
         }
-        if (nullable) return typeError("当前阶段只有 Unit<T> 对象引用支持可空类型", span);
+        if (nonNullableName.startsWith("Building<") && nonNullableName.endsWith(">")) {
+            String buildingType = nonNullableName.substring("Building<".length(), nonNullableName.length() - 1);
+            if (profile.buildingType(buildingType).isEmpty()) {
+                return typeError("当前 target 不支持 Building 类型：" + buildingType, span);
+            }
+            return new BuildingType(buildingType, nullable);
+        }
+        if (nullable) return typeError("当前阶段只有 Unit<T> 与 Building<T> 对象引用支持可空类型", span);
         if (name.endsWith("[]")) {
             MplType element = parseType(name.substring(0, name.length() - 2), span);
             return collectionType(CollectionType.Kind.ARRAY, element, span);
@@ -1709,8 +1913,9 @@ public final class SemanticAnalyzer {
 
     private MplType collectionType(CollectionType.Kind kind, MplType element, SourceSpan span) {
         if (element == ValueType.ERROR || element == ValueType.VOID) return ValueType.ERROR;
-        if (element == ValueType.NULL || element instanceof UnitType || element instanceof UnitSetType) {
-            return typeError("当前阶段聚合类型不能存储可空值、Unit 引用或 Unit 查询", span);
+        if (element == ValueType.NULL || element instanceof UnitType || element instanceof UnitSetType
+            || element instanceof BuildingType || element instanceof LinkedBuildingSetType) {
+            return typeError("当前阶段聚合类型不能存储可空值、游戏对象引用或对象查询", span);
         }
         if (isAggregate(element)) return typeError("当前阶段不支持嵌套聚合类型；需要 Memory runtime", span);
         return new CollectionType(kind, element);
@@ -2025,10 +2230,11 @@ public final class SemanticAnalyzer {
     }
 
     private record Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
-                          HirUnitQuery unitQuery, boolean global, SourceSpan declarationSpan) {
+                          HirUnitQuery unitQuery, HirBuildingQuery buildingQuery, boolean global,
+                          SourceSpan declarationSpan) {
         private Symbol withType(MplType narrowedType) {
-            return new Symbol(narrowedType, mutable, staticStringCodeUnits, staticAggregateSize, unitQuery, global,
-                declarationSpan);
+            return new Symbol(narrowedType, mutable, staticStringCodeUnits, staticAggregateSize, unitQuery, buildingQuery,
+                global, declarationSpan);
         }
     }
 

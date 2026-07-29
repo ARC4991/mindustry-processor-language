@@ -35,7 +35,8 @@ class KnownProfilesTest {
                 "@unit.each", "@unit.eachManaged", "@unit.count", "@unit.countManaged",
                 "@unit.get", "@unit.getManaged",
                 "@unit.read", "@unit.alive", "@unit.move", "@unit.refRead", "@unit.refAlive", "@unit.refMove",
-                "@building.read", "@building.control", "@io.print", "@io.draw", "@io.drawFlush"),
+                "@building.each", "@building.count", "@building.get", "@building.read", "@building.control",
+                "@io.print", "@io.draw", "@io.drawFlush"),
             profile.macros().stream().map(TargetProfile.Macro::name).collect(java.util.stream.Collectors.toSet()));
         assertEquals(TargetProfile.MacroVisibility.RUNTIME_PRIVATE,
             profile.macro("@io.drawFlush").orElseThrow().visibility());

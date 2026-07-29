@@ -7,6 +7,9 @@ import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirBuildingIteration;
+import com.arc.mpl.hir.HirBuildingQuery;
+import com.arc.mpl.hir.HirBuildingQueryGet;
+import com.arc.mpl.hir.HirBuildingQuerySize;
 import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
@@ -44,6 +47,7 @@ import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.MplType;
+import com.arc.mpl.hir.BuildingType;
 import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.hir.ValueType;
 
@@ -171,11 +175,10 @@ public final class MilCodeGenerator {
             return;
         }
         if (statement instanceof HirBuildingIteration iteration) {
-            writer.append("for (var ").append(identifier(iteration.bindingName(), "遍历变量"))
-                .append(" : Building.getAll").append(identifier(iteration.buildingType(), "建筑类型")).append("()");
+            writer.append("@building.each(@").append(identifier(iteration.mlogType(), "建筑内容名"))
+                .append(", ").append(identifier(iteration.bindingName(), "遍历变量"));
             for (HirExpression filter : iteration.filters()) {
-                writer.append(".where(").append(identifier(iteration.bindingName(), "遍历变量"))
-                    .append(" => ").append(expression(filter)).append(")");
+                writer.append(", ").append(expression(filter));
             }
             writer.append(") ");
             emitBlock(writer, iteration.body());
@@ -281,7 +284,8 @@ public final class MilCodeGenerator {
 
     private String buildingTarget(HirExpression target) {
         if (target instanceof HirHardwareLink hardware) return targetLink(hardware.gameAlias());
-        if (target.type() == ValueType.BUILDING) return expression(target);
+        if (target.type() == ValueType.BUILDING
+            || target.type() instanceof BuildingType building && !building.nullable()) return expression(target);
         throw new IllegalArgumentException("MIL 建筑控制目标必须是链接或 Building 绑定");
     }
 
@@ -301,6 +305,24 @@ public final class MilCodeGenerator {
         }
         if (value instanceof HirCollectionContains contains) {
             return expression(contains.target()) + ".contains(" + expression(contains.candidate()) + ")";
+        }
+        if (value instanceof HirBuildingQuery query) return buildingQuery(query);
+        if (value instanceof HirBuildingQuerySize size) {
+            HirBuildingQuery query = size.query();
+            StringBuilder result = new StringBuilder("@building.count(@")
+                .append(identifier(query.mlogType(), "建筑内容名"))
+                .append(", ").append(identifier(query.bindingName(), "建筑绑定变量"));
+            for (HirExpression filter : query.filters()) result.append(", ").append(expression(filter));
+            return result.append(')').toString();
+        }
+        if (value instanceof HirBuildingQueryGet get) {
+            HirBuildingQuery query = get.query();
+            StringBuilder result = new StringBuilder("@building.get(@")
+                .append(identifier(query.mlogType(), "建筑内容名"))
+                .append(", ").append(identifier(query.bindingName(), "建筑绑定变量"))
+                .append(", ").append(expression(get.index()));
+            for (HirExpression filter : query.filters()) result.append(", ").append(expression(filter));
+            return result.append(')').toString();
         }
         if (value instanceof HirUnitQuery query) return unitQuery(query);
         if (value instanceof HirUnitQueryGet get) {
@@ -354,6 +376,17 @@ public final class MilCodeGenerator {
         return result.toString();
     }
 
+    private String buildingQuery(HirBuildingQuery query) {
+        StringBuilder result = new StringBuilder("Building.getAll")
+            .append(identifier(query.buildingType(), "建筑类型"))
+            .append("()");
+        for (HirExpression filter : query.filters()) {
+            result.append(".where(").append(identifier(query.bindingName(), "建筑绑定变量"))
+                .append(" => ").append(expression(filter)).append(')');
+        }
+        return result.toString();
+    }
+
     private String aggregateLiteral(String prefix, String suffix, List<HirExpression> elements) {
         StringBuilder result = new StringBuilder(prefix);
         appendExpressions(result, elements);
@@ -368,6 +401,10 @@ public final class MilCodeGenerator {
     private String unitMember(HirMemberAccess member) {
         if (member.target() instanceof HirHardwareLink hardware) {
             return "@building.read(" + targetLink(hardware.gameAlias()) + ", "
+                + identifier(member.member(), "建筑属性") + ")";
+        }
+        if (member.target().type() == ValueType.BUILDING || member.target().type() instanceof BuildingType) {
+            return "@building.read(" + expression(member.target()) + ", "
                 + identifier(member.member(), "建筑属性") + ")";
         }
         if (member.target().type() != ValueType.UNIT && !(member.target().type() instanceof UnitType)) {

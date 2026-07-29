@@ -7,7 +7,9 @@ import java.util.Objects;
 public record HirBuildingControl(HirExpression target, String action, List<HirExpression> arguments) implements HirStatement {
     public HirBuildingControl {
         Objects.requireNonNull(target, "target");
-        if (target.type() != ValueType.BUILDING) throw new IllegalArgumentException("building control requires a building target");
+        if (target.type() != ValueType.BUILDING && !(target.type() instanceof BuildingType building && !building.nullable())) {
+            throw new IllegalArgumentException("building control requires a non-null building target");
+        }
         Objects.requireNonNull(action, "action");
         arguments = List.copyOf(Objects.requireNonNull(arguments, "arguments"));
     }

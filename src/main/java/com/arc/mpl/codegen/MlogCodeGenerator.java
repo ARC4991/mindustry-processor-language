@@ -13,6 +13,9 @@ import com.arc.mpl.hir.HirFunctionCall;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirBuildingIteration;
+import com.arc.mpl.hir.HirBuildingQuery;
+import com.arc.mpl.hir.HirBuildingQueryGet;
+import com.arc.mpl.hir.HirBuildingQuerySize;
 import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
@@ -43,6 +46,7 @@ import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
+import com.arc.mpl.hir.BuildingType;
 import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 
@@ -159,7 +163,8 @@ public final class MlogCodeGenerator {
 
     private void emitStatement(HirStatement statement) {
         if (statement instanceof HirVariableDeclaration declaration) {
-            if (declaration.initializer() instanceof HirUnitQuery) return;
+            if (declaration.initializer() instanceof HirUnitQuery
+                || declaration.initializer() instanceof HirBuildingQuery) return;
             if (declaration.initializer() instanceof HirArrayLiteral array) {
                 emitAggregateDeclaration(declaration.name(), array.elements());
                 return;
@@ -651,14 +656,73 @@ public final class MlogCodeGenerator {
                 emitLabel(next);
             }
         } finally {
-            if (previous == null) activeBuildingBindings.remove(iteration.bindingName());
-            else activeBuildingBindings.put(iteration.bindingName(), previous);
+            restoreBuildingBinding(iteration.bindingName(), previous);
         }
         emitLabel(end);
     }
 
+    private String emitBuildingQuerySize(HirBuildingQuery query) {
+        String result = temporary();
+        HirHardwareLink previous = activeBuildingBindings.get(query.bindingName());
+        output.set(result, "0");
+        try {
+            for (HirHardwareLink building : query.buildings()) {
+                MlogProgramBuilder.Label next = label("building_count_next");
+                activeBuildingBindings.put(query.bindingName(), building);
+                emitFilterRejectionJump(query.filters(), next);
+                output.operation(Operation.ADD, result, result, "1");
+                emitLabel(next);
+            }
+        } finally {
+            restoreBuildingBinding(query.bindingName(), previous);
+        }
+        return result;
+    }
+
+    private String emitBuildingQueryGet(HirBuildingQueryGet get) {
+        HirBuildingQuery query = get.query();
+        String result = temporary();
+        String index = temporary();
+        String position = temporary();
+        MlogProgramBuilder.Label end = label("building_get_end");
+        HirHardwareLink previous = activeBuildingBindings.get(query.bindingName());
+
+        output.set(result, "null");
+        output.set(index, emitExpression(get.index()));
+        emitJump(end, JumpCondition.LESS_THAN, index, "0");
+        output.set(position, "0");
+        try {
+            for (HirHardwareLink building : query.buildings()) {
+                MlogProgramBuilder.Label found = label("building_get_found");
+                MlogProgramBuilder.Label next = label("building_get_next");
+                activeBuildingBindings.put(query.bindingName(), building);
+                emitFilterRejectionJump(query.filters(), next);
+                emitJump(found, JumpCondition.EQUAL, position, index);
+                output.operation(Operation.ADD, position, position, "1");
+                emitJump(next, JumpCondition.ALWAYS, "0", "0");
+                emitLabel(found);
+                output.set(result, building.gameAlias());
+                emitJump(end, JumpCondition.ALWAYS, "0", "0");
+                emitLabel(next);
+            }
+        } finally {
+            restoreBuildingBinding(query.bindingName(), previous);
+        }
+        emitLabel(end);
+        return result;
+    }
+
+    private void restoreBuildingBinding(String bindingName, HirHardwareLink previous) {
+        if (previous == null) activeBuildingBindings.remove(bindingName);
+        else activeBuildingBindings.put(bindingName, previous);
+    }
+
     private String resolveBuildingTarget(HirExpression target) {
         if (target instanceof HirHardwareLink hardware) return hardware.gameAlias();
+        if (target instanceof HirVariable variable && variable.type() instanceof BuildingType building
+            && !building.nullable()) {
+            return variable(variable.name());
+        }
         if (target instanceof HirVariable variable && variable.type() == com.arc.mpl.hir.ValueType.BUILDING) {
             HirHardwareLink building = activeBuildingBindings.get(variable.name());
             if (building != null) return building.gameAlias();
@@ -696,6 +760,11 @@ public final class MlogCodeGenerator {
         if (expression instanceof HirUnitQueryGet get) return emitUnitQueryGet(get);
         if (expression instanceof HirUnitQuery) {
             throw new IllegalArgumentException("Set<Unit<T>> 描述符只能保存、读取 size 或作为 for 遍历目标");
+        }
+        if (expression instanceof HirBuildingQuerySize size) return emitBuildingQuerySize(size.query());
+        if (expression instanceof HirBuildingQueryGet get) return emitBuildingQueryGet(get);
+        if (expression instanceof HirBuildingQuery) {
+            throw new IllegalArgumentException("LinkedBuildingSet<T> 描述符只能保存、读取 size/get 或作为 for 遍历目标");
         }
         if (expression instanceof HirUnary unary) return emitUnary(unary);
         if (expression instanceof HirBinary binary) return emitBinary(binary);
@@ -954,6 +1023,12 @@ public final class MlogCodeGenerator {
             if (building == null) throw new IllegalArgumentException("building field access lacks an active binding: " + variable.name());
             String result = temporary();
             output.sensor(result, building.gameAlias(), "@" + member.member());
+            return result;
+        }
+        if (member.target() instanceof HirVariable variable && variable.type() instanceof BuildingType building
+            && !building.nullable()) {
+            String result = temporary();
+            output.sensor(result, variable(variable.name()), "@" + member.member());
             return result;
         }
         if (member.target() instanceof HirVariable variable && variable.type() instanceof UnitType) {

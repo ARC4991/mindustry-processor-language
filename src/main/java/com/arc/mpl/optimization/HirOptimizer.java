@@ -8,6 +8,9 @@ import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirBuildingIteration;
+import com.arc.mpl.hir.HirBuildingQuery;
+import com.arc.mpl.hir.HirBuildingQueryGet;
+import com.arc.mpl.hir.HirBuildingQuerySize;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
@@ -140,8 +143,8 @@ public final class HirOptimizer {
                 return List.of();
             }
             filters = filters.stream().filter(filter -> booleanConstant(filter).filter(flag -> flag).isEmpty()).toList();
-            return List.of(new HirBuildingIteration(iteration.bindingName(), iteration.buildingType(), iteration.buildings(),
-                filters, optimizeStatements(iteration.body())));
+            return List.of(new HirBuildingIteration(iteration.bindingName(), iteration.buildingType(), iteration.mlogType(),
+                iteration.buildings(), filters, optimizeStatements(iteration.body())));
         }
         if (statement instanceof HirAggregateIteration iteration) {
             return List.of(new HirAggregateIteration(iteration.bindingName(), iteration.source(), iteration.elementType(),
@@ -241,12 +244,24 @@ public final class HirOptimizer {
         if (expression instanceof HirUnitQueryGet get) {
             return new HirUnitQueryGet(optimizeUnitQuery(get.query()), optimizeExpression(get.index()));
         }
+        if (expression instanceof HirBuildingQuery query) return optimizeBuildingQuery(query);
+        if (expression instanceof HirBuildingQuerySize size) {
+            return new HirBuildingQuerySize(optimizeBuildingQuery(size.query()));
+        }
+        if (expression instanceof HirBuildingQueryGet get) {
+            return new HirBuildingQueryGet(optimizeBuildingQuery(get.query()), optimizeExpression(get.index()));
+        }
         return expression;
     }
 
     private HirUnitQuery optimizeUnitQuery(HirUnitQuery query) {
         return new HirUnitQuery(query.bindingName(), query.unitType(), query.mlogType(),
             optimizeExpressions(query.filters()), query.managedLimit(), query.managedId());
+    }
+
+    private HirBuildingQuery optimizeBuildingQuery(HirBuildingQuery query) {
+        return new HirBuildingQuery(query.bindingName(), query.buildingType(), query.mlogType(), query.buildings(),
+            optimizeExpressions(query.filters()));
     }
 
     private HirExpression optimizeBinary(HirBinary binary) {

@@ -1,7 +1,8 @@
 package com.arc.mpl.hir;
 
 /** A source-level MPL type, including scalar and statically described aggregate types. */
-public sealed interface MplType permits ValueType, TupleType, CollectionType, UnitSetType, UnitType {
+public sealed interface MplType permits ValueType, TupleType, CollectionType, UnitSetType, UnitType,
+    LinkedBuildingSetType, BuildingType {
     /** Whether a value of {@code source} can be assigned without an implicit, lossy conversion. */
     boolean canAssignFrom(MplType source);
 

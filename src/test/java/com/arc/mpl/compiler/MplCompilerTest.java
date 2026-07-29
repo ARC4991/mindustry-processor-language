@@ -686,7 +686,7 @@ class MplCompilerTest {
         assertTrue(mlog.contains("duo2 @health"));
         assertTrue(mlog.contains("control duo1 shoot"));
         assertTrue(mlog.contains("control duo2 shoot"));
-        assertTrue(result.mil().orElseThrow().contains("for (var turret : Building.getAllDuo()) {"));
+        assertTrue(result.mil().orElseThrow().contains("@building.each(@duo, turret) {"));
     }
 
     @Test
@@ -718,7 +718,80 @@ class MplCompilerTest {
         assertTrue(mlog.indexOf("duo1 @enabled") < mlog.indexOf("control duo1 enabled"));
         assertTrue(mlog.indexOf("duo2 @enabled") < mlog.indexOf("control duo2 enabled"));
         assertTrue(result.mil().orElseThrow().contains(
-            "for (var turret : Building.getAllDuo().where(turret => turret.enabled).where(turret => (turret.health > minimum))) {"));
+            "@building.each(@duo, turret, @building.read(turret, enabled), (@building.read(turret, health) > minimum)) {"));
+    }
+
+    @Test
+    void savesCountsGetsAndControlsLinkedBuildingSets(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
+            const NorthTurret: Duo = link("duo1");
+            const SouthTurret: Duo = link("duo2");
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val turrets: LinkedBuildingSet<Duo> = Building.getAllDuo().where(_.enabled);
+            val count: Int = turrets.size;
+            val first: Building<Duo>? = turrets.get(0);
+            if (first != null) {
+                val health: Float = first.health;
+                first.setEnabled(false);
+            }
+            for (var turret : turrets) {
+                turret.shoot(1.0, 2.0, true);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains(
+            "val turrets: LinkedBuildingSet<Duo> = Building.getAllDuo().where(_ => @building.read(_, enabled));"));
+        assertTrue(mil.contains("val count: Int = @building.count(@duo, _, @building.read(_, enabled));"));
+        assertTrue(mil.contains("val first: Building<Duo>? = @building.get(@duo, _, 0, @building.read(_, enabled));"));
+        assertTrue(mil.contains("@building.read(first, health)"));
+        assertTrue(mil.contains("@building.control(first, enabled, false);"));
+
+        String mlog = result.mlog().orElseThrow();
+        assertFalse(mlog.contains("mpl_turrets"));
+        assertTrue(mlog.contains("set mpl_count"));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("set __mpl_tmp\\d+ duo1")), mlog);
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("set __mpl_tmp\\d+ duo2")), mlog);
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("set mpl_first __mpl_tmp\\d+")), mlog);
+        assertTrue(mlog.contains("sensor __mpl_tmp"));
+        assertTrue(mlog.contains("mpl_first @health"));
+        assertTrue(mlog.contains("control mpl_first enabled 0 0 0 0 0"));
+        assertTrue(mlog.contains("control duo1 shoot 1.0 2.0 1 0 0"));
+        assertTrue(mlog.contains("control duo2 shoot 1.0 2.0 1 0 0"));
+    }
+
+    @Test
+    void rejectsUnsafeLinkedBuildingSetUses(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Turret: Duo = link(\"duo1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var mutable = Building.getAllDuo();
+            val wrongIndex = Building.getAllDuo().get(1.0);
+            val missing = Building.getAllDuo().get(0);
+            val health = missing.health;
+            missing.setEnabled(true);
+            if (missing != null) {
+                for (var other : Building.getAllDuo().where(_.health > missing.health)) {
+                    other.setEnabled(false);
+                }
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3201".equals(diagnostic.code())
+            && diagnostic.message().contains("只能使用 val")));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3210".equals(diagnostic.code())));
+        assertTrue(result.diagnostics().stream().filter(diagnostic -> "MPL3211".equals(diagnostic.code())).count() >= 2);
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3201".equals(diagnostic.code())
+            && diagnostic.message().contains("val 标量")));
     }
 
     @Test

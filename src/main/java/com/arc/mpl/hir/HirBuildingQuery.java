@@ -3,24 +3,27 @@ package com.arc.mpl.hir;
 import java.util.List;
 import java.util.Objects;
 
-/** Statically traverses the declared hardware links of one target building type. */
-public record HirBuildingIteration(
+/** A lazy descriptor over one type's statically declared hardware links. */
+public record HirBuildingQuery(
     String bindingName,
     String buildingType,
     String mlogType,
     List<HirHardwareLink> buildings,
-    List<HirExpression> filters,
-    List<HirStatement> body
-) implements HirStatement {
-    public HirBuildingIteration {
+    List<HirExpression> filters
+) implements HirExpression {
+    public HirBuildingQuery {
         Objects.requireNonNull(bindingName, "bindingName");
         Objects.requireNonNull(buildingType, "buildingType");
         Objects.requireNonNull(mlogType, "mlogType");
         buildings = List.copyOf(Objects.requireNonNull(buildings, "buildings"));
         filters = List.copyOf(Objects.requireNonNull(filters, "filters"));
-        body = List.copyOf(Objects.requireNonNull(body, "body"));
         if (buildings.stream().anyMatch(link -> !buildingType.equals(link.mplType()))) {
-            throw new IllegalArgumentException("building iteration links must share the declared type");
+            throw new IllegalArgumentException("building query links must share the declared type");
         }
+    }
+
+    @Override
+    public LinkedBuildingSetType type() {
+        return new LinkedBuildingSetType(buildingType);
     }
 }

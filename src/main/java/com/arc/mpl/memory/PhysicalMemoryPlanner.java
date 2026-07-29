@@ -5,6 +5,9 @@ import com.arc.mpl.hir.HirAggregateIteration;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirBuildingIteration;
+import com.arc.mpl.hir.HirBuildingQuery;
+import com.arc.mpl.hir.HirBuildingQueryGet;
+import com.arc.mpl.hir.HirBuildingQuerySize;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
@@ -193,6 +196,16 @@ public final class PhysicalMemoryPlanner {
         if (expression instanceof HirUnitQuery query) collectExpressions(function, query.filters(), declarations, required);
         if (expression instanceof HirUnitQuerySize size) collectExpressions(function, size.query().filters(), declarations, required);
         if (expression instanceof HirUnitQueryGet get) {
+            collectExpressions(function, get.query().filters(), declarations, required);
+            collectExpression(function, get.index(), declarations, required);
+        }
+        if (expression instanceof HirBuildingQuery query) {
+            collectExpressions(function, query.filters(), declarations, required);
+        }
+        if (expression instanceof HirBuildingQuerySize size) {
+            collectExpressions(function, size.query().filters(), declarations, required);
+        }
+        if (expression instanceof HirBuildingQueryGet get) {
             collectExpressions(function, get.query().filters(), declarations, required);
             collectExpression(function, get.index(), declarations, required);
         }

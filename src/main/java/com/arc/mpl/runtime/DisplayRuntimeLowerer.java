@@ -6,6 +6,9 @@ import com.arc.mpl.hir.HirAssignment;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingIteration;
+import com.arc.mpl.hir.HirBuildingQuery;
+import com.arc.mpl.hir.HirBuildingQueryGet;
+import com.arc.mpl.hir.HirBuildingQuerySize;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirDoWhile;
@@ -117,8 +120,8 @@ public final class DisplayRuntimeLowerer {
                 lowerStatements(iteration.body()));
         }
         if (statement instanceof HirBuildingIteration iteration) {
-            return new HirBuildingIteration(iteration.bindingName(), iteration.buildingType(), iteration.buildings(),
-                iteration.filters(), lowerStatements(iteration.body()));
+            return new HirBuildingIteration(iteration.bindingName(), iteration.buildingType(), iteration.mlogType(),
+                iteration.buildings(), iteration.filters(), lowerStatements(iteration.body()));
         }
         return statement;
     }
@@ -149,6 +152,16 @@ public final class DisplayRuntimeLowerer {
             return size.query().filters().stream().anyMatch(this::containsFunctionCall);
         }
         if (expression instanceof HirUnitQueryGet get) {
+            return containsFunctionCall(get.index())
+                || get.query().filters().stream().anyMatch(this::containsFunctionCall);
+        }
+        if (expression instanceof HirBuildingQuery query) {
+            return query.filters().stream().anyMatch(this::containsFunctionCall);
+        }
+        if (expression instanceof HirBuildingQuerySize size) {
+            return size.query().filters().stream().anyMatch(this::containsFunctionCall);
+        }
+        if (expression instanceof HirBuildingQueryGet get) {
             return containsFunctionCall(get.index())
                 || get.query().filters().stream().anyMatch(this::containsFunctionCall);
         }
