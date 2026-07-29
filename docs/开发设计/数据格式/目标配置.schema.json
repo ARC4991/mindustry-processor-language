@@ -34,10 +34,11 @@
     "processors": { "type": "object", "additionalProperties": { "$ref": "#/$defs/processor" } },
     "hardware": {
       "type": "object", "additionalProperties": false,
-      "required": ["memoryCell", "memoryBank"],
+      "required": ["memoryCell", "memoryBank", "displays"],
       "properties": {
         "memoryCell": { "$ref": "#/$defs/memory" },
-        "memoryBank": { "$ref": "#/$defs/memory" }
+        "memoryBank": { "$ref": "#/$defs/memory" },
+        "displays": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/display" } }
       }
     },
     "instructions": { "type": "array", "items": { "$ref": "#/$defs/instruction" } },
@@ -65,6 +66,15 @@
       "type": "object", "additionalProperties": false,
       "required": ["capacity"],
       "properties": { "capacity": { "type": "integer", "minimum": 1 } }
+    },
+    "display": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mlogName", "width", "height"],
+      "properties": {
+        "mlogName": { "type": "string" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
     },
     "instruction": {
       "type": "object", "additionalProperties": false,

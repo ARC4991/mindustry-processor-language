@@ -667,7 +667,7 @@ class MplCompilerTest {
     void lowersDirectDisplayDrawingWithoutLeakingRawMlog(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
-            "const Screen: Display = link(\"display1\");");
+            "const Screen: Display = link(\"display1\", width: 80, height: 80);");
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
             Screen.clear(Color.black);
             Screen.fill(Color.green);
@@ -698,10 +698,27 @@ class MplCompilerTest {
     }
 
     @Test
-    void automaticallyFlushesDrawingInsideLoops(@TempDir Path project) throws IOException {
+    void acceptsEveryProfileDisplayTypeWhenPhysicalSizeIsOmitted(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
             "const Screen: Display = link(\"display1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"),
+            "Screen.clear(Color.black);");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("equal __mpl_hw0 @logic-display"), mlog);
+        assertTrue(mlog.contains("equal __mpl_hw0 @large-logic-display"), mlog);
+        assertTrue(mlog.contains("drawflush display1"), mlog);
+    }
+
+    @Test
+    void automaticallyFlushesDrawingInsideLoops(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Screen: Display = link(\"display1\", width: 80, height: 80);");
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
             while (true) {
                 Screen.fill(Color.green);
@@ -771,6 +788,64 @@ class MplCompilerTest {
         assertTrue(mlog.indexOf("draw rect 0 0 1 1 0 0") < mlog.indexOf("drawflush display1"));
         assertTrue(mlog.indexOf("drawflush display1") < mlog.lastIndexOf("draw rect 0 0 1 1 0 0"));
         assertTrue(mlog.contains("drawflush display2\nstop"));
+    }
+
+    @Test
+    void expandsACombinedDisplayBatchWithPerTileCoordinates(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
+            const Left: Display = link("display1", width: 80, height: 80);
+            const Right: Display = link("display2", width: 80, height: 80);
+            const Wall: Display = Display.combine([[Left, Right]]);
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            Wall.clear(Color.black);
+            Wall.fill(Color.green);
+            Wall.fillRect(72, 4, 16, 8);
+            Wall.line(0, 0, Wall.width, Wall.height);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("""
+            draw clear 0 0 0 0 0 0
+            draw color 0 255 0 255 0 0
+            draw rect 72 4 16 8 0 0
+            draw line 0 0 160 80 0 0
+            drawflush display1
+            draw clear 0 0 0 0 0 0
+            draw color 0 255 0 255 0 0
+            draw rect -8 4 16 8 0 0
+            draw line -80 0 80 80 0 0
+            drawflush display2
+            """), mlog);
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("@io.draw(@display2, rect, -8, 4, 16, 8);"), mil);
+        assertTrue(mil.contains("@io.drawFlush(@display2);"), mil);
+    }
+
+    @Test
+    void evaluatesCombinedDisplayArgumentsOnceBeforeFanOut(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
+            const Left: Display = link("display1", width: 80, height: 80);
+            const Right: Display = link("display2", width: 80, height: 80);
+            const Wall: Display = Display.combine([[Left, Right]]);
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var base: Int = 71;
+            Wall.fillRect(base + 1, 4, 16, 8);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertEquals(1, mlog.lines().filter(line -> line.startsWith("op add ")).count(), mlog);
+        assertEquals(2, mlog.lines().filter(line -> line.startsWith("draw rect ")).count(), mlog);
+        assertTrue(result.mil().orElseThrow().contains("val __mpl_display_arg0: Int = (base + 1);"));
     }
 
     @Test

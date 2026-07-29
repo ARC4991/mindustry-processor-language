@@ -17,6 +17,7 @@ class TargetProfileLoaderTest {
         assertEquals("v-test", profile.id());
         assertEquals(64, profile.memoryCellCapacity());
         assertEquals(512, profile.memoryBankCapacity());
+        assertEquals("large-logic-display", profile.displayType(176, 176).orElseThrow().mlogName());
         assertEquals(8, profile.instructionsPerTick(TargetProfile.ProcessorKind.LOGIC));
         assertTrue(profile.capabilities().contains("baseline-logic"));
         assertEquals("duo", profile.buildingType("Duo").orElseThrow().mlogName());
@@ -52,6 +53,15 @@ class TargetProfileLoaderTest {
         assertTrue(error.getMessage().contains("未声明的 mlog 指令"));
     }
 
+    @Test
+    void rejectsAmbiguousDisplayDimensions() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> TargetProfileLoader.load(bytes(jsonText("v-test", 1)
+                .replace("\"width\": 176, \"height\": 176", "\"width\": 80, \"height\": 80"))));
+
+        assertTrue(error.getMessage().contains("Display 尺寸"));
+    }
+
     private static ByteArrayInputStream json(String id, int schemaVersion) {
         return bytes(jsonText(id, schemaVersion));
     }
@@ -78,7 +88,11 @@ class TargetProfileLoaderTest {
               },
               "hardware": {
                 "memoryCell": { "capacity": 64 },
-                "memoryBank": { "capacity": 512 }
+                "memoryBank": { "capacity": 512 },
+                "displays": [
+                  { "mlogName": "logic-display", "width": 80, "height": 80 },
+                  { "mlogName": "large-logic-display", "width": 176, "height": 176 }
+                ]
               },
               "instructions": [
                 { "opcode": "print", "operands": ["value"], "permissions": ["normal"] }

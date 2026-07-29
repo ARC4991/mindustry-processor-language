@@ -203,17 +203,16 @@ public final class ProjectProgramLoader {
             String suppliedName = supplied.get(entry.getKey());
             if (suppliedName == null) continue;
             String rootName = importerScope.root() ? suppliedName : importerScope.hardwareBindings().get(suppliedName);
-            HardwareContract.LinkDeclaration link = rootName == null ? null : hardware.links().stream()
-                .filter(candidate -> candidate.mplName().equals(rootName)).findFirst().orElse(null);
-            if (link == null) {
+            HardwareContract.Resource resource = rootName == null ? null : hardware.resource(rootName).orElse(null);
+            if (resource == null) {
                 error("MPL1415", "with 只能传入当前模块可见的硬件常量：" + suppliedName,
                     importer, declaration.span());
                 continue;
             }
             PackageHardwareInterface.Requirement requirement = entry.getValue();
-            if (!requirement.type().equals(link.mplType())) {
+            if (!requirement.type().equals(resource.mplType())) {
                 error("MPL1415", "with 硬件类型不匹配：" + entry.getKey() + " 要求 " + requirement.type()
-                    + "，实际为 " + link.mplType(), importer, declaration.span());
+                    + "，实际为 " + resource.mplType(), importer, declaration.span());
                 continue;
             }
             if (!PackageHardwareValidator.supportsAccess(requirement, profile)) {
@@ -222,9 +221,18 @@ public final class ProjectProgramLoader {
                 continue;
             }
             if (requirement.minimumWidth() > 0 || requirement.minimumHeight() > 0) {
-                error("MPL1416", "Display 尺寸约束尚未接入组合屏布局验证：" + requirement.name(),
-                    importer, declaration.span());
-                continue;
+                HardwareContract.DisplayLayout layout = resource.display().orElse(null);
+                if (layout == null) {
+                    error("MPL1416", "with Display 缺少编译期尺寸：" + requirement.name(),
+                        importer, declaration.span());
+                    continue;
+                }
+                if (layout.width() < requirement.minimumWidth() || layout.height() < requirement.minimumHeight()) {
+                    error("MPL1416", "with Display 尺寸不足：" + requirement.name() + " 要求至少 "
+                        + requirement.minimumWidth() + "x" + requirement.minimumHeight() + "，实际为 "
+                        + layout.width() + "x" + layout.height(), importer, declaration.span());
+                    continue;
+                }
             }
             resolved.put(entry.getKey(), rootName);
         }
@@ -363,8 +371,8 @@ public final class ProjectProgramLoader {
             }
             if (!owner(path).root()) {
                 owner(path).hardwareBindings().forEach(names::putIfAbsent);
-                hardware.links().forEach(link -> names.putIfAbsent(link.mplName(),
-                    "__package_hardware_unavailable_" + canonical(path, link.mplName())));
+                hardware.names().forEach(name -> names.putIfAbsent(name,
+                    "__package_hardware_unavailable_" + canonical(path, name)));
             }
             result.put(path, Map.copyOf(names));
         }
@@ -372,7 +380,7 @@ public final class ProjectProgramLoader {
     }
 
     private boolean hardwareName(String name) {
-        return hardware.links().stream().anyMatch(link -> link.mplName().equals(name));
+        return hardware.names().contains(name);
     }
 
     private String canonical(Path path, String symbol) {
@@ -472,13 +480,17 @@ public final class ProjectProgramLoader {
             if (root) return rootHardware;
             List<HardwareContract.LinkDeclaration> links = new ArrayList<>();
             Map<String, String> messages = new LinkedHashMap<>();
+            Map<String, HardwareContract.Resource> resources = new LinkedHashMap<>();
             for (Map.Entry<String, String> binding : hardwareBindings.entrySet()) {
-                HardwareContract.LinkDeclaration rootLink = rootHardware.links().stream()
-                    .filter(link -> link.mplName().equals(binding.getValue())).findFirst().orElseThrow();
-                links.add(new HardwareContract.LinkDeclaration(binding.getKey(), rootLink.mplType(), rootLink.gameAlias()));
-                if (rootLink.mplType().equals("Message")) messages.put(binding.getKey(), rootLink.gameAlias());
+                HardwareContract.Resource rootResource = rootHardware.resource(binding.getValue()).orElseThrow();
+                links.addAll(rootResource.physicalLinks());
+                resources.put(binding.getKey(), new HardwareContract.Resource(binding.getKey(), rootResource.mplType(),
+                    rootResource.physicalLinks(), rootResource.display()));
+                if (rootResource.mplType().equals("Message")) {
+                    messages.put(binding.getKey(), rootResource.physicalLinks().get(0).gameAlias());
+                }
             }
-            return new HardwareContract(links, messages);
+            return new HardwareContract(links.stream().distinct().toList(), messages, resources);
         }
     }
 

@@ -11,6 +11,7 @@ import com.arc.mpl.hir.HirBuildingQueryGet;
 import com.arc.mpl.hir.HirBuildingQuerySize;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
+import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirDraw;
 import com.arc.mpl.hir.HirDrawFlush;
@@ -30,12 +31,19 @@ import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirUnitQuery;
 import com.arc.mpl.hir.HirUnitQueryGet;
 import com.arc.mpl.hir.HirUnitQuerySize;
+import com.arc.mpl.hir.HirVariable;
+import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
+import com.arc.mpl.hir.ValueType;
+import com.arc.mpl.project.HardwareContract;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Inserts compiler-private Display buffer commits into structured HIR.
@@ -49,14 +57,33 @@ import java.util.Optional;
  */
 public final class DisplayRuntimeLowerer {
     private final int maxBufferCommands;
+    private final Map<String, HardwareContract.Resource> resources;
+    private int nextArgumentId;
+    private final Set<String> usedNames = new LinkedHashSet<>();
 
     public DisplayRuntimeLowerer(int maxBufferCommands) {
+        this(maxBufferCommands, Map.of());
+    }
+
+    public DisplayRuntimeLowerer(int maxBufferCommands, HardwareContract hardware) {
+        this(maxBufferCommands, Objects.requireNonNull(hardware, "hardware").resources());
+    }
+
+    private DisplayRuntimeLowerer(int maxBufferCommands, Map<String, HardwareContract.Resource> resources) {
         if (maxBufferCommands <= 0) throw new IllegalArgumentException("maxBufferCommands 必须为正数");
         this.maxBufferCommands = maxBufferCommands;
+        this.resources = Map.copyOf(resources);
     }
 
     public HirProgram lower(HirProgram program) {
         Objects.requireNonNull(program, "program");
+        nextArgumentId = 0;
+        usedNames.clear();
+        program.functions().forEach(function -> {
+            function.parameters().forEach(parameter -> usedNames.add(parameter.name()));
+            collectNames(function.body());
+        });
+        collectNames(program.statements());
         List<HirFunction> functions = program.functions().stream()
             .map(function -> new HirFunction(function.name(), function.parameters(), function.returnType(),
                 lowerStatements(function.body())))
@@ -78,17 +105,14 @@ public final class DisplayRuntimeLowerer {
             // previous batch before entering it, because the target buffer is global.
             if (draw.arguments().stream().anyMatch(this::containsFunctionCall)) flush(state, lowered);
             if (state.target != null && !state.target.equals(draw.displayName())) flush(state, lowered);
-            lowered.add(draw);
             state.target = draw.displayName();
-            state.commands++;
-            if (state.commands >= maxBufferCommands) flush(state, lowered);
+            state.draws.add(draw);
+            if (state.draws.size() >= maxBufferCommands) flush(state, lowered);
             return;
         }
-        if (statement instanceof HirDrawFlush flush) {
-            if (state.target != null && !state.target.equals(flush.displayName())) flush(state, lowered);
-            state.target = null;
-            state.commands = 0;
-            lowered.add(flush);
+        if (statement instanceof HirDrawFlush requested) {
+            flush(state, lowered);
+            lowered.add(new HirDrawFlush(directAlias(requested.displayName())));
             return;
         }
 
@@ -127,9 +151,117 @@ public final class DisplayRuntimeLowerer {
     }
 
     private void flush(BufferState state, List<HirStatement> lowered) {
-        if (state.target != null) lowered.add(new HirDrawFlush(state.target));
+        if (state.target == null) return;
+        HardwareContract.Resource resource = resources.get(state.target);
+        if (resource == null || resource.physicalLinks().size() == 1) {
+            String alias = resource == null ? state.target : resource.physicalLinks().get(0).gameAlias();
+            state.draws.forEach(draw -> lowered.add(new HirDraw(alias, draw.command(), draw.arguments())));
+            lowered.add(new HirDrawFlush(alias));
+        } else {
+            List<HirDraw> stableDraws = materializeArguments(state.draws, lowered);
+            HardwareContract.DisplayLayout layout = resource.display().orElseThrow(() ->
+                new IllegalStateException("组合 Display 缺少逻辑布局：" + resource.mplName()));
+            for (HardwareContract.DisplayTile tile : layout.tiles()) {
+                for (HirDraw draw : stableDraws) lowered.add(translate(draw, tile));
+                lowered.add(new HirDrawFlush(tile.gameAlias()));
+            }
+        }
         state.target = null;
-        state.commands = 0;
+        state.draws.clear();
+    }
+
+    private List<HirDraw> materializeArguments(List<HirDraw> draws, List<HirStatement> lowered) {
+        List<HirDraw> result = new ArrayList<>();
+        for (HirDraw draw : draws) {
+            List<HirExpression> arguments = new ArrayList<>();
+            for (HirExpression argument : draw.arguments()) {
+                if (argument instanceof HirConstant || argument instanceof HirVariable) {
+                    arguments.add(argument);
+                    continue;
+                }
+                String name = freshArgumentName();
+                lowered.add(new HirVariableDeclaration(name, argument.type(), false, argument));
+                arguments.add(new HirVariable(name, argument.type()));
+            }
+            result.add(new HirDraw(draw.displayName(), draw.command(), arguments));
+        }
+        return List.copyOf(result);
+    }
+
+    private HirDraw translate(HirDraw draw, HardwareContract.DisplayTile tile) {
+        List<HirExpression> arguments = new ArrayList<>(draw.arguments());
+        switch (draw.command()) {
+            case RECT, LINE_RECT -> {
+                arguments.set(0, subtract(arguments.get(0), tile.x()));
+                arguments.set(1, subtract(arguments.get(1), tile.y()));
+            }
+            case LINE -> {
+                arguments.set(0, subtract(arguments.get(0), tile.x()));
+                arguments.set(1, subtract(arguments.get(1), tile.y()));
+                arguments.set(2, subtract(arguments.get(2), tile.x()));
+                arguments.set(3, subtract(arguments.get(3), tile.y()));
+            }
+            case CLEAR, COLOR -> {
+                // Color state and clear commands must be replayed for every physical Display.
+            }
+        }
+        return new HirDraw(tile.gameAlias(), draw.command(), arguments);
+    }
+
+    private String freshArgumentName() {
+        String candidate;
+        do candidate = "__mpl_display_arg" + nextArgumentId++;
+        while (!usedNames.add(candidate));
+        return candidate;
+    }
+
+    private void collectNames(List<HirStatement> statements) {
+        for (HirStatement statement : statements) {
+            if (statement instanceof HirVariableDeclaration declaration) usedNames.add(declaration.name());
+            else if (statement instanceof HirBlock block) collectNames(block.statements());
+            else if (statement instanceof HirIf branch) {
+                collectNames(branch.thenBody());
+                branch.elseBody().ifPresent(this::collectNames);
+            } else if (statement instanceof HirWhile loop) collectNames(loop.body());
+            else if (statement instanceof HirDoWhile loop) collectNames(loop.body());
+            else if (statement instanceof HirFor loop) {
+                loop.declarationInitializer().ifPresent(declaration -> usedNames.add(declaration.name()));
+                collectNames(loop.body());
+            }
+            else if (statement instanceof HirUnitIteration iteration) {
+                usedNames.add(iteration.bindingName());
+                collectNames(iteration.body());
+            } else if (statement instanceof HirAggregateIteration iteration) {
+                usedNames.add(iteration.bindingName());
+                collectNames(iteration.body());
+            } else if (statement instanceof HirBuildingIteration iteration) {
+                usedNames.add(iteration.bindingName());
+                collectNames(iteration.body());
+            }
+        }
+    }
+
+    private HirExpression subtract(HirExpression value, int offset) {
+        if (offset == 0) return value;
+        if (value instanceof HirConstant constant && constant.type() == ValueType.INT) {
+            try {
+                long translated = Long.parseLong(constant.mlogLiteral()) - offset;
+                long saturated = Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, translated));
+                return new HirConstant(Long.toString(saturated), ValueType.INT);
+            } catch (NumberFormatException ignored) {
+                // Non-decimal target literals are lowered through the regular arithmetic path.
+            }
+        }
+        return new HirBinary(value, "-", new HirConstant(Integer.toString(offset), ValueType.INT), value.type());
+    }
+
+    private String directAlias(String displayName) {
+        HardwareContract.Resource resource = resources.get(displayName);
+        if (resource == null) return displayName;
+        if (resource.physicalLinks().size() != 1) {
+            throw new IllegalArgumentException("组合 Display 不能作为单个 drawFlush 目标：" + displayName);
+        }
+        return resource.physicalLinks().get(0).gameAlias();
     }
 
     private boolean containsFunctionCall(HirExpression expression) {
@@ -175,6 +307,6 @@ public final class DisplayRuntimeLowerer {
 
     private static final class BufferState {
         private String target;
-        private int commands;
+        private final List<HirDraw> draws = new ArrayList<>();
     }
 }

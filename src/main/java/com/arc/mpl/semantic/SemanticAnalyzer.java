@@ -120,6 +120,7 @@ public final class SemanticAnalyzer {
     private Path file;
     private Map<String, String> messages = Map.of();
     private Map<String, HardwareContract.LinkDeclaration> hardwareLinks = Map.of();
+    private Map<String, HardwareContract.Resource> hardwareResources = Map.of();
     private int unitIterationDepth;
     private int nextManagedQueryId;
     private int loopDepth;
@@ -163,6 +164,7 @@ public final class SemanticAnalyzer {
             }
         }
         hardwareLinks = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(links));
+        hardwareResources = Map.copyOf(hardware.resources());
         functions.clear();
         callGraph.clear();
         directGlobalDependencies.clear();
@@ -1093,15 +1095,16 @@ public final class SemanticAnalyzer {
             error("MPL1414", "包代码不能访问未通过 with 注入的根项目硬件", call.span());
             return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
         }
-        HardwareContract.LinkDeclaration hardware = hardwareLinks.get(target.name());
+        HardwareContract.Resource hardware = hardwareResources.get(target.name());
         if (hardware != null) {
-            if ("Message".equals(hardware.mplType()) && "print".equals(member.member())) {
-                return analyzePrintCall(hardware.gameAlias(), call.arguments());
-            }
             if ("Display".equals(hardware.mplType())) {
                 return analyzeDisplayCall(hardware, member.member(), call.arguments(), call.span());
             }
-            return analyzeBuildingControl(hardware, member.member(), call.arguments(), call.span());
+            HardwareContract.LinkDeclaration direct = hardware.physicalLinks().get(0);
+            if ("Message".equals(hardware.mplType()) && "print".equals(member.member())) {
+                return analyzePrintCall(direct.gameAlias(), call.arguments());
+            }
+            return analyzeBuildingControl(direct, member.member(), call.arguments(), call.span());
         }
 
         Symbol targetSymbol = lookup(target.name());
@@ -1138,7 +1141,7 @@ public final class SemanticAnalyzer {
         return null;
     }
 
-    private HirStatement analyzeDisplayCall(HardwareContract.LinkDeclaration display, String method,
+    private HirStatement analyzeDisplayCall(HardwareContract.Resource display, String method,
                                             List<Expression> sourceArguments, SourceSpan span) {
         if ("flush".equals(method)) {
             error("MPL3203", "MPL 不提供 Display.flush()；绘制刷新由编译器 runtime 自动管理", span);
@@ -1162,7 +1165,7 @@ public final class SemanticAnalyzer {
                 ? analyzeColor(sourceArguments.get(0)) : List.<HirExpression>of(new HirConstant("0", ValueType.ERROR),
                     new HirConstant("0", ValueType.ERROR), new HirConstant("0", ValueType.ERROR),
                     new HirConstant("0", ValueType.ERROR));
-            return new HirDraw(display.gameAlias(), command, color.subList(0, command.argumentCount()));
+            return new HirDraw(display.mplName(), command, color.subList(0, command.argumentCount()));
         }
         if (sourceArguments.size() != command.argumentCount()) {
             error("MPL3203", "Display." + method + "(...) 的参数数量不匹配", span);
@@ -1174,7 +1177,8 @@ public final class SemanticAnalyzer {
             arguments.add(argument);
         }
         while (arguments.size() < command.argumentCount()) arguments.add(new HirConstant("0", ValueType.ERROR));
-        return new HirDraw(display.gameAlias(), command, arguments.subList(0, command.argumentCount()));
+        return new HirDraw(display.mplName(), command,
+            arguments.subList(0, command.argumentCount()));
     }
 
     /** Type-checks the public MIL draw macro without exposing raw draw commands in MPL. */
@@ -1494,6 +1498,8 @@ public final class SemanticAnalyzer {
         if (expression instanceof Identifier identifier) {
             HardwareContract.LinkDeclaration hardware = hardwareLinks.get(identifier.name());
             if (hardware != null) return new HirHardwareLink(hardware.mplName(), hardware.gameAlias(), hardware.mplType());
+            HardwareContract.Resource resource = hardwareResources.get(identifier.name());
+            if (resource != null) return new HirVariable(resource.mplName(), ValueType.BUILDING);
             Symbol symbol = lookup(identifier.name());
             if (symbol == null) {
                 error("MPL3102", "未声明的变量：" + identifier.name(), identifier.span());
@@ -1583,6 +1589,17 @@ public final class SemanticAnalyzer {
             if (unavailablePackageHardware(identifier.name())) {
                 error("MPL1414", "包代码不能访问未通过 with 注入的根项目硬件", member.span());
                 return new HirConstant("0", ValueType.ERROR);
+            }
+            HardwareContract.Resource resource = hardwareResources.get(identifier.name());
+            if (resource != null && "Display".equals(resource.mplType())
+                && ("width".equals(member.member()) || "height".equals(member.member()))) {
+                HardwareContract.DisplayLayout layout = resource.display().orElse(null);
+                if (layout == null) {
+                    error("MPL3203", "Display 编译期尺寸未知；请在 link(...) 中声明 width/height", member.span());
+                    return new HirConstant("0", ValueType.ERROR);
+                }
+                int value = "width".equals(member.member()) ? layout.width() : layout.height();
+                return new HirConstant(Integer.toString(value), ValueType.INT);
             }
             HardwareContract.LinkDeclaration hardware = hardwareLinks.get(identifier.name());
             if (hardware != null) {

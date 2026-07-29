@@ -146,18 +146,35 @@ public final class MlogCodeGenerator {
         for (HardwareRequirement requirement : hardwareRequirements) {
             String actualType = "__mpl_hw" + requirementIndex++;
             output.sensor(actualType, requirement.alias(), "@type");
-            emitJump(wait, JumpCondition.NOT_EQUAL, actualType, "@" + requirement.mlogBlock());
+            if (requirement.mlogBlocks().size() == 1) {
+                emitJump(wait, JumpCondition.NOT_EQUAL, actualType, "@" + requirement.mlogBlocks().get(0));
+                continue;
+            }
+            MlogProgramBuilder.Label accepted = label("hardware_ready");
+            for (String mlogBlock : requirement.mlogBlocks()) {
+                emitJump(accepted, JumpCondition.EQUAL, actualType, "@" + mlogBlock);
+            }
+            emitJump(wait, JumpCondition.ALWAYS, "0", "0");
+            emitLabel(accepted);
         }
     }
 
-    public record HardwareRequirement(String alias, String mlogBlock) {
+    public record HardwareRequirement(String alias, List<String> mlogBlocks) {
         public HardwareRequirement {
             if (alias == null || !alias.matches("[_A-Za-z][_A-Za-z0-9]*")) {
                 throw new IllegalArgumentException("无效的游戏硬件 alias：" + alias);
             }
-            if (mlogBlock == null || !mlogBlock.matches("[a-z0-9-]+")) {
-                throw new IllegalArgumentException("无效的目标方块名称：" + mlogBlock);
+            mlogBlocks = List.copyOf(mlogBlocks);
+            if (mlogBlocks.isEmpty() || mlogBlocks.stream().anyMatch(block -> !block.matches("[a-z0-9-]+"))) {
+                throw new IllegalArgumentException("无效的目标方块名称集合：" + mlogBlocks);
             }
+            if (mlogBlocks.stream().distinct().count() != mlogBlocks.size()) {
+                throw new IllegalArgumentException("目标方块名称集合包含重复项：" + mlogBlocks);
+            }
+        }
+
+        public HardwareRequirement(String alias, String mlogBlock) {
+            this(alias, List.of(mlogBlock));
         }
     }
 

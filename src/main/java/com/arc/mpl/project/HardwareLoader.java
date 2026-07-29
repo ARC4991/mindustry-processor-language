@@ -14,6 +14,8 @@ import java.util.LinkedHashMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /** Parses the restricted project hardware language into a deployment contract. */
 public final class HardwareLoader {
@@ -30,6 +32,8 @@ public final class HardwareLoader {
 
         List<HardwareContract.LinkDeclaration> links = new ArrayList<>();
         Map<String, String> messages = new HashMap<>();
+        Map<String, HardwareContract.Resource> resources = new LinkedHashMap<>();
+        Set<String> aliases = new java.util.LinkedHashSet<>();
         for (MplhParser.DeclarationContext declaration : hardwareFile.declaration()) {
             if (declaration.hardwareRequirement() != null) {
                 throw new IOException("根项目 .mplh 不能声明 require：" + declaration.hardwareRequirement().name.getText());
@@ -38,21 +42,131 @@ public final class HardwareLoader {
                 MplhParser.HardwareConstantContext constant = declaration.hardwareConstant();
                 String name = constant.name.getText();
                 String type = constant.type.getText();
+                if (resources.containsKey(name)) throw new IOException("重复的硬件常量：" + name);
                 if (constant.alias != null) {
                     String alias = unescape(constant.alias.getText());
                     if (!alias.matches("[_A-Za-z][_A-Za-z0-9]*")) {
                         throw new IOException("硬件链接名不是有效的游戏链接变量：" + alias);
                     }
-                    if (links.stream().anyMatch(link -> link.mplName().equals(name))) {
-                        throw new IOException("重复的硬件常量：" + name);
-                    }
-                    links.add(new HardwareContract.LinkDeclaration(name, type, alias));
+                    if (!aliases.add(alias)) throw new IOException("重复的游戏硬件链接 alias：" + alias);
+                    int[] dimensions = linkDimensions(constant, name, type);
+                    HardwareContract.LinkDeclaration link = new HardwareContract.LinkDeclaration(
+                        name, type, alias, dimensions[0], dimensions[1]);
+                    links.add(link);
                     if ("Message".equals(type)) messages.put(name, alias);
+                    resources.put(name, directResource(link));
+                } else {
+                    if (!"Display".equals(type)) {
+                        throw new IOException("Display.combine(...) 的声明类型必须是 Display：" + name);
+                    }
+                    resources.put(name, combinedDisplay(name, constant.displayMatrix(), resources));
                 }
                 continue;
             }
         }
-        return new HardwareContract(links, messages);
+        return new HardwareContract(links, messages, resources);
+    }
+
+    private int[] linkDimensions(MplhParser.HardwareConstantContext constant, String name, String type) throws IOException {
+        Map<String, Integer> arguments = new LinkedHashMap<>();
+        for (MplhParser.LinkArgumentContext argument : constant.linkArgument()) {
+            String key = argument.name.getText();
+            if (!key.equals("width") && !key.equals("height")) {
+                throw new IOException("未知 link 参数：" + name + "." + key);
+            }
+            if (arguments.putIfAbsent(key, positive(argument.value.getText(), name + "." + key)) != null) {
+                throw new IOException("重复 link 参数：" + name + "." + key);
+            }
+        }
+        if (!"Display".equals(type) && !arguments.isEmpty()) {
+            throw new IOException("只有 Display link 可声明 width/height：" + name);
+        }
+        if (arguments.isEmpty()) return new int[]{0, 0};
+        if (!arguments.keySet().equals(Set.of("width", "height"))) {
+            throw new IOException("Display link 必须同时声明 width 与 height：" + name);
+        }
+        return new int[]{arguments.get("width"), arguments.get("height")};
+    }
+
+    private HardwareContract.Resource directResource(HardwareContract.LinkDeclaration link) {
+        Optional<HardwareContract.DisplayLayout> display = Optional.empty();
+        if ("Display".equals(link.mplType()) && link.width() > 0) {
+            display = Optional.of(new HardwareContract.DisplayLayout(link.width(), link.height(), List.of(
+                new HardwareContract.DisplayTile(link.mplName(), link.gameAlias(), 0, 0, link.width(), link.height()))));
+        }
+        return new HardwareContract.Resource(link.mplName(), link.mplType(), List.of(link), display);
+    }
+
+    private HardwareContract.Resource combinedDisplay(String name, MplhParser.DisplayMatrixContext matrix,
+                                                       Map<String, HardwareContract.Resource> resources) throws IOException {
+        List<MplhParser.DisplayRowContext> rows = matrix.displayRow();
+        if (rows.isEmpty()) throw new IOException("Display.combine(...) 不能为空：" + name);
+        int columns = rows.get(0).IDENTIFIER().size();
+        if (columns == 0 || rows.stream().anyMatch(row -> row.IDENTIFIER().size() != columns)) {
+            throw new IOException("Display.combine(...) 必须是非空矩形矩阵：" + name);
+        }
+        List<List<HardwareContract.Resource>> cells = new ArrayList<>();
+        Integer cellWidth = null;
+        Integer cellHeight = null;
+        Set<String> usedAliases = new java.util.LinkedHashSet<>();
+        for (MplhParser.DisplayRowContext row : rows) {
+            List<HardwareContract.Resource> cellsInRow = new ArrayList<>();
+            for (var identifier : row.IDENTIFIER()) {
+                HardwareContract.Resource resource = resources.get(identifier.getText());
+                if (resource == null || !"Display".equals(resource.mplType()) || resource.display().isEmpty()) {
+                    throw new IOException("Display.combine(...) 成员必须是已声明且尺寸已知的 Display：" + identifier.getText());
+                }
+                HardwareContract.DisplayLayout layout = resource.display().orElseThrow();
+                if (cellWidth == null) {
+                    cellWidth = layout.width();
+                    cellHeight = layout.height();
+                } else if (cellWidth != layout.width() || cellHeight != layout.height()) {
+                    throw new IOException("Display.combine(...) 当前只允许相同尺寸的成员：" + name);
+                }
+                for (HardwareContract.LinkDeclaration link : resource.physicalLinks()) {
+                    if (!usedAliases.add(link.gameAlias())) {
+                        throw new IOException("Display.combine(...) 重复使用物理屏幕：" + link.gameAlias());
+                    }
+                }
+                cellsInRow.add(resource);
+            }
+            cells.add(List.copyOf(cellsInRow));
+        }
+        int width = checkedMultiply(columns, cellWidth, name);
+        int height = checkedMultiply(rows.size(), cellHeight, name);
+        List<HardwareContract.DisplayTile> tiles = new ArrayList<>();
+        List<HardwareContract.LinkDeclaration> physical = new ArrayList<>();
+        for (int row = 0; row < cells.size(); row++) {
+            for (int column = 0; column < cells.get(row).size(); column++) {
+                HardwareContract.Resource resource = cells.get(row).get(column);
+                int cellX = checkedMultiply(column, cellWidth, name);
+                int cellY = checkedMultiply(cells.size() - 1 - row, cellHeight, name);
+                for (HardwareContract.DisplayTile tile : resource.display().orElseThrow().tiles()) {
+                    tiles.add(new HardwareContract.DisplayTile(tile.mplName(), tile.gameAlias(),
+                        checkedAdd(cellX, tile.x(), name), checkedAdd(cellY, tile.y(), name),
+                        tile.width(), tile.height()));
+                }
+                physical.addAll(resource.physicalLinks());
+            }
+        }
+        return new HardwareContract.Resource(name, "Display", physical,
+            Optional.of(new HardwareContract.DisplayLayout(width, height, tiles)));
+    }
+
+    private int checkedMultiply(int left, int right, String display) throws IOException {
+        try {
+            return Math.multiplyExact(left, right);
+        } catch (ArithmeticException exception) {
+            throw new IOException("Display.combine(...) 逻辑尺寸溢出 Int：" + display, exception);
+        }
+    }
+
+    private int checkedAdd(int left, int right, String display) throws IOException {
+        try {
+            return Math.addExact(left, right);
+        } catch (ArithmeticException exception) {
+            throw new IOException("Display.combine(...) tile 坐标溢出 Int：" + display, exception);
+        }
     }
 
     public PackageHardwareInterface loadPackageInterface(Path packageDirectory, ProjectManifest manifest) throws IOException {

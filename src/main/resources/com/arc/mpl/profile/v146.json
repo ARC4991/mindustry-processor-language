@@ -19,7 +19,11 @@
   },
   "hardware": {
     "memoryCell": { "capacity": 64 },
-    "memoryBank": { "capacity": 512 }
+    "memoryBank": { "capacity": 512 },
+    "displays": [
+      { "mlogName": "logic-display", "width": 80, "height": 80 },
+      { "mlogName": "large-logic-display", "width": 176, "height": 176 }
+    ]
   },
   "instructions": [
     { "opcode": "set", "operands": ["output", "value"], "permissions": ["normal"] },

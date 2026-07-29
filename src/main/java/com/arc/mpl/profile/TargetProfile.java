@@ -17,6 +17,13 @@ public interface TargetProfile {
 
     int memoryBankCapacity();
 
+    /** Statically sized Display blocks accepted by a hardware contract. */
+    List<DisplayType> displayTypes();
+
+    default Optional<DisplayType> displayType(int width, int height) {
+        return displayTypes().stream().filter(type -> type.width() == width && type.height() == height).findFirst();
+    }
+
     int instructionsPerTick(ProcessorKind processor);
 
     /** Maximum executable mlog statements the target parser accepts. */
@@ -67,6 +74,13 @@ public interface TargetProfile {
     }
 
     record UnitType(String mlogName, boolean logicControllable) {
+    }
+
+    record DisplayType(String mlogName, int width, int height) {
+        public DisplayType {
+            if (mlogName == null || mlogName.isBlank()) throw new IllegalArgumentException("Display mlogName 不能为空");
+            if (width < 1 || height < 1) throw new IllegalArgumentException("Display 尺寸必须为正数");
+        }
     }
 
     record UnitAction(String name, List<ValueType> parameterTypes) {

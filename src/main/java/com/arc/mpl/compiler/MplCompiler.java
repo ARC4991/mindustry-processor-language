@@ -96,7 +96,7 @@ public final class MplCompiler {
         SemanticResult analyzed = new SemanticAnalyzer(profile.orElseThrow()).analyze(syntaxProgram, sourceFile, hardware);
         if (analyzed.program().isEmpty()) return new CompilationResult(profile, analyzed.diagnostics(), Optional.empty());
         HirOptimizationResult optimized = new HirOptimizer().optimize(analyzed.program().orElseThrow());
-        HirProgram program = new DisplayRuntimeLowerer(profile.orElseThrow().maxGraphicsBufferCommands())
+        HirProgram program = new DisplayRuntimeLowerer(profile.orElseThrow().maxGraphicsBufferCommands(), hardware)
             .lower(optimized.program());
         PhysicalMemoryLayout memoryLayout;
         try {
@@ -109,8 +109,7 @@ public final class MplCompiler {
         MlogLabelStyle labelStyle = request.debug() ? MlogLabelStyle.DEBUG : MlogLabelStyle.RELEASE;
         String mil = new MilCodeGenerator().generate(program);
         List<HardwareRequirement> hardwareRequirements = hardware.links().stream()
-            .map(link -> new HardwareRequirement(link.gameAlias(), profile.orElseThrow()
-                .buildingType(link.mplType()).orElseThrow().mlogName()))
+            .map(link -> new HardwareRequirement(link.gameAlias(), mlogHardwareTypes(link, profile.orElseThrow())))
             .toList();
         String mlog = new MlogCodeGenerator(labelStyle, memoryLayout, hardwareRequirements).generate(program);
         List<Diagnostic> diagnostics = new ArrayList<>(analyzed.diagnostics());
@@ -133,7 +132,23 @@ public final class MplCompiler {
                 diagnostics.add(Diagnostic.localized(Severity.ERROR, "MPL1201", "compiler.hardware.type.unsupported",
                     List.of(link.mplType(), profile.id()), Optional.of(sourceFile), Optional.empty()));
             }
+            if ("Display".equals(link.mplType()) && link.width() > 0
+                && profile.displayType(link.width(), link.height()).isEmpty()) {
+                diagnostics.add(new Diagnostic(Severity.ERROR, "MPL1202",
+                    "target " + profile.id() + " 不支持 " + link.width() + "x" + link.height()
+                        + " 的物理 Display：" + link.mplName(), Optional.of(sourceFile), Optional.empty()));
+            }
         }
         return List.copyOf(diagnostics);
+    }
+
+    private List<String> mlogHardwareTypes(HardwareContract.LinkDeclaration link, TargetProfile profile) {
+        if ("Display".equals(link.mplType()) && link.width() > 0) {
+            return List.of(profile.displayType(link.width(), link.height()).orElseThrow().mlogName());
+        }
+        if ("Display".equals(link.mplType())) {
+            return profile.displayTypes().stream().map(TargetProfile.DisplayType::mlogName).distinct().toList();
+        }
+        return List.of(profile.buildingType(link.mplType()).orElseThrow().mlogName());
     }
 }

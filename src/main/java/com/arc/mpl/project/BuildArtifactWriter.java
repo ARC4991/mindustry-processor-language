@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.List;
 
 /** Writes a self-contained deployable build directory. */
 @Slf4j
@@ -114,7 +115,31 @@ public final class BuildArtifactWriter {
             external.put("alias", link.gameAlias());
             external.put("type", link.mplType());
             external.put("access", access(link.mplType()));
+            if (link.width() > 0) {
+                external.put("width", link.width());
+                external.put("height", link.height());
+            }
         });
+        ArrayNode logicalDisplays = deployment.putArray("logicalDisplays");
+        hardware.resources().values().stream()
+            .filter(resource -> "Display".equals(resource.mplType()) && resource.display().isPresent())
+            .forEach(resource -> {
+                HardwareContract.DisplayLayout displayLayout = resource.display().orElseThrow();
+                ObjectNode display = logicalDisplays.addObject();
+                display.put("mplName", resource.mplName());
+                display.put("width", displayLayout.width());
+                display.put("height", displayLayout.height());
+                ArrayNode tiles = display.putArray("tiles");
+                displayLayout.tiles().forEach(tile -> {
+                    ObjectNode member = tiles.addObject();
+                    member.put("mplName", tile.mplName());
+                    member.put("alias", tile.gameAlias());
+                    member.put("x", tile.x());
+                    member.put("y", tile.y());
+                    member.put("width", tile.width());
+                    member.put("height", tile.height());
+                });
+            });
         deployment.putArray("prerequisites");
         return deployment;
     }
@@ -136,7 +161,20 @@ public final class BuildArtifactWriter {
         guide.append("按以下 alias 连接；多个同类建筑按数字从小到大连接：\n");
         for (HardwareContract.LinkDeclaration link : hardware.links()) {
             guide.append("- ").append(link.mplName()).append(" : ").append(link.mplType())
-                .append(" -> ").append(link.gameAlias()).append('\n');
+                .append(" -> ").append(link.gameAlias());
+            if (link.width() > 0) guide.append(" (").append(link.width()).append('x').append(link.height()).append(')');
+            guide.append('\n');
+        }
+        List<HardwareContract.Resource> composed = hardware.resources().values().stream()
+            .filter(resource -> resource.display().isPresent() && !resource.directlyLinked()).toList();
+        if (!composed.isEmpty()) {
+            guide.append("\n逻辑组合屏：\n");
+            for (HardwareContract.Resource resource : composed) {
+                HardwareContract.DisplayLayout display = resource.display().orElseThrow();
+                guide.append("- ").append(resource.mplName()).append(" : ")
+                    .append(display.width()).append('x').append(display.height()).append(" -> ")
+                    .append(display.tiles().stream().map(HardwareContract.DisplayTile::mplName).toList()).append('\n');
+            }
         }
         guide.append("\n选中 Main 进入配置模式后，游戏会在已连接建筑上显示实际 alias；必须与上表一致。\n");
         guide.append("Main 会等待全部 alias 存在且类型正确后再进入顶层程序；连接完成后无需重新写入代码。\n");

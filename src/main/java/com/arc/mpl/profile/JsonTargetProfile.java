@@ -12,6 +12,7 @@ record JsonTargetProfile(
     Set<String> capabilities,
     int memoryCellCapacity,
     int memoryBankCapacity,
+    List<DisplayType> displayTypes,
     Map<ProcessorKind, Integer> instructionsPerTick,
     int maxInstructions,
     int maxJumpLabels,
@@ -31,6 +32,14 @@ record JsonTargetProfile(
         id = requireText(id, "id");
         capabilities = Set.copyOf(Objects.requireNonNull(capabilities, "capabilities"));
         instructionsPerTick = Map.copyOf(Objects.requireNonNull(instructionsPerTick, "instructionsPerTick"));
+        displayTypes = List.copyOf(Objects.requireNonNull(displayTypes, "displayTypes"));
+        if (displayTypes.isEmpty()) throw new IllegalArgumentException("目标配置至少需要一种 Display");
+        if (displayTypes.stream().map(type -> type.width() + "x" + type.height()).distinct().count() != displayTypes.size()) {
+            throw new IllegalArgumentException("目标配置包含重复的 Display 尺寸");
+        }
+        if (displayTypes.stream().map(DisplayType::mlogName).distinct().count() != displayTypes.size()) {
+            throw new IllegalArgumentException("目标配置包含重复的 Display 方块类型");
+        }
         for (ProcessorKind kind : ProcessorKind.values()) {
             if (!instructionsPerTick.containsKey(kind) || instructionsPerTick.get(kind) < 1) {
                 throw new IllegalArgumentException("目标配置缺少有效的 " + kind + " IPT");

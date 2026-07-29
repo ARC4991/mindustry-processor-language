@@ -43,6 +43,7 @@ final class TargetProfileLoader {
                 requiredText(root, "id"), stringSet(root, "capabilities"),
                 requiredInt(requiredObject(hardware, "memoryCell"), "capacity"),
                 requiredInt(requiredObject(hardware, "memoryBank"), "capacity"),
+                displayData(hardware),
                 processors,
                 requiredInt(limits, "maxInstructions"),
                 requiredInt(limits, "maxJumpLabels"),
@@ -175,6 +176,16 @@ final class TargetProfileLoader {
             }
         }
         return Map.copyOf(result);
+    }
+
+    private static List<TargetProfile.DisplayType> displayData(Map<String, Object> hardware) {
+        List<TargetProfile.DisplayType> result = new ArrayList<>();
+        for (Object entry : requiredList(hardware, "displays")) {
+            Map<String, Object> display = object(entry, "hardware.displays[]");
+            result.add(new TargetProfile.DisplayType(requiredText(display, "mlogName"),
+                requiredInt(display, "width"), requiredInt(display, "height")));
+        }
+        return List.copyOf(result);
     }
 
     private static List<TargetProfile.Instruction> instructionData(Map<String, Object> root) {

@@ -112,6 +112,46 @@ class WorkspacePackageCompilationTest {
     }
 
     @Test
+    void validatesPackageDisplaySizeAgainstACombinedLayout(@TempDir Path workspace) throws Exception {
+        Path app = project(workspace.resolve("app"), "app", "v146",
+            "\"dashboard\": \"workspace:../dashboard\"", "main.mpl", """
+                import { clear } from "dashboard" with { screen: MainScreen };
+                val width: Int = MainScreen.width;
+                Status.print(width);
+                clear();
+                """);
+        Files.writeString(app.resolve("src/hardware.mplh"), """
+            const Left: Display = link("display1", width: 80, height: 80);
+            const Right: Display = link("display2", width: 80, height: 80);
+            const MainScreen: Display = Display.combine([[Left, Right]]);
+            const Status: Message = link("message1");
+            """);
+        Path dashboard = project(workspace.resolve("dashboard"), "dashboard", null, "", "index.mpl", """
+            export fun clear(): Void { screen.clear(Color.black); }
+            """);
+        Files.writeString(dashboard.resolve("src/hardware.mplh"), """
+            require screen: Display(access: write, minWidth: 160, minHeight: 80);
+            """);
+        new WorkspacePackageInstaller().install(app);
+
+        CompilationResult result = new MplCompiler().compile(new CompilationRequest(app, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertTrue(result.mlog().orElseThrow().contains("set mpl_width 160"), result.mlog().orElseThrow());
+        assertTrue(result.mlog().orElseThrow().contains("print mpl_width"), result.mlog().orElseThrow());
+        assertTrue(result.mlog().orElseThrow().contains("drawflush display1"));
+        assertTrue(result.mlog().orElseThrow().contains("drawflush display2"));
+
+        Files.writeString(dashboard.resolve("src/hardware.mplh"), """
+            require screen: Display(access: write, minWidth: 161, minHeight: 80);
+            """);
+        new WorkspacePackageInstaller().install(app);
+        CompilationResult tooSmall = new MplCompiler().compile(new CompilationRequest(app, "v146"));
+        assertTrue(tooSmall.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL1416")
+            && diagnostic.message().contains("160x80")));
+    }
+
+    @Test
     void linksTransitiveMplAndMilWorkspacePackages(@TempDir Path workspace) throws Exception {
         Path app = project(workspace.resolve("app"), "app", "v146",
             "\"panel\": \"workspace:../panel\"", "main.mpl", """
