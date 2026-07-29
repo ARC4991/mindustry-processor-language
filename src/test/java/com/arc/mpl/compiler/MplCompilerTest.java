@@ -548,7 +548,7 @@ class MplCompilerTest {
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
         assertTrue(result.succeeded());
-        assertEquals("set mpl_frog 21\nprint \"frog=\"\nop mul __mpl_tmp0 mpl_frog 2\nop min __mpl_tmp0 __mpl_tmp0 2147483647\nop max __mpl_tmp0 __mpl_tmp0 -2147483648\nprint __mpl_tmp0\nprintflush message1\nstop\n",
+        assertEquals("_0:\nsensor __mpl_hw0 message1 @type\njump _0 notEqual __mpl_hw0 @message\nset mpl_frog 21\nprint \"frog=\"\nop mul __mpl_tmp0 mpl_frog 2\nop min __mpl_tmp0 __mpl_tmp0 2147483647\nop max __mpl_tmp0 __mpl_tmp0 -2147483648\nprint __mpl_tmp0\nprintflush message1\nstop\n",
             result.mlog().orElseThrow());
     }
 
@@ -570,6 +570,9 @@ class MplCompilerTest {
 
         assertTrue(result.succeeded());
         assertEquals("""
+            _0:
+            sensor __mpl_hw0 display1 @type
+            jump _0 notEqual __mpl_hw0 @logic-display
             draw clear 0 0 0 0 0 0
             draw color 0 255 0 255 0 0
             draw rect 1 2 30 40 0 0
@@ -600,7 +603,9 @@ class MplCompilerTest {
         assertTrue(result.succeeded());
         String mlog = result.mlog().orElseThrow();
         assertTrue(mlog.indexOf("draw rect 1 2 3 4 0 0") < mlog.indexOf("drawflush display1"));
-        assertTrue(mlog.indexOf("drawflush display1") < mlog.indexOf("jump _0 always 0 0"));
+        int loopBack = mlog.indexOf("jump _1 always 0 0");
+        assertTrue(loopBack >= 0);
+        assertTrue(mlog.indexOf("drawflush display1") < loopBack);
         assertTrue(result.mil().orElseThrow().contains("@io.drawFlush(@display1);"));
     }
 
@@ -754,7 +759,12 @@ class MplCompilerTest {
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
         assertTrue(result.succeeded());
-        assertEquals("stop\n", result.mlog().orElseThrow());
+        assertEquals("""
+            _0:
+            sensor __mpl_hw0 duo1 @type
+            jump _0 notEqual __mpl_hw0 @duo
+            stop
+            """, result.mlog().orElseThrow());
         assertEquals(1, result.optimizationReport().eliminatedStatements());
     }
 
@@ -772,7 +782,12 @@ class MplCompilerTest {
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
         assertTrue(result.succeeded());
-        assertEquals("stop\n", result.mlog().orElseThrow());
+        assertEquals("""
+            _0:
+            sensor __mpl_hw0 message1 @type
+            jump _0 notEqual __mpl_hw0 @message
+            stop
+            """, result.mlog().orElseThrow());
     }
 
     @Test
@@ -789,6 +804,9 @@ class MplCompilerTest {
 
         assertTrue(result.succeeded());
         assertEquals("""
+            _0:
+            sensor __mpl_hw0 message1 @type
+            jump _0 notEqual __mpl_hw0 @message
             set mpl_title "MPL demo"
             print mpl_title
             print " v1"
@@ -812,6 +830,9 @@ class MplCompilerTest {
 
         assertTrue(result.succeeded());
         assertEquals("""
+            _0:
+            sensor __mpl_hw0 message1 @type
+            jump _0 notEqual __mpl_hw0 @message
             set mpl_title "MPL"
             print "运行 "
             print mpl_title
@@ -884,6 +905,11 @@ class MplCompilerTest {
 
         assertTrue(result.succeeded());
         assertEquals("""
+            _0:
+            sensor __mpl_hw0 switch1 @type
+            jump _0 notEqual __mpl_hw0 @switch
+            sensor __mpl_hw1 duo1 @type
+            jump _0 notEqual __mpl_hw1 @duo
             sensor __mpl_tmp0 switch1 @enabled
             set mpl_enabled __mpl_tmp0
             op equal __mpl_tmp1 0 mpl_enabled
@@ -956,6 +982,58 @@ class MplCompilerTest {
         assertTrue(debug.mlog().orElseThrow().contains("mpl_while_start_0:"));
         assertEquals(release.mil(), debug.mil());
         assertTrue(debug.mil().orElseThrow().contains("while (true) {"));
+    }
+
+    @Test
+    void omitsTheHardwareStartupGateWhenNoHardwareIsDeclared(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), "var ready: Bool = true;");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertFalse(result.mlog().orElseThrow().contains("__mpl_hw"));
+        assertFalse(result.mlog().orElseThrow().contains("@type"));
+    }
+
+    @Test
+    void waitsAtOneSharedStartupLabelForEveryDeclaredHardwareLink(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
+            const Status: Message = link("message1");
+            const Launch: Switch = link("switch1");
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), "Status.print(\"ready\");");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.startsWith("""
+            _0:
+            sensor __mpl_hw0 message1 @type
+            jump _0 notEqual __mpl_hw0 @message
+            sensor __mpl_hw1 switch1 @type
+            jump _0 notEqual __mpl_hw1 @switch
+            """));
+        assertEquals(2, mlog.lines().filter(line -> line.startsWith("jump _0 notEqual __mpl_hw")).count());
+        assertFalse(result.mil().orElseThrow().contains("__mpl_hw"));
+        assertFalse(result.mil().orElseThrow().contains("hardware_wait"));
+    }
+
+    @Test
+    void givesTheHardwareStartupGateAReadableDebugLabel(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Status: Message = link(\"message1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), "Status.print(\"ready\");");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        assertTrue(result.mlog().orElseThrow().startsWith("mpl_hardware_wait_0:\n"));
+        assertTrue(result.mlog().orElseThrow().contains(
+            "jump mpl_hardware_wait_0 notEqual __mpl_hw0 @message"));
     }
 
     @Test

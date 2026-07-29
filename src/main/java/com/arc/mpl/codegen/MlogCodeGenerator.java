@@ -61,6 +61,7 @@ public final class MlogCodeGenerator {
 
     private final MlogLabelStyle labelStyle;
     private final PhysicalMemoryLayout memoryLayout;
+    private final List<HardwareRequirement> hardwareRequirements;
     private MlogProgramBuilder output;
     private int temporaryIndex;
     private int unitIterationIndex;
@@ -75,18 +76,25 @@ public final class MlogCodeGenerator {
 
     /** Creates a compact release emitter, suitable for deployment to a processor. */
     public MlogCodeGenerator() {
-        this(MlogLabelStyle.RELEASE, PhysicalMemoryLayout.empty());
+        this(MlogLabelStyle.RELEASE, PhysicalMemoryLayout.empty(), List.of());
     }
 
     /** Creates an emitter with an explicit jump-label spelling policy. */
     public MlogCodeGenerator(MlogLabelStyle labelStyle) {
-        this(labelStyle, PhysicalMemoryLayout.empty());
+        this(labelStyle, PhysicalMemoryLayout.empty(), List.of());
     }
 
     /** Creates an emitter backed by the exact physical layout used by the runtime blueprint. */
     public MlogCodeGenerator(MlogLabelStyle labelStyle, PhysicalMemoryLayout memoryLayout) {
+        this(labelStyle, memoryLayout, List.of());
+    }
+
+    /** Creates an emitter that waits for all manually connected hardware before entering user code. */
+    public MlogCodeGenerator(MlogLabelStyle labelStyle, PhysicalMemoryLayout memoryLayout,
+                             List<HardwareRequirement> hardwareRequirements) {
         this.labelStyle = java.util.Objects.requireNonNull(labelStyle, "labelStyle");
         this.memoryLayout = java.util.Objects.requireNonNull(memoryLayout, "memoryLayout");
+        this.hardwareRequirements = List.copyOf(java.util.Objects.requireNonNull(hardwareRequirements, "hardwareRequirements"));
     }
 
     public String generate(HirProgram program) {
@@ -111,6 +119,7 @@ public final class MlogCodeGenerator {
             functionEntries.put(function.name(), label("function_" + function.name()));
         }
         currentFunction = null;
+        emitHardwareStartupGate();
         for (HirStatement statement : program.statements()) {
             emitStatement(statement);
         }
@@ -119,6 +128,29 @@ public final class MlogCodeGenerator {
         output.stop();
         for (HirFunction function : program.functions()) emitFunction(function);
         return output.render();
+    }
+
+    private void emitHardwareStartupGate() {
+        if (hardwareRequirements.isEmpty()) return;
+        MlogProgramBuilder.Label wait = label("hardware_wait");
+        emitLabel(wait);
+        int requirementIndex = 0;
+        for (HardwareRequirement requirement : hardwareRequirements) {
+            String actualType = "__mpl_hw" + requirementIndex++;
+            output.sensor(actualType, requirement.alias(), "@type");
+            emitJump(wait, JumpCondition.NOT_EQUAL, actualType, "@" + requirement.mlogBlock());
+        }
+    }
+
+    public record HardwareRequirement(String alias, String mlogBlock) {
+        public HardwareRequirement {
+            if (alias == null || !alias.matches("[_A-Za-z][_A-Za-z0-9]*")) {
+                throw new IllegalArgumentException("无效的游戏硬件 alias：" + alias);
+            }
+            if (mlogBlock == null || !mlogBlock.matches("[a-z0-9-]+")) {
+                throw new IllegalArgumentException("无效的目标方块名称：" + mlogBlock);
+            }
+        }
     }
 
     private void emitStatement(HirStatement statement) {

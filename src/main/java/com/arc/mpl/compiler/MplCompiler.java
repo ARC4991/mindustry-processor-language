@@ -1,6 +1,7 @@
 package com.arc.mpl.compiler;
 
 import com.arc.mpl.codegen.MlogCodeGenerator;
+import com.arc.mpl.codegen.MlogCodeGenerator.HardwareRequirement;
 import com.arc.mpl.codegen.MlogLabelStyle;
 import com.arc.mpl.codegen.MlogOutputValidator;
 import com.arc.mpl.codegen.MilCodeGenerator;
@@ -70,8 +71,9 @@ public final class MplCompiler {
                 Optional.of(request.projectDirectory().resolve("mpl.json")), Optional.empty())), Optional.empty());
         }
         SemanticResult analyzed;
+        HardwareContract hardware;
         try {
-            HardwareContract hardware = new HardwareLoader().load(request.projectDirectory());
+            hardware = new HardwareLoader().load(request.projectDirectory());
             List<Diagnostic> hardwareDiagnostics = validateHardware(hardware, profile.orElseThrow(), sourceFile);
             if (!hardwareDiagnostics.isEmpty()) return new CompilationResult(profile, hardwareDiagnostics, Optional.empty());
             analyzed = new SemanticAnalyzer(profile.orElseThrow()).analyze(parsed.program().orElseThrow(), sourceFile, hardware);
@@ -94,7 +96,11 @@ public final class MplCompiler {
         }
         MlogLabelStyle labelStyle = request.debug() ? MlogLabelStyle.DEBUG : MlogLabelStyle.RELEASE;
         String mil = new MilCodeGenerator().generate(program);
-        String mlog = new MlogCodeGenerator(labelStyle, memoryLayout).generate(program);
+        List<HardwareRequirement> hardwareRequirements = hardware.links().stream()
+            .map(link -> new HardwareRequirement(link.gameAlias(), profile.orElseThrow()
+                .buildingType(link.mplType()).orElseThrow().mlogName()))
+            .toList();
+        String mlog = new MlogCodeGenerator(labelStyle, memoryLayout, hardwareRequirements).generate(program);
         List<Diagnostic> diagnostics = new ArrayList<>(analyzed.diagnostics());
         diagnostics.addAll(new MlogOutputValidator().validate(mlog, profile.orElseThrow()));
         boolean hasError = diagnostics.stream().anyMatch(diagnostic -> diagnostic.severity() == Severity.ERROR);

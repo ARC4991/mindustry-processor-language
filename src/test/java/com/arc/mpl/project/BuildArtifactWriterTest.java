@@ -98,6 +98,8 @@ class BuildArtifactWriterTest {
         JsonNode external = deployment.path("externalHardware").get(0);
         assertEquals("output\\\"name", external.path("mplName").asText());
         assertEquals("message\\\"1", external.path("alias").asText());
+        assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("连接说明.txt"))
+            .contains("连接完成后无需重新写入代码"));
     }
 
     @Test

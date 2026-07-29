@@ -139,6 +139,7 @@ public final class BuildArtifactWriter {
                 .append(" -> ").append(link.gameAlias()).append('\n');
         }
         guide.append("\n选中 Main 进入配置模式后，游戏会在已连接建筑上显示实际 alias；必须与上表一致。\n");
+        guide.append("Main 会等待全部 alias 存在且类型正确后再进入顶层程序；连接完成后无需重新写入代码。\n");
         return guide.toString();
     }
 
