@@ -31,7 +31,8 @@
     { "opcode": "ubind", "operands": ["unitType"], "permissions": ["normal", "logicUnitControl"] },
     { "opcode": "ucontrol", "operands": ["action", "arguments"], "permissions": ["normal", "logicUnitControl"] },
     { "opcode": "print", "operands": ["value"], "permissions": ["normal"] },
-    { "opcode": "printflush", "operands": ["message"], "permissions": ["normal"] }
+    { "opcode": "printflush", "operands": ["message"], "permissions": ["normal"] },
+    { "opcode": "drawflush", "operands": ["display"], "permissions": ["normal"] }
   ],
   "contents": {
     "units": [
@@ -65,6 +66,7 @@
   "macros": [
     {
       "name": "@unit.each",
+      "visibility": "public",
       "parameters": [
         { "name": "type", "type": "GameUnitType" },
         { "name": "binding", "type": "Unit" },
@@ -76,6 +78,7 @@
     },
     {
       "name": "@unit.move",
+      "visibility": "public",
       "parameters": [
         { "name": "unit", "type": "Unit" },
         { "name": "x", "type": "Float" },
@@ -87,6 +90,7 @@
     },
     {
       "name": "@io.print",
+      "visibility": "public",
       "parameters": [
         { "name": "message", "type": "GameLink<Message>" },
         { "name": "values", "type": "PrintValue[]" }
@@ -94,6 +98,16 @@
       "effects": ["writesMessage", "flushesMessage"],
       "maxCost": { "instructions": 2, "virtualSlots": 0, "physicalSlots": 0 },
       "lowering": ["print", "printflush"]
+    },
+    {
+      "name": "@io.drawFlush",
+      "visibility": "runtimePrivate",
+      "parameters": [
+        { "name": "display", "type": "GameLink<Display>" }
+      ],
+      "effects": ["flushesGraphicsBuffer"],
+      "maxCost": { "instructions": 1, "virtualSlots": 0, "physicalSlots": 0 },
+      "lowering": ["drawflush"]
     }
   ]
 }

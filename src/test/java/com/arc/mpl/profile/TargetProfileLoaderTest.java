@@ -22,6 +22,7 @@ class TargetProfileLoaderTest {
         assertEquals("duo", profile.buildingType("Duo").orElseThrow().mlogName());
         assertEquals(1, profile.instructions().size());
         assertEquals("@io.print", profile.macros().get(0).name());
+        assertEquals(TargetProfile.MacroVisibility.PUBLIC, profile.macros().get(0).visibility());
     }
 
     @Test
@@ -42,8 +43,21 @@ class TargetProfileLoaderTest {
         assertTrue(error.getMessage().contains("micro"));
     }
 
+    @Test
+    void rejectsMacrosThatLowerToUndeclaredInstructions() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> TargetProfileLoader.load(bytes(jsonText("v-test", 1)
+                .replace("\"lowering\": [\"print\"]", "\"lowering\": [\"drawflush\"]"))));
+
+        assertTrue(error.getMessage().contains("未声明的 mlog 指令"));
+    }
+
     private static ByteArrayInputStream json(String id, int schemaVersion) {
-        return bytes("""
+        return bytes(jsonText(id, schemaVersion));
+    }
+
+    private static String jsonText(String id, int schemaVersion) {
+        return """
             {
               "schemaVersion": %d,
               "id": "%s",
@@ -77,13 +91,13 @@ class TargetProfileLoaderTest {
               },
               "macros": [
                 {
-                  "name": "@io.print", "parameters": [], "effects": ["writesMessage"],
+                  "name": "@io.print", "visibility": "public", "parameters": [], "effects": ["writesMessage"],
                   "maxCost": { "instructions": 1, "virtualSlots": 0, "physicalSlots": 0 },
                   "lowering": ["print"]
                 }
               ]
             }
-            """.formatted(schemaVersion, id));
+            """.formatted(schemaVersion, id);
     }
 
     private static ByteArrayInputStream bytes(String value) {

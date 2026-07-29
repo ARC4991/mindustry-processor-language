@@ -35,7 +35,7 @@ profile 描述**游戏事实与可用 lowering**；`report.json` 描述一次构
 5. `contents`：Unit/Building 内容名、可读取字段、允许的控制动作；
 6. `macros`：MIL 公开宏签名、效果、成本上界与 target lowering 名称。
 
-profile 的 `macros` 是 MIL 白名单的唯一来源。每一个宏必须同时声明参数类型、权限、可能影响的资源、最坏成本和生成目标指令；宏展开器不能根据宏名字符串临时猜测。`instructions` 允许记录游戏完整指令表，但只有经 `macros` 或受支持 lowering 引用的指令才会进入普通 MPL/MIL。
+profile 的 `macros` 是 MIL 白名单的唯一来源。每一个宏必须同时声明 `public` 或 `runtimePrivate` 可见性、参数类型、权限、可能影响的资源、最坏成本和生成目标指令；宏展开器不能根据宏名字符串临时猜测。`runtimePrivate` 宏（当前为自动绘制提交）可出现在编译器生成的 MIL，但手写 MIL 不能调用。每个 `lowering` 名称必须同时存在于 profile 的 `instructions`，否则 profile 加载失败。`instructions` 允许记录游戏完整指令表，但只有经 `macros` 或受支持 lowering 引用的指令才会进入普通 MPL/MIL。
 
 `contents` 中的 `fields` 用 MPL 类型而非 mlog `LAccess` 原名表示；例如 `alive: Bool` 可映射为目标 `@dead` 的取反。这样 profile 可以保存来源字段，同时不把底层的 `flag`、对象/数字转换或未知 sensor 名称暴露给语言。
 

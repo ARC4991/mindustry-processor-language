@@ -50,7 +50,21 @@ record JsonTargetProfile(
         unitActions = Map.copyOf(Objects.requireNonNull(unitActions, "unitActions"));
         buildingTypes = Map.copyOf(Objects.requireNonNull(buildingTypes, "buildingTypes"));
         instructions = List.copyOf(Objects.requireNonNull(instructions, "instructions"));
+        if (instructions.stream().map(Instruction::opcode).distinct().count() != instructions.size()) {
+            throw new IllegalArgumentException("目标配置包含重复的 mlog 指令名称");
+        }
         macros = List.copyOf(Objects.requireNonNull(macros, "macros"));
+        if (macros.stream().map(Macro::name).distinct().count() != macros.size()) {
+            throw new IllegalArgumentException("目标配置包含重复的 MIL 宏名称");
+        }
+        Set<String> opcodes = instructions.stream().map(Instruction::opcode).collect(java.util.stream.Collectors.toSet());
+        for (Macro macro : macros) {
+            for (String lowering : macro.lowering()) {
+                if (!opcodes.contains(lowering)) {
+                    throw new IllegalArgumentException("MIL 宏 " + macro.name() + " 引用了未声明的 mlog 指令：" + lowering);
+                }
+            }
+        }
     }
 
     @Override

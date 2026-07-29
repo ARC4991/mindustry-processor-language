@@ -57,6 +57,10 @@ public interface TargetProfile {
     /** MIL macro contracts declared by this profile. */
     List<Macro> macros();
 
+    default Optional<Macro> macro(String name) {
+        return macros().stream().filter(macro -> macro.name().equals(name)).findFirst();
+    }
+
     record UnitType(String mlogName, boolean logicControllable) {
     }
 
@@ -90,13 +94,23 @@ public interface TargetProfile {
         }
     }
 
-    record Macro(String name, List<MacroParameter> parameters, Set<String> effects,
+    record Macro(String name, MacroVisibility visibility, List<MacroParameter> parameters, Set<String> effects,
                  MacroCost maxCost, List<String> lowering) {
         public Macro {
+            if (name == null || !name.matches("@[a-z]+(?:\\.[a-zA-Z][a-zA-Z0-9]*)+")) {
+                throw new IllegalArgumentException("MIL 宏名称无效：" + name);
+            }
+            if (visibility == null) throw new IllegalArgumentException("MIL 宏必须声明可见性：" + name);
             parameters = List.copyOf(parameters);
             effects = Set.copyOf(effects);
             lowering = List.copyOf(lowering);
+            if (lowering.isEmpty()) throw new IllegalArgumentException("MIL 宏必须声明 lowering：" + name);
         }
+    }
+
+    enum MacroVisibility {
+        PUBLIC,
+        RUNTIME_PRIVATE
     }
 
     record MacroParameter(String name, String type) {

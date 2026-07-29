@@ -198,12 +198,21 @@ final class TargetProfileLoader {
                 parameters.add(new TargetProfile.MacroParameter(requiredText(member, "name"), requiredText(member, "type")));
             }
             Map<String, Object> cost = requiredObject(macro, "maxCost");
-            result.add(new TargetProfile.Macro(requiredText(macro, "name"), parameters,
+            result.add(new TargetProfile.Macro(requiredText(macro, "name"), macroVisibility(macro), parameters,
                 stringSet(macro, "effects"), new TargetProfile.MacroCost(
                     requiredInt(cost, "instructions"), requiredInt(cost, "virtualSlots"), requiredInt(cost, "physicalSlots")),
                 stringList(macro, "lowering")));
         }
         return List.copyOf(result);
+    }
+
+    private static TargetProfile.MacroVisibility macroVisibility(Map<String, Object> macro) {
+        String visibility = requiredText(macro, "visibility");
+        return switch (visibility) {
+            case "public" -> TargetProfile.MacroVisibility.PUBLIC;
+            case "runtimePrivate" -> TargetProfile.MacroVisibility.RUNTIME_PRIVATE;
+            default -> throw new IllegalArgumentException("目标配置包含未知 MIL 宏可见性：" + visibility);
+        };
     }
 
     private static List<ValueType> parameterTypes(Map<String, Object> node, String context) {

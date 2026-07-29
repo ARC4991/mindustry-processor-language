@@ -31,7 +31,17 @@ class KnownProfilesTest {
             profile.unitAction("move").orElseThrow().parameterTypes());
         assertEquals("duo", profile.buildingType("Duo").orElseThrow().mlogName());
         assertTrue(profile.instructions().stream().anyMatch(instruction -> instruction.opcode().equals("ubind")));
-        assertTrue(profile.macros().stream().anyMatch(macro -> macro.name().equals("@unit.each")));
+        assertEquals(java.util.Set.of(
+                "@unit.each", "@unit.eachManaged", "@unit.read", "@unit.alive", "@unit.move",
+                "@building.read", "@building.control", "@io.print", "@io.draw", "@io.drawFlush"),
+            profile.macros().stream().map(TargetProfile.Macro::name).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(TargetProfile.MacroVisibility.RUNTIME_PRIVATE,
+            profile.macro("@io.drawFlush").orElseThrow().visibility());
+        assertTrue(profile.macros().stream()
+            .filter(macro -> !macro.name().equals("@io.drawFlush"))
+            .allMatch(macro -> macro.visibility() == TargetProfile.MacroVisibility.PUBLIC));
+        assertTrue(java.util.Set.of("read", "write", "control", "stop").stream()
+            .allMatch(opcode -> profile.instructions().stream().anyMatch(instruction -> instruction.opcode().equals(opcode))));
     }
 
     @Test
