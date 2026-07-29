@@ -3,10 +3,14 @@ package com.arc.mpl.syntax;
 import com.arc.mpl.ast.AssignmentExpression;
 import com.arc.mpl.ast.ArrayLiteral;
 import com.arc.mpl.ast.BinaryExpression;
+import com.arc.mpl.ast.AccessModifier;
+import com.arc.mpl.ast.ClassDeclaration;
 import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.ForStatement;
 import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.NullLiteral;
+import com.arc.mpl.ast.MemberAssignmentExpression;
+import com.arc.mpl.ast.NewExpression;
 import com.arc.mpl.ast.TupleLiteral;
 import com.arc.mpl.ast.VariableDeclaration;
 import org.junit.jupiter.api.Test;
@@ -20,6 +24,37 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MplSyntaxParserTest {
     private final MplSyntaxParser parser = new MplSyntaxParser();
+
+    @Test
+    void parsesClassesConstructorsMemberAssignmentsAndNew() {
+        ParseResult result = parser.parse("""
+            export class Counter {
+                value: Int;
+                public fun Counter(initial: Int) { this.value = initial; }
+                public fun add(amount: Int): Int {
+                    this.value += amount;
+                    return this.value;
+                }
+            }
+            val counter = new Counter(1);
+            counter.add(2);
+            """, Path.of("main.mpl"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        var program = result.program().orElseThrow();
+        ClassDeclaration type = program.classes().get(0);
+        assertEquals("Counter", type.name());
+        assertEquals(AccessModifier.PRIVATE, type.fields().get(0).access());
+        assertEquals(AccessModifier.PUBLIC, type.methods().get(0).access());
+        assertEquals("Counter", program.exports().get(0).name());
+        ExpressionStatement constructorAssignment = assertInstanceOf(ExpressionStatement.class,
+            type.methods().get(0).function().body().statements().get(0));
+        assertInstanceOf(MemberAssignmentExpression.class, constructorAssignment.expression());
+        VariableDeclaration declaration = assertInstanceOf(VariableDeclaration.class, program.statements().get(0));
+        NewExpression allocation = assertInstanceOf(NewExpression.class, declaration.initializer());
+        assertEquals("Counter", allocation.className());
+        assertEquals(1, allocation.arguments().size());
+    }
 
     @Test
     void parsesNamedImportsExportsAndHardwareInjection() {

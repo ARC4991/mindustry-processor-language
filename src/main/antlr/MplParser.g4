@@ -14,9 +14,21 @@ hardwareArgument: name=IDENTIFIER COLON value=IDENTIFIER;
 
 topLevelDeclaration
     : exported=EXPORT? functionDeclaration
+    | exported=EXPORT? classDeclaration
     | exported=EXPORT? variableDeclaration SEMICOLON
     | statement
     ;
+
+classDeclaration: CLASS name=IDENTIFIER LBRACE classMember* RBRACE;
+
+classMember
+    : accessModifier? fieldDeclaration
+    | accessModifier? functionDeclaration
+    ;
+
+accessModifier: PUBLIC | PRIVATE;
+
+fieldDeclaration: name=IDENTIFIER COLON typeName=typeReference SEMICOLON;
 
 functionDeclaration: FUN name=IDENTIFIER LPAREN (parameter (COMMA parameter)*)? RPAREN
     (COLON returnType=typeReference)? body=block;
@@ -74,9 +86,11 @@ expression
 lambdaExpression: lambdaParameter=IDENTIFIER ARROW body=expression;
 
 assignmentExpression
-    : IDENTIFIER operator=(ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) assignmentExpression
+    : assignmentTarget operator=(ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) assignmentExpression
     | logicalOrExpression
     ;
+
+assignmentTarget: object=(IDENTIFIER | THIS) (DOT member=IDENTIFIER)?;
 
 logicalOrExpression: logicalAndExpression (OR_OR logicalAndExpression)*;
 logicalAndExpression: equalityExpression (AND_AND equalityExpression)*;
@@ -99,12 +113,14 @@ postfixSuffix
     ;
 
 primaryExpression
-    : INT_LITERAL
+    : NEW typeName=IDENTIFIER LPAREN (constructorArgument+=expression (COMMA constructorArgument+=expression)*)? RPAREN
+    | INT_LITERAL
     | FLOAT_LITERAL
     | STRING_LITERAL
     | TRUE
     | FALSE
     | NULL
+    | THIS
     | name=IDENTIFIER
     | LBRACK (expression (COMMA expression)*)? RBRACK
     | LPAREN tupleElement+=expression (COMMA tupleElement+=expression)+ RPAREN

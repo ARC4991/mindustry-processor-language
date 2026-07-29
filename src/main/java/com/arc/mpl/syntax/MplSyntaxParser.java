@@ -1,12 +1,16 @@
 package com.arc.mpl.syntax;
 
 import com.arc.mpl.ast.AssignmentExpression;
+import com.arc.mpl.ast.AccessModifier;
 import com.arc.mpl.ast.ArrayLiteral;
 import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.BooleanLiteral;
 import com.arc.mpl.ast.BlockStatement;
 import com.arc.mpl.ast.BreakStatement;
 import com.arc.mpl.ast.CallExpression;
+import com.arc.mpl.ast.ClassDeclaration;
+import com.arc.mpl.ast.ClassFieldDeclaration;
+import com.arc.mpl.ast.ClassMethodDeclaration;
 import com.arc.mpl.ast.ContinueStatement;
 import com.arc.mpl.ast.DoWhileStatement;
 import com.arc.mpl.ast.Expression;
@@ -24,6 +28,8 @@ import com.arc.mpl.ast.ImportDeclaration;
 import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
+import com.arc.mpl.ast.MemberAssignmentExpression;
+import com.arc.mpl.ast.NewExpression;
 import com.arc.mpl.ast.NullLiteral;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.ReturnStatement;
@@ -101,6 +107,7 @@ public final class MplSyntaxParser {
             List<ImportDeclaration> imports = context.importDeclaration().stream()
                 .map(value -> (ImportDeclaration) visit(value)).toList();
             List<ExportDeclaration> exports = new ArrayList<>();
+            List<ClassDeclaration> classes = new ArrayList<>();
             List<FunctionDeclaration> functions = new ArrayList<>();
             List<Statement> statements = new ArrayList<>();
             for (MplParser.TopLevelDeclarationContext declaration : context.topLevelDeclaration()) {
@@ -109,6 +116,12 @@ public final class MplSyntaxParser {
                     functions.add(function);
                     if (declaration.exported != null) {
                         exports.add(new ExportDeclaration(function.name(), span(declaration)));
+                    }
+                } else if (declaration.classDeclaration() != null) {
+                    ClassDeclaration type = (ClassDeclaration) visit(declaration.classDeclaration());
+                    classes.add(type);
+                    if (declaration.exported != null) {
+                        exports.add(new ExportDeclaration(type.name(), span(declaration)));
                     }
                 } else if (declaration.variableDeclaration() != null) {
                     VariableDeclaration variable = (VariableDeclaration) visit(declaration.variableDeclaration());
@@ -120,7 +133,28 @@ public final class MplSyntaxParser {
                     statements.add((Statement) visit(declaration.statement()));
                 }
             }
-            return new Program(imports, exports, functions, statements);
+            return new Program(imports, exports, classes, functions, statements);
+        }
+
+        @Override
+        public ClassDeclaration visitClassDeclaration(MplParser.ClassDeclarationContext context) {
+            List<ClassFieldDeclaration> fields = new ArrayList<>();
+            List<ClassMethodDeclaration> methods = new ArrayList<>();
+            for (MplParser.ClassMemberContext member : context.classMember()) {
+                AccessModifier access = access(member.accessModifier());
+                if (member.fieldDeclaration() != null) {
+                    MplParser.FieldDeclarationContext field = member.fieldDeclaration();
+                    fields.add(new ClassFieldDeclaration(access, field.name.getText(), field.typeName.getText(), span(field)));
+                } else {
+                    methods.add(new ClassMethodDeclaration(access,
+                        (FunctionDeclaration) visit(member.functionDeclaration())));
+                }
+            }
+            return new ClassDeclaration(context.name.getText(), fields, methods, span(context));
+        }
+
+        private AccessModifier access(MplParser.AccessModifierContext context) {
+            return context != null && context.PUBLIC() != null ? AccessModifier.PUBLIC : AccessModifier.PRIVATE;
         }
 
         @Override
@@ -270,12 +304,18 @@ public final class MplSyntaxParser {
 
         @Override
         public Object visitAssignmentExpression(MplParser.AssignmentExpressionContext context) {
-            if (context.IDENTIFIER() == null) {
+            if (context.assignmentTarget() == null) {
                 return visit(context.logicalOrExpression());
             }
-            Identifier target = new Identifier(context.IDENTIFIER().getText(), span(context.IDENTIFIER().getSymbol()));
+            MplParser.AssignmentTargetContext sourceTarget = context.assignmentTarget();
+            Identifier target = new Identifier(sourceTarget.object.getText(), span(sourceTarget.object));
+            Expression value = (Expression) visit(context.assignmentExpression());
+            if (sourceTarget.member != null) {
+                return new MemberAssignmentExpression(target, sourceTarget.member.getText(), context.operator.getText(),
+                    value, span(context));
+            }
             return new AssignmentExpression(target, context.operator.getText(),
-                (Expression) visit(context.assignmentExpression()), span(context));
+                value, span(context));
         }
 
         @Override
@@ -340,6 +380,11 @@ public final class MplSyntaxParser {
 
         @Override
         public Object visitPrimaryExpression(MplParser.PrimaryExpressionContext context) {
+            if (context.NEW() != null) {
+                List<Expression> arguments = context.constructorArgument.stream()
+                    .map(value -> (Expression) visit(value)).toList();
+                return new NewExpression(context.typeName.getText(), arguments, span(context));
+            }
             if (context.INT_LITERAL() != null) {
                 return new IntegerLiteral(Long.parseLong(context.INT_LITERAL().getText()), span(context));
             }
@@ -354,6 +399,7 @@ public final class MplSyntaxParser {
                 return new BooleanLiteral(context.TRUE() != null, span(context));
             }
             if (context.NULL() != null) return new NullLiteral(span(context));
+            if (context.THIS() != null) return new Identifier("this", span(context));
             if (context.name != null) {
                 return new Identifier(context.name.getText(), span(context));
             }
