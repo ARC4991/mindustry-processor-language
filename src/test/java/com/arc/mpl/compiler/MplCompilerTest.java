@@ -432,6 +432,21 @@ class MplCompilerTest {
     }
 
     @Test
+    void rejectsDisplayDrawBuffersThatExceedTheTargetLimit(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Screen: Display = link(\"display1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"),
+            "Screen.fillRect(0, 0, 1, 1);\n".repeat(257));
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3203")
+            && diagnostic.message().contains("最多允许 256 条")));
+    }
+
+    @Test
     void expandsBuildingTraversalOverDeclaredLinksOnly(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
