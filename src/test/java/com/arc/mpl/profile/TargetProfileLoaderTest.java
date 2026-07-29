@@ -91,7 +91,7 @@ class TargetProfileLoaderTest {
               },
               "macros": [
                 {
-                  "name": "@io.print", "visibility": "public", "parameters": [], "effects": ["writesMessage"],
+                  "name": "@io.print", "visibility": "public", "body": "none", "parameters": [], "effects": ["writesMessage"],
                   "maxCost": { "instructions": 1, "virtualSlots": 0, "physicalSlots": 0 },
                   "lowering": ["print"]
                 }

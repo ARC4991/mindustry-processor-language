@@ -109,10 +109,11 @@
     },
     "macro": {
       "type": "object", "additionalProperties": false,
-      "required": ["name", "visibility", "parameters", "effects", "maxCost", "lowering"],
+      "required": ["name", "visibility", "body", "parameters", "effects", "maxCost", "lowering"],
       "properties": {
         "name": { "type": "string", "pattern": "^@[a-z]+(\\.[a-zA-Z][a-zA-Z0-9]*)+$" },
         "visibility": { "enum": ["public", "runtimePrivate"] },
+        "body": { "enum": ["none", "required"] },
         "parameters": { "type": "array", "items": { "$ref": "#/$defs/member" } },
         "effects": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
         "maxCost": { "type": "object", "additionalProperties": false, "required": ["instructions", "virtualSlots", "physicalSlots"], "properties": { "instructions": { "type": "integer", "minimum": 0 }, "virtualSlots": { "type": "integer", "minimum": 0 }, "physicalSlots": { "type": "integer", "minimum": 0 } } },

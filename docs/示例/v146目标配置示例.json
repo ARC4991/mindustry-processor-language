@@ -67,6 +67,7 @@
     {
       "name": "@unit.each",
       "visibility": "public",
+      "body": "required",
       "parameters": [
         { "name": "type", "type": "GameUnitType" },
         { "name": "binding", "type": "Unit" },
@@ -79,6 +80,7 @@
     {
       "name": "@unit.move",
       "visibility": "public",
+      "body": "none",
       "parameters": [
         { "name": "unit", "type": "Unit" },
         { "name": "x", "type": "Float" },
@@ -91,6 +93,7 @@
     {
       "name": "@io.print",
       "visibility": "public",
+      "body": "none",
       "parameters": [
         { "name": "message", "type": "GameLink<Message>" },
         { "name": "values", "type": "PrintValue[]" }
@@ -102,6 +105,7 @@
     {
       "name": "@io.drawFlush",
       "visibility": "runtimePrivate",
+      "body": "none",
       "parameters": [
         { "name": "display", "type": "GameLink<Display>" }
       ],
