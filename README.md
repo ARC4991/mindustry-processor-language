@@ -2,11 +2,11 @@
 
 MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处理器的高级语言与编译器项目。它先将 MPL 源码降级为支持 profile 宏的 MIL（Macro Intermediate Language），再生成游戏可执行的 mlog 指令。MIL 保留变量、表达式、函数和结构化控制流等 MPL 基础语法，只展开 Unit Set/Unit/Building、字符串运行时等高级糖及其运行时需求。
 
-项目目前处于语法设计阶段，尚未提供稳定的编译器版本。实现语言确定为 Java（JDK 17），解析器计划采用 ANTLR 4；任何标记为“讨论基线”的语法都可能调整。
+项目目前处于原型实现阶段，尚未提供稳定的编译器版本。编译器使用 Java（JDK 17），MPL 与 MIL 均使用拆分的 ANTLR 4 词法/语法文件；任何标记为“讨论基线”的语法仍可能调整。
 
 ## 快速试用
 
-当前原型支持初始化项目、基础数值/控制流、项目内及锁定工作区包的 MPL/MIL 混合模块、Message/Display I/O，以及 Unit/Building 对象查询。`Set<Unit<T>>` 与 `LinkedBuildingSet<T>` 均可保存、过滤、计数、索引和遍历；可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
+当前原型支持初始化项目、基础数值/控制流、项目内及锁定工作区包的 MPL/MIL 混合模块、无继承 class/new、Message/Display I/O，以及 Unit/Building 对象查询。顶层 `new` 使用编译器管理的静态对象槽；构造器、public/private、可空用户对象和实例方法已经接通 MIL/mlog。`Set<Unit<T>>` 与 `LinkedBuildingSet<T>` 均可保存、过滤、计数、索引和遍历；可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
 
 ```bash
 # 默认使用 v146；目录必须不存在或为空。
@@ -19,7 +19,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 ./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/build'
 ```
 
-`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。入口可用 `import { name } from "./module";` 递归链接 `src` 内显式 `export fun` / `export val` 的 MPL 或 MIL 模块；依赖顶层初始化只执行一次，私有符号由链接器隔离。`workspace:` 依赖由 `mpl install` 递归锁定到格式化的 `mpl.lock`，`check/build` 会验证根清单、包源码、`.mplh` 摘要、单版本约束和 target 能力，绝不自动更新锁文件。包可在自己的 `.mplh` 中用 `require` 声明命名硬件，并由调用方通过 `with` 严格注入；组合 Display 的尺寸约束也会在链接期验证。registry 下载尚未实现。
+`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。入口可用 `import { name } from "./module";` 递归链接 `src` 内显式 `export class` / `export fun` / `export val` 的 MPL 或 MIL 模块；依赖顶层初始化只执行一次，私有符号由链接器隔离。`workspace:` 依赖由 `mpl install` 递归锁定到格式化的 `mpl.lock`，`check/build` 会验证根清单、包源码、`.mplh` 摘要、单版本约束和 target 能力，绝不自动更新锁文件。包可在自己的 `.mplh` 中用 `require` 声明命名硬件，并由调用方通过 `with` 严格注入；组合 Display 的尺寸约束也会在链接期验证。registry 下载尚未实现。
 
 手写 MIL 使用独立 ANTLR 前端，只能调用 target profile 公开宏；它与 MPL 一样经过严格类型、硬件契约、优化、Runtime、内存规划和 mlog 限制校验。
 
@@ -64,6 +64,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - [Dagger 三单位绕圈示例](examples/单位绕圈)：`Unit.getAllDagger()`、持续循环和单位移动的 v146 游戏内验收输入，以及部署限制说明。
 - [MPL/MIL 混合模块示例](examples/混合模块)：展示相对 import、导出常量、跨语言函数、硬件 alias 与完整蓝图构建产物。
 - [工作区包示例](examples/工作区包)：展示 `mpl install`、确定性锁文件、包 `.mplh require` 与 `with` 硬件注入。
+- [静态对象示例](examples/对象模型)：展示构造器、字段、实例方法、对象身份和两个独立实例的完整构建。
 
 ## 当前范围
 
@@ -71,7 +72,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - 明确 MPL 与 mlog 的映射边界；
 - 规划 Java 编译器的前端、IR 与代码生成阶段。
 
-动态长度/泛型可变容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。工作区包解析、严格硬件注入、组合屏幕尺寸匹配与绘制分发已实现；registry、String 动态序列和 class/new 仍在后续阶段。
+动态长度/泛型可变容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。工作区包解析、严格硬件注入、组合屏幕尺寸匹配、绘制分发与顶层静态 class/new 已实现；registry、String 动态序列和循环/函数内动态对象池仍在后续阶段。
 
 ## 开发约定
 
