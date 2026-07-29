@@ -37,6 +37,8 @@ import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
+import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
@@ -298,6 +300,15 @@ public final class MilCodeGenerator {
         if (value instanceof HirCollectionContains contains) {
             return expression(contains.target()) + ".contains(" + expression(contains.candidate()) + ")";
         }
+        if (value instanceof HirUnitQuery query) return unitQuery(query);
+        if (value instanceof HirUnitQuerySize size) {
+            HirUnitQuery query = size.query();
+            StringBuilder result = new StringBuilder("@unit.count(@")
+                .append(identifier(query.mlogType(), "单位内容名"))
+                .append(", ").append(identifier(query.bindingName(), "单位绑定变量"));
+            for (HirExpression filter : query.filters()) result.append(", ").append(expression(filter));
+            return result.append(')').toString();
+        }
         if (value instanceof HirUnary unary) {
             return "(" + unary.operator() + expression(unary.operand()) + ")";
         }
@@ -316,6 +327,18 @@ public final class MilCodeGenerator {
             return result.append(')').toString();
         }
         throw new IllegalArgumentException("MIL 尚不能序列化 HIR 表达式：" + value.getClass().getSimpleName());
+    }
+
+    private String unitQuery(HirUnitQuery query) {
+        StringBuilder result = new StringBuilder("Unit.getAll")
+            .append(identifier(query.unitType(), "单位类型"))
+            .append("()");
+        for (HirExpression filter : query.filters()) {
+            result.append(".where(").append(identifier(query.bindingName(), "单位绑定变量"))
+                .append(" => ").append(expression(filter)).append(')');
+        }
+        if (query.hasManagedLimit()) result.append(".take(").append(query.managedLimit()).append(')');
+        return result.toString();
     }
 
     private String aggregateLiteral(String prefix, String suffix, List<HirExpression> elements) {

@@ -70,4 +70,14 @@ class MilSyntaxParserTest {
         assertTrue(fixed.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MIL3003")));
         assertTrue(variadic.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MIL3003")));
     }
+
+    @Test
+    void acceptsTheProfileControlledUnitCountMacro() {
+        MilParseResult result = parser.parse(
+            "var count: Int = @unit.count(@dagger, unit, @unit.alive(unit));",
+            Path.of("main.mil"), profile, MilSourceKind.USER);
+
+        assertTrue(result.succeeded());
+        assertEquals("@unit.count", result.document().orElseThrow().macroCalls().get(0).name());
+    }
 }

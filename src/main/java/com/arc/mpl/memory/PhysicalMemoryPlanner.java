@@ -29,6 +29,8 @@ import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
+import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
@@ -187,6 +189,8 @@ public final class PhysicalMemoryPlanner {
             collectExpression(function, contains.target(), declarations, required);
             collectExpression(function, contains.candidate(), declarations, required);
         }
+        if (expression instanceof HirUnitQuery query) collectExpressions(function, query.filters(), declarations, required);
+        if (expression instanceof HirUnitQuerySize size) collectExpressions(function, size.query().filters(), declarations, required);
     }
 
     private void collectExpressions(String function, List<HirExpression> expressions,

@@ -6,6 +6,10 @@ import com.arc.mpl.hir.CollectionType;
 import com.arc.mpl.hir.HirDynamicCollectionSet;
 import com.arc.mpl.hir.HirDynamicIndexAccess;
 import com.arc.mpl.hir.HirFor;
+import com.arc.mpl.hir.HirUnitIteration;
+import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQuerySize;
+import com.arc.mpl.hir.UnitSetType;
 import com.arc.mpl.syntax.MplSyntaxParser;
 import org.junit.jupiter.api.Test;
 
@@ -357,5 +361,56 @@ class SemanticAnalyzerTest {
 
         assertTrue(result.program().isEmpty());
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3601".equals(diagnostic.code())));
+    }
+
+    @Test
+    void infersAndReusesLazyTypedUnitSets() {
+        Program program = parser.parse("""
+            val active = Unit.getAllDagger().where(_.alive).where(unit => unit.health > 0.0);
+            val same: Set<Unit<Dagger>> = active.where(_.ammo > 0.0);
+            var count: Int = same.size;
+            for (var unit : same) {
+                unit.move(1.0, 2.0);
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty());
+        HirVariableDeclaration active = assertInstanceOf(HirVariableDeclaration.class,
+            result.program().orElseThrow().statements().get(0));
+        HirVariableDeclaration same = assertInstanceOf(HirVariableDeclaration.class,
+            result.program().orElseThrow().statements().get(1));
+        HirVariableDeclaration count = assertInstanceOf(HirVariableDeclaration.class,
+            result.program().orElseThrow().statements().get(2));
+        assertEquals(new UnitSetType("Dagger"), active.type());
+        assertEquals(active.type(), same.type());
+        assertInstanceOf(HirUnitQuery.class, active.initializer());
+        assertInstanceOf(HirUnitQuerySize.class, count.initializer());
+        HirUnitIteration iteration = assertInstanceOf(HirUnitIteration.class,
+            result.program().orElseThrow().statements().get(3));
+        assertEquals(3, iteration.filters().size());
+    }
+
+    @Test
+    void rejectsMutableOrUnsafelyScannedUnitSets() {
+        Program program = parser.parse("""
+            var mutable = Unit.getAllDagger();
+            val managed = Unit.getAllDagger().take(3);
+            var managedSize: Int = managed.size;
+            fun countUnits(): Int {
+                val local = Unit.getAllDagger();
+                return mutable.size;
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3301")
+            && diagnostic.message().contains("只能使用 val")));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3307")
+            && diagnostic.message().contains("take(n)")));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3508")));
     }
 }

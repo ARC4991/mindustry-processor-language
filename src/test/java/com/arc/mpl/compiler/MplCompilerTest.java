@@ -1106,6 +1106,36 @@ class MplCompilerTest {
     }
 
     @Test
+    void savesReusesAndCountsALazyUnitSet(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val active: Set<Unit<Dagger>> = Unit.getAllDagger().where(_.alive);
+            val healthy = active.where(_.health > 0.0);
+            var count: Int = healthy.size;
+            for (var unit : healthy) {
+                unit.move(4.0, 8.0);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("val active: Set<Unit<Dagger>> = Unit.getAllDagger().where(_ => @unit.alive(_));"));
+        assertTrue(mil.contains("val healthy: Set<Unit<Dagger>> = Unit.getAllDagger()"));
+        assertTrue(mil.contains("var count: Int = @unit.count(@dagger, _, @unit.alive(_),"));
+        assertTrue(mil.contains("@unit.each(@dagger, unit, @unit.alive(unit),"));
+        String mlog = result.mlog().orElseThrow();
+        assertFalse(mlog.contains("set mpl_active"));
+        assertFalse(mlog.contains("set mpl_healthy"));
+        assertTrue(mlog.contains("set __mpl_tmp0 0"));
+        assertTrue(mlog.contains("mpl_unit_count_scan_0:"));
+        assertTrue(mlog.contains("op add __mpl_tmp0 __mpl_tmp0 1"));
+        assertTrue(mlog.contains("set mpl_count __mpl_tmp0"));
+        assertTrue(mlog.contains("ucontrol move 4.0 8.0 0 0 0"));
+    }
+
+    @Test
     void compilesProvenDynamicArraysThroughOnePhysicalMemoryLayout(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

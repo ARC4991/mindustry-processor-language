@@ -37,6 +37,8 @@ import com.arc.mpl.hir.HirText;
 import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
+import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
@@ -155,6 +157,7 @@ public final class MlogCodeGenerator {
 
     private void emitStatement(HirStatement statement) {
         if (statement instanceof HirVariableDeclaration declaration) {
+            if (declaration.initializer() instanceof HirUnitQuery) return;
             if (declaration.initializer() instanceof HirArrayLiteral array) {
                 emitAggregateDeclaration(declaration.name(), array.elements());
                 return;
@@ -669,6 +672,10 @@ public final class MlogCodeGenerator {
         if (expression instanceof HirIndexAccess access) return emitIndexAccess(access);
         if (expression instanceof HirDynamicIndexAccess access) return emitDynamicIndexAccess(access);
         if (expression instanceof HirCollectionContains contains) return emitCollectionContains(contains);
+        if (expression instanceof HirUnitQuerySize size) return emitUnitQuerySize(size.query());
+        if (expression instanceof HirUnitQuery) {
+            throw new IllegalArgumentException("Set<Unit<T>> 描述符只能保存、读取 size 或作为 for 遍历目标");
+        }
         if (expression instanceof HirUnary unary) return emitUnary(unary);
         if (expression instanceof HirBinary binary) return emitBinary(binary);
         if (expression instanceof HirMemberAccess member) return emitMemberAccess(member);
@@ -681,6 +688,27 @@ public final class MlogCodeGenerator {
         for (int index = 0; index < elements.size(); index++) {
             storeAggregateElement(name, index, emitExpression(elements.get(index)));
         }
+    }
+
+    private String emitUnitQuerySize(HirUnitQuery query) {
+        int queryId = unitIterationIndex++;
+        MlogProgramBuilder.Label scan = label("unit_count_scan");
+        MlogProgramBuilder.Label next = label("unit_count_next");
+        MlogProgramBuilder.Label end = label("unit_count_end");
+        String result = temporary();
+        String sentinel = "__mpl_unit_count_sentinel" + queryId;
+
+        output.set(result, "0");
+        output.unitBind("@" + query.mlogType());
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
+        output.set(sentinel, "@unit");
+        emitLabel(scan);
+        emitFilterRejectionJump(query.filters(), next);
+        output.operation(Operation.ADD, result, result, "1");
+        emitLabel(next);
+        emitUnitScanAdvance(sentinel, query.mlogType(), scan, end);
+        emitLabel(end);
+        return result;
     }
 
     private void emitAggregateIteration(HirAggregateIteration iteration) {

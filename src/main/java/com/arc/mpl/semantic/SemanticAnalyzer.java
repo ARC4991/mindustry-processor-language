@@ -71,12 +71,15 @@ import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
+import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.MplType;
 import com.arc.mpl.hir.CollectionType;
 import com.arc.mpl.hir.TupleType;
+import com.arc.mpl.hir.UnitSetType;
 import com.arc.mpl.hir.ValueType;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
@@ -226,8 +229,9 @@ public final class SemanticAnalyzer {
             error("MPL3503", "函数参数不能使用 Void 类型", function.span());
         }
         MplType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.VOID);
-        if (parameters.stream().anyMatch(this::isAggregate) || isAggregate(returnType)) {
-            error("MPL3602", "第一版函数 ABI 尚不支持聚合类型参数或返回值", function.span());
+        if (parameters.stream().anyMatch(type -> isAggregate(type) || type instanceof UnitSetType)
+            || isAggregate(returnType) || returnType instanceof UnitSetType) {
+            error("MPL3602", "第一版函数 ABI 尚不支持聚合或 Set<Unit<T>> 参数及返回值", function.span());
         }
         FunctionSignature signature = new FunctionSignature(function, parameters, returnType);
         if (hardwareLinks.containsKey(function.name()) || functions.putIfAbsent(function.name(), signature) != null) {
@@ -252,7 +256,7 @@ public final class SemanticAnalyzer {
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
                 MplType type = signature.parameterTypes().get(index);
-                declare(parameter.name(), new Symbol(type, false, null, null, false, parameter.span()), parameter.span());
+                declare(parameter.name(), new Symbol(type, false, null, null, null, false, parameter.span()), parameter.span());
                 parameters.add(new HirFunctionParameter(parameter.name(), type));
             }
             List<HirStatement> body = analyzeBlock(function.body());
@@ -421,6 +425,8 @@ public final class SemanticAnalyzer {
     }
 
     private HirStatement analyzeForEach(ForEachStatement loop) {
+        HirUnitQuery savedQuery = resolveSavedUnitQuery(loop.iterable(), loop.name());
+        if (savedQuery != null) return analyzeUnitForEach(loop, savedQuery);
         Optional<UnitQuery> query = parseUnitQuery(loop.iterable());
         if (query.isPresent()) {
             return analyzeUnitForEach(loop, query.orElseThrow());
@@ -431,7 +437,7 @@ public final class SemanticAnalyzer {
     }
 
     private HirStatement analyzeUnitForEach(ForEachStatement loop, UnitQuery query) {
-        if (currentFunction != null) error("MPL3508", "第一版函数不支持 UnitSet 遍历", loop.span());
+        if (currentFunction != null) error("MPL3508", "第一版函数不支持 Set<Unit<T>> 遍历", loop.span());
         if (unitIterationDepth > 0) {
             error("MPL3306", "第一版不支持嵌套 Unit 遍历", loop.span());
         }
@@ -442,7 +448,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, null, false, loop.span()), loop.span());
             List<HirExpression> filters = new ArrayList<>();
             for (Expression filter : query.filters()) {
                 filters.add(analyzeUnitFilter(filter, loop.name()));
@@ -464,6 +470,84 @@ public final class SemanticAnalyzer {
         }
     }
 
+    private HirStatement analyzeUnitForEach(ForEachStatement loop, HirUnitQuery query) {
+        if (currentFunction != null) error("MPL3508", "第一版函数不支持 Set<Unit<T>> 遍历", loop.span());
+        if (unitIterationDepth > 0) error("MPL3306", "第一版不支持嵌套 Unit 遍历", loop.span());
+
+        String previousBinding = activeUnitBinding;
+        activeUnitBinding = loop.name();
+        unitIterationDepth++;
+        loopDepth++;
+        scopes.push(new HashMap<>());
+        try {
+            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, null, false, loop.span()), loop.span());
+            List<HirExpression> filters = query.filters().stream()
+                .map(filter -> renameUnitBinding(filter, query.bindingName(), loop.name())).toList();
+            return new HirUnitIteration(loop.name(), query.unitType(), query.mlogType(), filters,
+                query.managedLimit(), analyzeBlock(loop.body()));
+        } finally {
+            scopes.pop();
+            unitIterationDepth--;
+            loopDepth--;
+            activeUnitBinding = previousBinding;
+        }
+    }
+
+    private HirUnitQuery declaredUnitQuery(Expression expression) {
+        if (!(expression instanceof Identifier identifier)) return null;
+        Symbol symbol = lookup(identifier.name());
+        return symbol == null ? null : symbol.unitQuery();
+    }
+
+    private HirUnitQuery resolveSavedUnitQuery(Expression expression, String bindingName) {
+        List<CallExpression> modifiers = new ArrayList<>();
+        Expression current = expression;
+        while (current instanceof CallExpression call && call.callee() instanceof MemberAccessExpression member
+            && ("where".equals(member.member()) || "take".equals(member.member()))) {
+            modifiers.add(call);
+            current = member.target();
+        }
+        HirUnitQuery base = declaredUnitQuery(current);
+        if (base == null) return null;
+
+        List<HirExpression> filters = new ArrayList<>(base.filters().stream()
+            .map(filter -> renameUnitBinding(filter, base.bindingName(), bindingName)).toList());
+        int managedLimit = base.managedLimit();
+        String previousBinding = activeUnitBinding;
+        activeUnitBinding = bindingName;
+        try {
+            for (int index = modifiers.size() - 1; index >= 0; index--) {
+                CallExpression modifier = modifiers.get(index);
+                MemberAccessExpression member = (MemberAccessExpression) modifier.callee();
+                if ("where".equals(member.member())) {
+                    if (managedLimit != 0) {
+                        error("MPL3307", "Set<Unit<T>> 的 where(...) 必须位于 take(n) 之前", modifier.span());
+                        continue;
+                    }
+                    if (modifier.arguments().size() != 1) {
+                        error("MPL3302", "Set<Unit<T>> 的 where(...) 需要恰好一个过滤 lambda", modifier.span());
+                        continue;
+                    }
+                    filters.add(analyzeUnitFilter(modifier.arguments().get(0), bindingName));
+                    continue;
+                }
+                if (managedLimit != 0) {
+                    error("MPL3307", "一个 Set<Unit<T>> 查询只能调用一次 take(n)", modifier.span());
+                    continue;
+                }
+                if (modifier.arguments().size() != 1 || !(modifier.arguments().get(0) instanceof IntegerLiteral literal)
+                    || literal.value() <= 0 || literal.value() > Integer.MAX_VALUE) {
+                    error("MPL3307", "Set<Unit<T>> 的 take(n) 只接受 1 到 2147483647 的 Int 字面量", modifier.span());
+                    continue;
+                }
+                managedLimit = (int) literal.value();
+            }
+        } finally {
+            activeUnitBinding = previousBinding;
+        }
+        return new HirUnitQuery(bindingName, base.unitType(), base.mlogType(), filters, managedLimit);
+    }
+
     private HirStatement analyzeBuildingForEach(ForEachStatement loop, BuildingQuery query) {
         String previousBinding = activeBuildingBinding;
         String previousType = activeBuildingType;
@@ -472,7 +556,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.BUILDING, false, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(ValueType.BUILDING, false, null, null, null, false, loop.span()), loop.span());
             List<HirHardwareLink> buildings = hardwareLinks.values().stream()
                 .filter(link -> query.typeName().equals(link.mplType()))
                 .map(link -> new HirHardwareLink(link.mplName(), link.gameAlias(), link.mplType())).toList();
@@ -502,7 +586,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(elementType, false, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(elementType, false, null, null, null, false, loop.span()), loop.span());
             return new HirAggregateIteration(loop.name(), source, elementType, size, analyzeBlock(loop.body()));
         } finally {
             scopes.pop();
@@ -553,11 +637,11 @@ public final class SemanticAnalyzer {
             MemberAccessExpression modifierMember = (MemberAccessExpression) modifier.callee();
             if ("where".equals(modifierMember.member())) {
                 if (managedLimit != 0) {
-                    error("MPL3307", "UnitSet.take(n) 必须放在所有 .where(...) 之后", modifier.span());
+                error("MPL3307", "Set<Unit<T>>.take(n) 必须放在所有 .where(...) 之后", modifier.span());
                     return Optional.empty();
                 }
                 if (modifier.arguments().size() != 1) {
-                    error("MPL3302", "UnitSet.where(...) 需要恰好一个过滤 lambda", modifier.span());
+                    error("MPL3302", "Set<Unit<T>>.where(...) 需要恰好一个过滤 lambda", modifier.span());
                     return Optional.empty();
                 }
                 filters.add(modifier.arguments().get(0));
@@ -565,15 +649,15 @@ public final class SemanticAnalyzer {
             }
 
             if (managedLimit != 0) {
-                error("MPL3307", "一个 UnitSet 查询只能调用一次 .take(n)", modifier.span());
+                error("MPL3307", "一个 Set<Unit<T>> 查询只能调用一次 .take(n)", modifier.span());
                 return Optional.empty();
             }
             if (modifier.arguments().size() != 1 || !(modifier.arguments().get(0) instanceof IntegerLiteral literal)) {
-                error("MPL3307", "UnitSet.take(n) 只接受正 Int 字面量", modifier.span());
+                error("MPL3307", "Set<Unit<T>>.take(n) 只接受正 Int 字面量", modifier.span());
                 return Optional.empty();
             }
             if (literal.value() <= 0 || literal.value() > Integer.MAX_VALUE) {
-                error("MPL3307", "UnitSet.take(n) 的 n 必须位于 1 到 2147483647", literal.span());
+                error("MPL3307", "Set<Unit<T>>.take(n) 的 n 必须位于 1 到 2147483647", literal.span());
                 return Optional.empty();
             }
             managedLimit = (int) literal.value();
@@ -636,7 +720,7 @@ public final class SemanticAnalyzer {
         activeBuildingType = buildingType;
         scopes.push(new HashMap<>());
         try {
-            declare(lambda.parameter(), new Symbol(ValueType.BUILDING, false, null, null, false, source.span()), source.span());
+            declare(lambda.parameter(), new Symbol(ValueType.BUILDING, false, null, null, null, false, source.span()), source.span());
             HirExpression result = analyzeExpression(lambda.body());
             if (result.type() != ValueType.BOOL) {
                 error("MPL3201", "Building 查询的 .where(...) 过滤条件必须是 Bool", lambda.body().span());
@@ -705,18 +789,52 @@ public final class SemanticAnalyzer {
         scopes.push(new HashMap<>());
         try {
             // Lambda parameters deliberately shadow the enclosing loop binding.
-            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null, null, false, source.span()));
+            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null, null, null, false, source.span()));
             HirExpression result = analyzeExpression(predicate);
             if (result.type() != ValueType.BOOL) {
-                error("MPL3303", "UnitSet.where(...) 的过滤条件必须是 Bool", predicate.span());
+                error("MPL3303", "Set<Unit<T>>.where(...) 的过滤条件必须是 Bool", predicate.span());
             }
             if (!isPureUnitFilter(result, bindingName)) {
-                error("MPL3303", "UnitSet.where(...) 只能读取当前单位属性与 val 标量", predicate.span());
+                error("MPL3303", "Set<Unit<T>>.where(...) 只能读取当前单位属性与 val 标量", predicate.span());
             }
             return result;
         } finally {
             scopes.pop();
         }
+    }
+
+    private HirUnitQuery analyzeUnitQuery(UnitQuery query, String bindingName) {
+        String previousBinding = activeUnitBinding;
+        activeUnitBinding = bindingName;
+        try {
+            List<HirExpression> filters = query.filters().stream()
+                .map(filter -> analyzeUnitFilter(filter, bindingName)).toList();
+            return new HirUnitQuery(bindingName, query.typeName(), query.type().mlogName(), filters, query.managedLimit());
+        } finally {
+            activeUnitBinding = previousBinding;
+        }
+    }
+
+    private HirExpression renameUnitBinding(HirExpression expression, String sourceName, String targetName) {
+        if (expression instanceof HirVariable variable && variable.type() == ValueType.UNIT
+            && variable.name().equals(sourceName)) {
+            return new HirVariable(targetName, ValueType.UNIT);
+        }
+        if (expression instanceof HirMemberAccess member) {
+            return new HirMemberAccess(renameUnitBinding(member.target(), sourceName, targetName), member.member(), member.type());
+        }
+        if (expression instanceof HirUnary unary) {
+            return new HirUnary(unary.operator(), renameUnitBinding(unary.operand(), sourceName, targetName), unary.type());
+        }
+        if (expression instanceof HirBinary binary) {
+            return new HirBinary(renameUnitBinding(binary.left(), sourceName, targetName), binary.operator(),
+                renameUnitBinding(binary.right(), sourceName, targetName), binary.type());
+        }
+        if (expression instanceof HirIntrinsicCall call) {
+            return new HirIntrinsicCall(call.namespace(), call.name(), call.arguments().stream()
+                .map(argument -> renameUnitBinding(argument, sourceName, targetName)).toList(), call.type());
+        }
+        return expression;
     }
 
     private boolean isPureUnitFilter(HirExpression expression, String bindingName) {
@@ -751,6 +869,9 @@ public final class SemanticAnalyzer {
         HirExpression value = analyzeExpression(expression);
         if (value.type() == ValueType.BUILDING) {
             error("MPL3201", "硬件常量只能读取字段或调用控制方法，不能作为普通表达式", expression.span());
+        }
+        if (value.type() instanceof UnitSetType) {
+            error("MPL3301", "Set<Unit<T>> 查询只能保存为 val、读取 size 或作为 for 遍历目标", expression.span());
         }
         return new HirExpressionStatement(value);
     }
@@ -1007,7 +1128,15 @@ public final class SemanticAnalyzer {
 
     private HirStatement analyzeDeclaration(VariableDeclaration declaration) {
         MplType declaredType = declaration.declaredType().map(value -> parseType(value, declaration.span())).orElse(null);
-        HirExpression initializer = analyzeInitializer(declaration.initializer(), declaredType);
+        HirUnitQuery unitQuery = resolveSavedUnitQuery(declaration.initializer(), "_");
+        if (unitQuery == null) {
+            unitQuery = parseUnitQuery(declaration.initializer())
+                .map(query -> analyzeUnitQuery(query, "_"))
+                .orElse(null);
+        }
+        HirExpression initializer = unitQuery == null
+            ? analyzeInitializer(declaration.initializer(), declaredType)
+            : unitQuery;
         if (initializer.type() == ValueType.BUILDING) {
             error("MPL3201", "硬件常量不能赋给普通变量；请直接读取字段或调用控制方法", declaration.initializer().span());
         }
@@ -1023,10 +1152,19 @@ public final class SemanticAnalyzer {
         if (type == ValueType.STRING && declaration.mutable()) {
             error("MPL3103", "当前阶段 String 仅支持 val 静态值；动态 String runtime 尚未启用", declaration.span());
         }
+        if (type instanceof UnitSetType && declaration.mutable()) {
+            error("MPL3301", "Set<Unit<T>> 是不可变的惰性查询描述符，只能使用 val 声明", declaration.span());
+        }
+        if (type instanceof UnitSetType && currentFunction != null) {
+            error("MPL3508", "第一版函数不能声明 Set<Unit<T>> 查询", declaration.span());
+        }
+        if (type instanceof UnitSetType && unitQuery == null) {
+            error("MPL3301", "Set<Unit<T>> 变量必须由 Unit.getAll类型(...) 查询初始化", declaration.initializer().span());
+        }
         boolean global = currentFunction == null && scopes.size() == 1;
         if (declare(declaration.name(),
-            new Symbol(type, declaration.mutable(), staticStringLength(initializer), staticAggregateSize(initializer), global,
-                declaration.span()),
+            new Symbol(type, declaration.mutable(), staticStringLength(initializer), staticAggregateSize(initializer), unitQuery,
+                global, declaration.span()),
             declaration.span()) && global) {
             // The initializer has already been analyzed, so calls inside it
             // deliberately do not observe this variable as initialized.
@@ -1165,6 +1303,27 @@ public final class SemanticAnalyzer {
                 }
                 return new HirMemberAccess(new HirHardwareLink(hardware.mplName(), hardware.gameAlias(), hardware.mplType()),
                     member.member(), type);
+            }
+        }
+        if ("size".equals(member.member())) {
+            HirUnitQuery query = resolveSavedUnitQuery(member.target(), "_");
+            if (query == null) {
+                query = parseUnitQuery(member.target()).map(value -> analyzeUnitQuery(value, "_")).orElse(null);
+            }
+            if (query != null) {
+                if (currentFunction != null) {
+                    error("MPL3508", "第一版函数不能扫描 Set<Unit<T>>.size", member.span());
+                    return new HirConstant("0", ValueType.ERROR);
+                }
+                if (unitIterationDepth > 0) {
+                    error("MPL3306", "Set<Unit<T>>.size 不能嵌套在 Unit 遍历中", member.span());
+                    return new HirConstant("0", ValueType.ERROR);
+                }
+                if (query.hasManagedLimit()) {
+                    error("MPL3307", "带 take(n) 的 Set<Unit<T>>.size 需要稳定所有权计数 Runtime，当前尚未启用", member.span());
+                    return new HirConstant("0", ValueType.ERROR);
+                }
+                return new HirUnitQuerySize(query);
             }
         }
         HirExpression target = analyzeExpression(member.target());
@@ -1372,6 +1531,13 @@ public final class SemanticAnalyzer {
     }
 
     private MplType parseType(String name, SourceSpan span) {
+        if (name.startsWith("Set<Unit<") && name.endsWith(">>")) {
+            String unitType = name.substring("Set<Unit<".length(), name.length() - 2);
+            if (profile.unitType(unitType).filter(TargetProfile.UnitType::logicControllable).isEmpty()) {
+                return typeError("当前 target 不支持 Unit 类型：" + unitType, span);
+            }
+            return new UnitSetType(unitType);
+        }
         if (name.endsWith("[]")) {
             MplType element = parseType(name.substring(0, name.length() - 2), span);
             return collectionType(CollectionType.Kind.ARRAY, element, span);
@@ -1726,8 +1892,8 @@ public final class SemanticAnalyzer {
         return null;
     }
 
-    private record Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize, boolean global,
-                          SourceSpan declarationSpan) {
+    private record Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
+                          HirUnitQuery unitQuery, boolean global, SourceSpan declarationSpan) {
     }
 
     private record FunctionSignature(FunctionDeclaration declaration, List<MplType> parameterTypes,

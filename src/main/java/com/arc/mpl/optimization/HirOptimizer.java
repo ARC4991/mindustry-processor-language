@@ -35,6 +35,8 @@ import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
+import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.MplType;
@@ -231,7 +233,14 @@ public final class HirOptimizer {
         if (expression instanceof HirCollectionContains contains) {
             return new HirCollectionContains(optimizeExpression(contains.target()), optimizeExpression(contains.candidate()), contains.size());
         }
+        if (expression instanceof HirUnitQuery query) return optimizeUnitQuery(query);
+        if (expression instanceof HirUnitQuerySize size) return new HirUnitQuerySize(optimizeUnitQuery(size.query()));
         return expression;
+    }
+
+    private HirUnitQuery optimizeUnitQuery(HirUnitQuery query) {
+        return new HirUnitQuery(query.bindingName(), query.unitType(), query.mlogType(),
+            optimizeExpressions(query.filters()), query.managedLimit());
     }
 
     private HirExpression optimizeBinary(HirBinary binary) {
