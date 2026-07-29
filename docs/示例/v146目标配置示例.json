@@ -104,6 +104,56 @@
       "lowering": ["ubind", "sensor", "op", "jump"]
     },
     {
+      "name": "@unit.get",
+      "visibility": "public",
+      "body": "none",
+      "parameters": [
+        { "name": "type", "type": "GameUnitType" },
+        { "name": "binding", "type": "UnitBinding" },
+        { "name": "index", "type": "Int" },
+        { "name": "filters", "type": "UnitFilter[]" }
+      ],
+      "effects": ["readsWorld", "bindsUnit", "createsUnitRef"],
+      "maxCost": { "instructions": 24, "virtualSlots": 8, "physicalSlots": 0 },
+      "lowering": ["ubind", "sensor", "op", "jump", "set"]
+    },
+    {
+      "name": "@unit.refRead",
+      "visibility": "public",
+      "body": "none",
+      "parameters": [
+        { "name": "unit", "type": "UnitRef" },
+        { "name": "field", "type": "UnitField" }
+      ],
+      "effects": ["readsWorld", "bindsUnit"],
+      "maxCost": { "instructions": 4, "virtualSlots": 1, "physicalSlots": 0 },
+      "lowering": ["ubind", "jump", "sensor"]
+    },
+    {
+      "name": "@unit.refAlive",
+      "visibility": "public",
+      "body": "none",
+      "parameters": [
+        { "name": "unit", "type": "UnitRef" }
+      ],
+      "effects": ["readsWorld", "bindsUnit"],
+      "maxCost": { "instructions": 5, "virtualSlots": 1, "physicalSlots": 0 },
+      "lowering": ["ubind", "jump", "sensor", "op"]
+    },
+    {
+      "name": "@unit.refMove",
+      "visibility": "public",
+      "body": "none",
+      "parameters": [
+        { "name": "unit", "type": "UnitRef" },
+        { "name": "x", "type": "Float" },
+        { "name": "y", "type": "Float" }
+      ],
+      "effects": ["controlsUnit", "bindsUnit"],
+      "maxCost": { "instructions": 5, "virtualSlots": 1, "physicalSlots": 0 },
+      "lowering": ["ubind", "sensor", "jump", "ucontrol"]
+    },
+    {
       "name": "@io.print",
       "visibility": "public",
       "body": "none",

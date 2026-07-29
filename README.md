@@ -6,7 +6,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 ## 快速试用
 
-当前原型支持初始化项目、基础数值表达式与 Message 输出。需要 JDK 17：
+当前原型支持初始化项目、基础数值/控制流、Message/Display I/O、Unit/Building 遍历，以及普通 `Set<Unit<T>>` 的保存、`size`、`get(index)` 和可空 UnitRef 重绑。需要 JDK 17：
 
 ```bash
 # 默认使用 v146；目录必须不存在或为空。
