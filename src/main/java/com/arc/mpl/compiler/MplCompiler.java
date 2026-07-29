@@ -7,8 +7,12 @@ import com.arc.mpl.codegen.MilCodeGenerator;
 import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.Severity;
 import com.arc.mpl.profile.KnownProfiles;
+import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.memory.PhysicalMemoryPlanner;
 import com.arc.mpl.project.HardwareLoader;
 import com.arc.mpl.project.HardwareContract;
+import com.arc.mpl.project.RuntimePreferences;
+import com.arc.mpl.project.RuntimePreferencesLoader;
 import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.semantic.SemanticAnalyzer;
 import com.arc.mpl.semantic.SemanticResult;
@@ -57,6 +61,14 @@ public final class MplCompiler {
 
         ParseResult parsed = new MplSyntaxParser().parse(source, sourceFile);
         if (!parsed.succeeded()) return new CompilationResult(profile, parsed.diagnostics(), Optional.empty());
+        RuntimePreferences runtimePreferences;
+        try {
+            runtimePreferences = new RuntimePreferencesLoader().load(request.projectDirectory());
+        } catch (IOException | IllegalArgumentException exception) {
+            return new CompilationResult(profile, List.of(Diagnostic.localized(
+                Severity.ERROR, "MPL1104", "compiler.runtime.read", List.of(exceptionMessage(exception)),
+                Optional.of(request.projectDirectory().resolve("mpl.json")), Optional.empty())), Optional.empty());
+        }
         SemanticResult analyzed;
         try {
             HardwareContract hardware = new HardwareLoader().load(request.projectDirectory());
@@ -72,18 +84,26 @@ public final class MplCompiler {
         HirOptimizationResult optimized = new HirOptimizer().optimize(analyzed.program().orElseThrow());
         HirProgram program = new DisplayRuntimeLowerer(profile.orElseThrow().maxGraphicsBufferCommands())
             .lower(optimized.program());
+        PhysicalMemoryLayout memoryLayout;
+        try {
+            memoryLayout = new PhysicalMemoryPlanner().plan(program, profile.orElseThrow(), runtimePreferences);
+        } catch (IllegalArgumentException exception) {
+            return new CompilationResult(profile, List.of(new Diagnostic(
+                Severity.ERROR, "MPL1301", exception.getMessage(), Optional.of(sourceFile), Optional.empty())),
+                Optional.empty(), Optional.empty(), optimized.report(), PhysicalMemoryLayout.empty());
+        }
         MlogLabelStyle labelStyle = request.debug() ? MlogLabelStyle.DEBUG : MlogLabelStyle.RELEASE;
         String mil = new MilCodeGenerator().generate(program);
-        String mlog = new MlogCodeGenerator(labelStyle).generate(program);
+        String mlog = new MlogCodeGenerator(labelStyle, memoryLayout).generate(program);
         List<Diagnostic> diagnostics = new ArrayList<>(analyzed.diagnostics());
         diagnostics.addAll(new MlogOutputValidator().validate(mlog, profile.orElseThrow()));
         boolean hasError = diagnostics.stream().anyMatch(diagnostic -> diagnostic.severity() == Severity.ERROR);
         return new CompilationResult(profile, diagnostics,
             hasError ? Optional.empty() : Optional.of(mlog),
-            hasError ? Optional.empty() : Optional.of(mil), optimized.report());
+            hasError ? Optional.empty() : Optional.of(mil), optimized.report(), memoryLayout);
     }
 
-    private String exceptionMessage(IOException exception) {
+    private String exceptionMessage(Exception exception) {
         String message = exception.getMessage();
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }

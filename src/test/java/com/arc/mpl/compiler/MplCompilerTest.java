@@ -1028,6 +1028,52 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesProvenDynamicArraysThroughOnePhysicalMemoryLayout(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var values: Int[] = [1, 2, 3];
+            for (var i: Int = 0; i < values.size; i += 1) {
+                values.set(i, values[i] + 1);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals(3, result.physicalMemoryLayout().physicalSlots());
+        assertEquals(1, result.physicalMemoryLayout().memoryBanks());
+        assertTrue(result.mil().orElseThrow().contains("values.set(i, (values[i] + 1));"));
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("write 1 __mpl_mem0 0"));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("read __mpl_tmp\\d+ __mpl_mem0 mpl_i")));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("write __mpl_tmp\\d+ __mpl_mem0 __mpl_tmp\\d+")));
+        assertFalse(mlog.contains("mpl_values_e"));
+    }
+
+    @Test
+    void reportsUnsatisfiedRuntimeMemoryLimitsAsACompilationDiagnostic(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        String elements = java.util.stream.IntStream.range(0, 65).mapToObj(Integer::toString)
+            .collect(java.util.stream.Collectors.joining(", "));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var values: Int[] = [%s];
+            for (var i: Int = 0; i < values.size; i += 1) {
+                values.set(i, values[i]);
+            }
+            """.formatted(elements));
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), """
+            { "runtime": { "memory": { "cell": 1 } } }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertEquals("MPL1301", result.diagnostics().get(0).code());
+        assertTrue(result.diagnostics().get(0).message().contains("65 个物理槽"));
+        assertTrue(result.mlog().isEmpty());
+    }
+
+    @Test
     void rejectsGeneratedMlogThatExceedsTheTargetInstructionLimit(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         StringBuilder source = new StringBuilder();

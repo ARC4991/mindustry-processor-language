@@ -88,7 +88,7 @@ public final class MplCli {
                 Path outputDirectory = Path.of(build.outputDirectory());
                 HardwareContract hardware = new HardwareLoader().load(Path.of(build.projectDirectory()));
                 RuntimePlan plan = new RuntimePlanner().plan(result.mlog().orElseThrow(), result.profile().orElseThrow(),
-                    new RuntimePreferencesLoader().load(Path.of(build.projectDirectory())));
+                    new RuntimePreferencesLoader().load(Path.of(build.projectDirectory())), result.physicalMemoryLayout());
                 new BuildArtifactWriter().write(outputDirectory, result.mlog().orElseThrow(), result.mil().orElseThrow(),
                     result.profile().orElseThrow(), hardware, plan, ProjectMetadata.load(Path.of(build.projectDirectory())),
                     result.optimizationReport());

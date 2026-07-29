@@ -1,5 +1,6 @@
 package com.arc.mpl.project;
 
+import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.profile.TargetProfile;
 import lombok.extern.slf4j.Slf4j;
 
@@ -15,11 +16,12 @@ public final class RuntimePlanner {
     }
 
     public RuntimePlan plan(String mlog, TargetProfile profile, RuntimePreferences preferences) {
-        return plan(mlog, profile, preferences, 0);
+        return plan(mlog, profile, preferences, PhysicalMemoryLayout.empty());
     }
 
-    /** Future lowerings pass their proven physical-slot need here; source code never does. */
-    public RuntimePlan plan(String mlog, TargetProfile profile, RuntimePreferences preferences, int physicalSlots) {
+    /** Uses the exact compiler-owned Memory layout already referenced by generated mlog aliases. */
+    public RuntimePlan plan(String mlog, TargetProfile profile, RuntimePreferences preferences,
+                            PhysicalMemoryLayout memoryLayout) {
         int instructions = 0;
         int labels = 0;
         int maximumTokens = 0;
@@ -40,25 +42,22 @@ public final class RuntimePlanner {
                 + " 的 " + profile.maxInstructions() + " 条上限");
         }
         TargetProfile.ProcessorKind processor = chooseProcessor(instructions, profile, preferences);
-        MemoryLayout memory = memoryLayout(physicalSlots, profile, preferences);
-        RuntimePlan plan = new RuntimePlan(processor, instructions, labels, maximumTokens, variables.size(), physicalSlots,
-            memory.cells(), memory.banks());
+        validateMemoryLimits(memoryLayout, preferences);
+        RuntimePlan plan = new RuntimePlan(processor, instructions, labels, maximumTokens, variables.size(), memoryLayout);
         log.info("自动运行时规划：processor={}, instructions={}, labels={}, virtualSlots={}, physicalSlots={}",
             plan.processorId(), plan.instructions(), plan.labels(), plan.virtualSlots(), plan.physicalSlots());
         return plan;
     }
 
-    private MemoryLayout memoryLayout(int slots, TargetProfile profile, RuntimePreferences preferences) {
-        if (slots == 0) return new MemoryLayout(0, 0);
-        int remaining = slots, cells = 0, banks = 0;
-        for (RuntimePreferences.MemoryKind kind : java.util.List.of(RuntimePreferences.MemoryKind.BANK, RuntimePreferences.MemoryKind.CELL)) {
-            if (preferences.memory().getOrDefault(kind, 0) == 0) continue;
-            int capacity = kind == RuntimePreferences.MemoryKind.CELL ? profile.memoryCellCapacity() : profile.memoryBankCapacity();
-            int count = (remaining + capacity - 1) / capacity;
-            if (count > preferences.memory().getOrDefault(kind, 0)) continue;
-            return kind == RuntimePreferences.MemoryKind.CELL ? new MemoryLayout(count, 0) : new MemoryLayout(0, count);
+    private void validateMemoryLimits(PhysicalMemoryLayout layout, RuntimePreferences preferences) {
+        for (RuntimePreferences.MemoryKind kind : RuntimePreferences.MemoryKind.values()) {
+            long actual = layout.segments().stream().filter(segment -> segment.kind() == kind).count();
+            int allowed = preferences.memory().getOrDefault(kind, 0);
+            if (actual > allowed) {
+                throw new IllegalArgumentException("物理 Memory 布局包含 " + actual + " 个 " + kind
+                    + "，超过 runtime 允许的 " + allowed + " 个");
+            }
         }
-        throw new IllegalArgumentException("运行时 Memory 约束无法满足 " + slots + " 个物理槽需求");
     }
 
     private TargetProfile.ProcessorKind chooseProcessor(int instructions, TargetProfile profile, RuntimePreferences preferences) {
@@ -71,6 +70,4 @@ public final class RuntimePlanner {
         // throughput, while maxInstructions is the parser's program-size limit.
         return candidates.stream().min(java.util.Comparator.comparingInt(profile::instructionsPerTick)).orElseThrow();
     }
-
-    private record MemoryLayout(int cells, int banks) { }
 }

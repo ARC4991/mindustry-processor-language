@@ -3,6 +3,7 @@ package com.arc.mpl.compiler;
 import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.Severity;
 import com.arc.mpl.optimization.OptimizationReport;
+import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.profile.TargetProfile;
 
 import java.util.List;
@@ -15,7 +16,8 @@ public record CompilationResult(
     List<Diagnostic> diagnostics,
     Optional<String> mlog,
     Optional<String> mil,
-    OptimizationReport optimizationReport
+    OptimizationReport optimizationReport,
+    PhysicalMemoryLayout physicalMemoryLayout
 ) {
     public CompilationResult {
         profile = profile == null ? Optional.empty() : profile;
@@ -23,6 +25,17 @@ public record CompilationResult(
         mlog = mlog == null ? Optional.empty() : mlog;
         mil = mil == null ? Optional.empty() : mil;
         optimizationReport = optimizationReport == null ? OptimizationReport.NONE : optimizationReport;
+        physicalMemoryLayout = physicalMemoryLayout == null ? PhysicalMemoryLayout.empty() : physicalMemoryLayout;
+    }
+
+    public CompilationResult(
+        Optional<TargetProfile> profile,
+        List<Diagnostic> diagnostics,
+        Optional<String> mlog,
+        Optional<String> mil,
+        OptimizationReport optimizationReport
+    ) {
+        this(profile, diagnostics, mlog, mil, optimizationReport, PhysicalMemoryLayout.empty());
     }
 
     /**
@@ -36,7 +49,7 @@ public record CompilationResult(
         Optional<String> mlog,
         Optional<String> mil
     ) {
-        this(profile, diagnostics, mlog, mil, OptimizationReport.NONE);
+        this(profile, diagnostics, mlog, mil, OptimizationReport.NONE, PhysicalMemoryLayout.empty());
     }
 
     /** Compatibility constructor for callers that only receive a final mlog artifact. */
@@ -45,7 +58,7 @@ public record CompilationResult(
         List<Diagnostic> diagnostics,
         Optional<String> mlog
     ) {
-        this(profile, diagnostics, mlog, Optional.empty(), OptimizationReport.NONE);
+        this(profile, diagnostics, mlog, Optional.empty(), OptimizationReport.NONE, PhysicalMemoryLayout.empty());
     }
 
     public boolean succeeded() {
