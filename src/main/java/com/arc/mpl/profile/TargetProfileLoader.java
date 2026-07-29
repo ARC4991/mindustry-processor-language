@@ -163,7 +163,8 @@ final class TargetProfileLoader {
                 Map<String, Object> member = object(action, "contents.buildings[].actions[]");
                 String name = requiredText(member, "name");
                 List<ValueType> parameters = parameterTypes(member, "Building 动作 " + name);
-                if (actions.put(name, new TargetProfile.BuildingAction(name, parameters)) != null) {
+                String target = requiredText(member, "target");
+                if (actions.put(name, new TargetProfile.BuildingAction(name, parameters, target)) != null) {
                     throw new IllegalArgumentException("目标配置重复的 Building 动作：" + mplType + "." + name);
                 }
             }

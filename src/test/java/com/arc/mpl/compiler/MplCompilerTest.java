@@ -62,6 +62,53 @@ class MplCompilerTest {
     }
 
     @Test
+    void readsAndControlsOnlyTypedDeclaredHardware(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
+            const LaunchSwitch: Switch = link("switch1");
+            const Gun: Duo = link("duo1");
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val enabled: Bool = LaunchSwitch.enabled;
+            LaunchSwitch.setEnabled(!enabled);
+            Gun.shoot(12.0, 24.0, enabled);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            sensor __mpl_tmp0 switch1 @enabled
+            set mpl_enabled __mpl_tmp0
+            op equal __mpl_tmp1 0 mpl_enabled
+            control switch1 enabled __mpl_tmp1 0 0 0 0
+            control duo1 shoot 12.0 24.0 mpl_enabled 0 0
+            stop
+            """, result.mlog().orElseThrow());
+        assertEquals("""
+            // 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。
+            // 普通结构保留为 MIL；@unit.* 与 @io.* 是由 target profile 展开的受限宏。
+            val enabled: Bool = @building.read(@switch1, enabled);
+            @building.control(@switch1, enabled, (!enabled));
+            @building.control(@duo1, shoot, 12.0, 24.0, enabled);
+            """, result.mil().orElseThrow());
+    }
+
+    @Test
+    void rejectsUndeclaredOrUnsupportedHardwareMembers(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const LaunchSwitch: Switch = link(\"switch1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), "LaunchSwitch.shoot(1.0, 2.0, true);");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3201")
+            && diagnostic.message().contains("不支持控制方法")));
+    }
+
+    @Test
     void rejectsHardwareLinkTypesOutsideTheSelectedProfile(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),

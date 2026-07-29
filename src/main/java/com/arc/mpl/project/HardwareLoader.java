@@ -40,6 +40,12 @@ public final class HardwareLoader {
                 String type = constant.type.getText();
                 if (constant.alias != null) {
                     String alias = unescape(constant.alias.getText());
+                    if (!alias.matches("[_A-Za-z][_A-Za-z0-9]*")) {
+                        throw new IOException("硬件链接名不是有效的游戏链接变量：" + alias);
+                    }
+                    if (links.stream().anyMatch(link -> link.mplName().equals(name))) {
+                        throw new IOException("重复的硬件常量：" + name);
+                    }
                     links.add(new HardwareContract.LinkDeclaration(name, type, alias));
                     if ("Message".equals(type)) messages.put(name, alias);
                 }

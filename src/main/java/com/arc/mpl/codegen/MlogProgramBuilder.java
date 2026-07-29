@@ -64,6 +64,14 @@ final class MlogProgramBuilder {
         instructions.add(new UnitControlInstruction(command, first, second, third, fourth, fifth));
     }
 
+    /** Emits the fixed-width target control instruction for a statically declared building link. */
+    void buildingControl(String target, String action, List<String> arguments) {
+        if (arguments.size() > 5) throw new IllegalArgumentException("control 指令至多接受五个参数");
+        List<String> operands = new ArrayList<>(arguments);
+        while (operands.size() < 5) operands.add("0");
+        instructions.add(new BuildingControlInstruction(target, action, List.copyOf(operands)));
+    }
+
     void stop() {
         instructions.add(StopInstruction.INSTANCE);
     }
@@ -133,7 +141,7 @@ final class MlogProgramBuilder {
 
     private sealed interface Instruction permits LabelInstruction, SetInstruction, PrintInstruction,
         PrintFlushInstruction, JumpInstruction, UnitBindInstruction, SensorInstruction,
-        OperationInstruction, UnitControlInstruction, StopInstruction {
+        OperationInstruction, UnitControlInstruction, BuildingControlInstruction, StopInstruction {
         String render();
     }
 
@@ -192,6 +200,12 @@ final class MlogProgramBuilder {
         @Override public String render() {
             return "ucontrol " + command.mnemonic + " " + first + " " + second + " " + third
                 + " " + fourth + " " + fifth;
+        }
+    }
+
+    private record BuildingControlInstruction(String target, String action, List<String> arguments) implements Instruction {
+        @Override public String render() {
+            return "control " + target + " " + action + " " + String.join(" ", arguments);
         }
     }
 

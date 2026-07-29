@@ -74,9 +74,12 @@ public interface TargetProfile {
         }
     }
 
-    record BuildingAction(String name, List<ValueType> parameterTypes) {
+    record BuildingAction(String name, List<ValueType> parameterTypes, String target) {
         public BuildingAction {
             parameterTypes = List.copyOf(parameterTypes);
+            if (!target.matches("control [a-zA-Z][a-zA-Z0-9]*")) {
+                throw new IllegalArgumentException("Building 动作必须映射到受限 control 指令：" + target);
+            }
         }
     }
 

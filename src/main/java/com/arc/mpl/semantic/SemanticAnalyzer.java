@@ -26,9 +26,11 @@ import com.arc.mpl.diagnostic.Severity;
 import com.arc.mpl.hir.HirAssignment;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
+import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
+import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirPrintStatement;
@@ -44,6 +46,7 @@ import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.ValueType;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
+import com.arc.mpl.project.HardwareContract;
 
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -61,6 +64,7 @@ public final class SemanticAnalyzer {
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private Path file;
     private Map<String, String> messages = Map.of();
+    private Map<String, HardwareContract.LinkDeclaration> hardwareLinks = Map.of();
     private int unitIterationDepth;
     private String activeUnitBinding;
 
@@ -78,11 +82,25 @@ public final class SemanticAnalyzer {
     }
 
     public SemanticResult analyze(Program program, Path sourceFile, Map<String, String> messages) {
+        List<HardwareContract.LinkDeclaration> links = messages.entrySet().stream()
+            .map(entry -> new HardwareContract.LinkDeclaration(entry.getKey(), "Message", entry.getValue())).toList();
+        return analyze(program, sourceFile, new HardwareContract(links, messages));
+    }
+
+    /** Analyzes source with the full typed hardware contract, never treating links as numeric variables. */
+    public SemanticResult analyze(Program program, Path sourceFile, HardwareContract hardware) {
         scopes.clear();
         scopes.push(new HashMap<>());
         diagnostics.clear();
         file = sourceFile;
-        this.messages = Map.copyOf(messages);
+        this.messages = Map.copyOf(hardware.messages());
+        Map<String, HardwareContract.LinkDeclaration> links = new HashMap<>();
+        for (HardwareContract.LinkDeclaration link : hardware.links()) {
+            if (links.put(link.mplName(), link) != null) {
+                throw new IllegalArgumentException("重复的硬件常量：" + link.mplName());
+            }
+        }
+        hardwareLinks = Map.copyOf(links);
         unitIterationDepth = 0;
         activeUnitBinding = null;
 
@@ -291,7 +309,11 @@ public final class SemanticAnalyzer {
         if (expression instanceof MethodCallExpression call) {
             return analyzeLegacyMethodCall(call);
         }
-        return new HirExpressionStatement(analyzeExpression(expression));
+        HirExpression value = analyzeExpression(expression);
+        if (value.type() == ValueType.BUILDING) {
+            error("MPL3201", "硬件常量只能读取字段或调用控制方法，不能作为普通表达式", expression.span());
+        }
+        return new HirExpressionStatement(value);
     }
 
     private HirStatement analyzeStatementCall(CallExpression call) {
@@ -299,9 +321,12 @@ public final class SemanticAnalyzer {
             || !(member.target() instanceof Identifier target)) {
             return null;
         }
-        String linkName = messages.get(target.name());
-        if (linkName != null && "print".equals(member.member())) {
-            return analyzePrintCall(linkName, call.arguments());
+        HardwareContract.LinkDeclaration hardware = hardwareLinks.get(target.name());
+        if (hardware != null) {
+            if ("Message".equals(hardware.mplType()) && "print".equals(member.member())) {
+                return analyzePrintCall(hardware.gameAlias(), call.arguments());
+            }
+            return analyzeBuildingControl(hardware, member.member(), call.arguments(), call.span());
         }
 
         Symbol targetSymbol = lookup(target.name());
@@ -309,6 +334,31 @@ public final class SemanticAnalyzer {
             return analyzeUnitControl(target.name(), member.member(), call.arguments(), call.span());
         }
         return null;
+    }
+
+    private HirStatement analyzeBuildingControl(HardwareContract.LinkDeclaration link, String method,
+                                                List<Expression> sourceArguments, SourceSpan span) {
+        TargetProfile.BuildingType building = profile.buildingType(link.mplType()).orElse(null);
+        TargetProfile.BuildingAction action = building == null ? null : building.actions().get(method);
+        if (action == null) {
+            error("MPL3201", "硬件 " + link.mplName() + "（" + link.mplType() + "）不支持控制方法：" + method, span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (sourceArguments.size() != action.parameterTypes().size()) {
+            error("MPL3201", "硬件控制 " + method + " 的参数数量不匹配", span);
+        }
+        List<HirExpression> arguments = new ArrayList<>();
+        for (int index = 0; index < sourceArguments.size(); index++) {
+            Expression sourceArgument = sourceArguments.get(index);
+            HirExpression argument = analyzeExpression(sourceArgument);
+            if (index < action.parameterTypes().size()
+                && !action.parameterTypes().get(index).canAssignFrom(argument.type())) {
+                error("MPL3201", "硬件控制 " + method + " 的参数类型不匹配", sourceArgument.span());
+            }
+            arguments.add(argument);
+        }
+        String control = action.target().substring("control ".length());
+        return new HirBuildingControl(new HirHardwareLink(link.mplName(), link.gameAlias(), link.mplType()), control, arguments);
     }
 
     private HirStatement analyzeLegacyMethodCall(MethodCallExpression call) {
@@ -324,7 +374,8 @@ public final class SemanticAnalyzer {
         List<HirExpression> arguments = new ArrayList<>();
         for (Expression argument : sourceArguments) {
             HirExpression value = analyzeExpression(argument);
-            if (value.type() == ValueType.ERROR && !(value instanceof HirText)) {
+            if (value.type() != ValueType.INT && value.type() != ValueType.FLOAT && value.type() != ValueType.BOOL
+                && !(value instanceof HirText)) {
                 error("MPL3202", "print 参数必须是数值、Bool 或字符串字面量", argument.span());
             }
             arguments.add(value);
@@ -356,6 +407,9 @@ public final class SemanticAnalyzer {
 
     private HirStatement analyzeDeclaration(VariableDeclaration declaration) {
         HirExpression initializer = analyzeExpression(declaration.initializer());
+        if (initializer.type() == ValueType.BUILDING) {
+            error("MPL3201", "硬件常量不能赋给普通变量；请直接读取字段或调用控制方法", declaration.initializer().span());
+        }
         ValueType type = declaration.declaredType().map(value -> parseType(value, declaration.span())).orElse(initializer.type());
         if (!type.canAssignFrom(initializer.type())) {
             error("MPL3103", "不能将 " + display(initializer.type()) + " 赋给 " + display(type), declaration.initializer().span());
@@ -376,6 +430,8 @@ public final class SemanticAnalyzer {
             return new HirConstant(bool.value() ? "1" : "0", ValueType.BOOL);
         }
         if (expression instanceof Identifier identifier) {
+            HardwareContract.LinkDeclaration hardware = hardwareLinks.get(identifier.name());
+            if (hardware != null) return new HirHardwareLink(hardware.mplName(), hardware.gameAlias(), hardware.mplType());
             Symbol symbol = lookup(identifier.name());
             if (symbol == null) {
                 error("MPL3102", "未声明的变量：" + identifier.name(), identifier.span());
@@ -442,6 +498,20 @@ public final class SemanticAnalyzer {
         if (member.target() instanceof Identifier identifier && "Clock".equals(identifier.name())) {
             return clockIntrinsic(member.member(), List.of(), member.span());
         }
+        if (member.target() instanceof Identifier identifier) {
+            HardwareContract.LinkDeclaration hardware = hardwareLinks.get(identifier.name());
+            if (hardware != null) {
+                TargetProfile.BuildingType building = profile.buildingType(hardware.mplType()).orElse(null);
+                ValueType type = building == null ? null : building.propertyTypes().get(member.member());
+                if (type == null) {
+                    error("MPL3201", "硬件 " + hardware.mplName() + "（" + hardware.mplType()
+                        + "）不支持只读属性：" + member.member(), member.span());
+                    return new HirConstant("0", ValueType.ERROR);
+                }
+                return new HirMemberAccess(new HirHardwareLink(hardware.mplName(), hardware.gameAlias(), hardware.mplType()),
+                    member.member(), type);
+            }
+        }
         HirExpression target = analyzeExpression(member.target());
         if (target.type() == ValueType.UNIT) {
             if ("flag".equals(member.member())) {
@@ -470,6 +540,12 @@ public final class SemanticAnalyzer {
             && "Unit".equals(namespace.name())
             && member.member().startsWith("getAll")) {
             error("MPL3301", "Unit.getAll类型() 只能用作 for 的遍历目标", call.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        if (call.callee() instanceof MemberAccessExpression member
+            && member.target() instanceof Identifier identifier
+            && hardwareLinks.containsKey(identifier.name())) {
+            error("MPL3201", "硬件控制方法只能作为独立语句调用", call.span());
             return new HirConstant("0", ValueType.ERROR);
         }
         error("MPL3201", "当前阶段不支持该调用表达式", call.span());
@@ -577,7 +653,7 @@ public final class SemanticAnalyzer {
 
     private void declare(String name, Symbol symbol, SourceSpan span) {
         Map<String, Symbol> current = scopes.peek();
-        if (current.containsKey(name) || lookup(name) != null) {
+        if (hardwareLinks.containsKey(name) || current.containsKey(name) || lookup(name) != null) {
             error("MPL3101", "变量已声明：" + name, span);
             return;
         }
@@ -602,6 +678,7 @@ public final class SemanticAnalyzer {
             case FLOAT -> "Float";
             case BOOL -> "Bool";
             case UNIT -> "Unit";
+            case BUILDING -> "Building";
             case ERROR -> "错误类型";
         };
     }

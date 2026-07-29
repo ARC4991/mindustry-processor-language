@@ -1,6 +1,6 @@
 package com.arc.mpl.hir;
 
-public sealed interface HirExpression permits HirConstant, HirText, HirVariable, HirUnary, HirBinary, HirAssignment,
-    HirMemberAccess, HirIntrinsicCall {
+public sealed interface HirExpression permits HirConstant, HirText, HirVariable, HirHardwareLink, HirUnary, HirBinary,
+    HirAssignment, HirMemberAccess, HirIntrinsicCall {
     ValueType type();
 }

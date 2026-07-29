@@ -59,8 +59,7 @@ public final class MplCompiler {
             HardwareContract hardware = new HardwareLoader().load(request.projectDirectory());
             List<Diagnostic> hardwareDiagnostics = validateHardware(hardware, profile.orElseThrow(), sourceFile);
             if (!hardwareDiagnostics.isEmpty()) return new CompilationResult(profile, hardwareDiagnostics, Optional.empty());
-            analyzed = new SemanticAnalyzer(profile.orElseThrow()).analyze(parsed.program().orElseThrow(), sourceFile,
-                hardware.messages());
+            analyzed = new SemanticAnalyzer(profile.orElseThrow()).analyze(parsed.program().orElseThrow(), sourceFile, hardware);
         } catch (IOException exception) {
             return new CompilationResult(profile, List.of(Diagnostic.localized(
                 Severity.ERROR, "MPL1103", "compiler.hardware.read", List.of(exceptionMessage(exception)),

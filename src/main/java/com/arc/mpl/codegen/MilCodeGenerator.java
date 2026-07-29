@@ -3,6 +3,8 @@ package com.arc.mpl.codegen;
 import com.arc.mpl.hir.HirAssignment;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
+import com.arc.mpl.hir.HirBuildingControl;
+import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
@@ -84,6 +86,10 @@ public final class MilCodeGenerator {
             emitUnitControl(writer, control);
             return;
         }
+        if (statement instanceof HirBuildingControl control) {
+            emitBuildingControl(writer, control);
+            return;
+        }
         throw new IllegalArgumentException("MIL 尚不能序列化 HIR 语句：" + statement.getClass().getSimpleName());
     }
 
@@ -143,6 +149,15 @@ public final class MilCodeGenerator {
         writer.line(");");
     }
 
+    /** Keeps building control target-aware in MIL instead of leaking a raw mlog instruction. */
+    private void emitBuildingControl(Writer writer, HirBuildingControl control) {
+        writer.append("@building.control(")
+            .append(targetLink(control.target().gameAlias()))
+            .append(", ").append(identifier(control.action(), "建筑控制动作"));
+        for (HirExpression argument : control.arguments()) writer.append(", ").append(expression(argument));
+        writer.line(");");
+    }
+
     private String expression(HirExpression value) {
         if (value instanceof HirConstant constant) return constant(constant);
         if (value instanceof HirText text) return quote(text.value());
@@ -168,6 +183,10 @@ public final class MilCodeGenerator {
      * of both MPL and hand-authored MIL.
      */
     private String unitMember(HirMemberAccess member) {
+        if (member.target() instanceof HirHardwareLink hardware) {
+            return "@building.read(" + targetLink(hardware.gameAlias()) + ", "
+                + identifier(member.member(), "建筑属性") + ")";
+        }
         if (member.target().type() != ValueType.UNIT) {
             return expression(member.target()) + "." + identifier(member.member(), "成员名");
         }
@@ -219,6 +238,7 @@ public final class MilCodeGenerator {
             case FLOAT -> "Float";
             case BOOL -> "Bool";
             case UNIT -> "Unit";
+            case BUILDING -> "Building";
             case ERROR -> throw new IllegalArgumentException("不能将含错误类型的 HIR 序列化为 MIL");
         };
     }

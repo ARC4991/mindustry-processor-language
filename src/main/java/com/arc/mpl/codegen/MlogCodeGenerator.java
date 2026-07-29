@@ -6,6 +6,8 @@ import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirBlock;
+import com.arc.mpl.hir.HirBuildingControl;
+import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirProgram;
@@ -78,6 +80,10 @@ public final class MlogCodeGenerator {
         }
         if (statement instanceof HirUnitControl control) {
             emitUnitControl(control);
+            return;
+        }
+        if (statement instanceof HirBuildingControl control) {
+            emitBuildingControl(control);
             return;
         }
         emitExpression(((HirExpressionStatement) statement).expression());
@@ -328,6 +334,11 @@ public final class MlogCodeGenerator {
         output.unitControl(UnitControlCommand.MOVE, x, y, "0", "0", "0");
     }
 
+    private void emitBuildingControl(HirBuildingControl control) {
+        List<String> arguments = control.arguments().stream().map(this::emitExpression).toList();
+        output.buildingControl(control.target().gameAlias(), control.action(), arguments);
+    }
+
     private String emitExpression(HirExpression expression) {
         if (expression instanceof HirConstant constant) return constant.mlogLiteral();
         if (expression instanceof HirText text) return quote(text.value());
@@ -340,6 +351,11 @@ public final class MlogCodeGenerator {
     }
 
     private String emitMemberAccess(HirMemberAccess member) {
+        if (member.target() instanceof HirHardwareLink hardware) {
+            String result = temporary();
+            output.sensor(result, hardware.gameAlias(), "@" + member.member());
+            return result;
+        }
         if (!(member.target() instanceof HirVariable variable) || variable.type() != com.arc.mpl.hir.ValueType.UNIT) {
             throw new IllegalArgumentException("unsupported member access target: " + member.target());
         }
