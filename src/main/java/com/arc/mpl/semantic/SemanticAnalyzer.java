@@ -10,6 +10,7 @@ import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.ForEachStatement;
 import com.arc.mpl.ast.Identifier;
+import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
@@ -32,6 +33,7 @@ import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
+import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
@@ -118,6 +120,9 @@ public final class SemanticAnalyzer {
         if (statement instanceof WhileStatement loop) {
             return analyzeWhile(loop);
         }
+        if (statement instanceof IfStatement branch) {
+            return analyzeIf(branch);
+        }
         if (statement instanceof ForEachStatement loop) {
             return analyzeForEach(loop);
         }
@@ -145,6 +150,13 @@ public final class SemanticAnalyzer {
         HirExpression condition = analyzeExpression(loop.condition());
         requireBool(condition.type(), loop.condition().span(), "while 条件");
         return new HirWhile(condition, analyzeBlock(loop.body()));
+    }
+
+    private HirStatement analyzeIf(IfStatement branch) {
+        HirExpression condition = analyzeExpression(branch.condition());
+        requireBool(condition.type(), branch.condition().span(), "if 条件");
+        Optional<List<HirStatement>> alternative = branch.elseBlock().map(this::analyzeBlock);
+        return new HirIf(condition, analyzeBlock(branch.thenBlock()), alternative);
     }
 
     private HirStatement analyzeForEach(ForEachStatement loop) {

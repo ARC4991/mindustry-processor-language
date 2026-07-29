@@ -8,6 +8,7 @@ program: statement* EOF;
 
 statement
     : whileStatement
+    | ifStatement
     | forEachStatement
     | block
     | variableDeclaration SEMICOLON
@@ -17,6 +18,8 @@ statement
 block: LBRACE statement* RBRACE;
 
 whileStatement: WHILE LPAREN condition=expression RPAREN body=block;
+
+ifStatement: IF LPAREN condition=expression RPAREN thenBlock=block (ELSE elseBlock=block)?;
 
 forEachStatement: FOR LPAREN VAR name=IDENTIFIER COLON iterable=expression RPAREN body=block;
 

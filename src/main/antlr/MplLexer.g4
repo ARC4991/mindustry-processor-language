@@ -6,6 +6,8 @@ VAR: 'var';
 VAL: 'val';
 FOR: 'for';
 WHILE: 'while';
+IF: 'if';
+ELSE: 'else';
 TRUE: 'true';
 FALSE: 'false';
 

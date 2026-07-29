@@ -9,6 +9,7 @@ import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
+import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirPrintStatement;
@@ -74,6 +75,10 @@ public final class MlogCodeGenerator {
             emitWhile(loop);
             return;
         }
+        if (statement instanceof HirIf branch) {
+            emitIf(branch);
+            return;
+        }
         if (statement instanceof HirUnitIteration iteration) {
             emitUnitIteration(iteration);
             return;
@@ -97,6 +102,22 @@ public final class MlogCodeGenerator {
         emitJump(end, JumpCondition.EQUAL, condition, "0");
         for (HirStatement statement : loop.body()) emitStatement(statement);
         emitJump(start, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(end);
+    }
+
+    private void emitIf(HirIf branch) {
+        MlogProgramBuilder.Label otherwise = label("if_else");
+        MlogProgramBuilder.Label end = label("if_end");
+        String condition = emitExpression(branch.condition());
+        emitJump(branch.elseBody().isPresent() ? otherwise : end, JumpCondition.EQUAL, condition, "0");
+        for (HirStatement statement : branch.thenBody()) emitStatement(statement);
+        if (branch.elseBody().isEmpty()) {
+            emitLabel(end);
+            return;
+        }
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(otherwise);
+        for (HirStatement statement : branch.elseBody().orElseThrow()) emitStatement(statement);
         emitLabel(end);
     }
 

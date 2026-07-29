@@ -49,6 +49,35 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesStructuredIfElseWithBranchLocalVariables(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var total: Int = 0;
+            if (true) {
+                total = 1;
+            } else {
+                total = 2;
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            set mpl_total 0
+            jump mpl_if_else_0 equal 1 0
+            set mpl_total 1
+            jump mpl_if_end_1 always 0 0
+            mpl_if_else_0:
+            set mpl_total 2
+            mpl_if_end_1:
+            stop
+            """, result.mlog().orElseThrow());
+        assertTrue(result.mil().orElseThrow().contains("if (true) {"));
+        assertTrue(result.mil().orElseThrow().contains("else {"));
+    }
+
+    @Test
     void compilesMessagePrintUsingTheAutomaticFirstMessageLink(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), "const AlertBoard: Message = link(\"message1\");");

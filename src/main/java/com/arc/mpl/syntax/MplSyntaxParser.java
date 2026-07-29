@@ -10,6 +10,7 @@ import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.ForEachStatement;
 import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.Identifier;
+import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
@@ -96,6 +97,9 @@ public final class MplSyntaxParser {
             if (context.whileStatement() != null) {
                 return (Statement) visit(context.whileStatement());
             }
+            if (context.ifStatement() != null) {
+                return (Statement) visit(context.ifStatement());
+            }
             if (context.forEachStatement() != null) {
                 return (Statement) visit(context.forEachStatement());
             }
@@ -123,6 +127,15 @@ public final class MplSyntaxParser {
             return new WhileStatement(
                 (Expression) visit(context.condition),
                 (BlockStatement) visit(context.body),
+                span(context));
+        }
+
+        @Override
+        public IfStatement visitIfStatement(MplParser.IfStatementContext context) {
+            return new IfStatement(
+                (Expression) visit(context.condition),
+                (BlockStatement) visit(context.thenBlock),
+                context.elseBlock == null ? Optional.empty() : Optional.of((BlockStatement) visit(context.elseBlock)),
                 span(context));
         }
 

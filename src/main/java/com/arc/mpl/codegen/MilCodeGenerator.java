@@ -9,6 +9,7 @@ import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirIntrinsicCall;
+import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
@@ -76,6 +77,15 @@ public final class MilCodeGenerator {
         if (statement instanceof HirWhile loop) {
             writer.append("while (").append(expression(loop.condition())).append(") ");
             emitBlock(writer, loop.body());
+            return;
+        }
+        if (statement instanceof HirIf branch) {
+            writer.append("if (").append(expression(branch.condition())).append(") ");
+            emitBlock(writer, branch.thenBody());
+            if (branch.elseBody().isPresent()) {
+                writer.append("else ");
+                emitBlock(writer, branch.elseBody().orElseThrow());
+            }
             return;
         }
         if (statement instanceof HirUnitIteration iteration) {
