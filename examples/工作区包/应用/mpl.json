@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "name": "workspace-package-demo",
+  "version": "0.1.0",
+  "target": {
+    "mindustry": "v146"
+  },
+  "entry": "src/main.mpl",
+  "hardware": "src/hardware.mplh",
+  "dependencies": {
+    "@example/notifier": "workspace:../通知包"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "@example/notifier",
+  "version": "1.0.0",
+  "entry": "src/index.mpl",
+  "hardware": "src/hardware.mplh",
+  "dependencies": {}
+}

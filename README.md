@@ -6,24 +6,29 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 ## 快速试用
 
-当前原型支持初始化项目、基础数值/控制流、项目内 MPL/MIL 混合模块、Message/Display I/O，以及 Unit/Building 对象查询。`Set<Unit<T>>` 与 `LinkedBuildingSet<T>` 均可保存、过滤、计数、索引和遍历；可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
+当前原型支持初始化项目、基础数值/控制流、项目内及锁定工作区包的 MPL/MIL 混合模块、Message/Display I/O，以及 Unit/Building 对象查询。`Set<Unit<T>>` 与 `LinkedBuildingSet<T>` 均可保存、过滤、计数、索引和遍历；可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
 
 ```bash
 # 默认使用 v146；目录必须不存在或为空。
 ./gradlew run --args='init my-mpl-project'
 
-# 同时生成可检查的 output.mil 与可粘贴到处理器中的 output.mlog。
-./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/output.mlog'
+# 依赖非空时先生成确定性的 mpl.lock。
+./gradlew run --args='install my-mpl-project'
+
+# 生成蓝图、Main.mlog、Main.mil 及格式化的构建清单。
+./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/build'
 ```
 
-`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。入口可用 `import { name } from "./module";` 递归链接 `src` 内显式 `export fun` / `export val` 的 MPL 或 MIL 模块；依赖顶层初始化只执行一次，私有符号由链接器隔离。手写 MIL 使用独立 ANTLR 前端，只能调用 target profile 公开宏；它与 MPL 一样经过严格类型、硬件契约、优化、Runtime、内存规划和 mlog 限制校验。外部 registry 包、`mpl.lock` 和 `with` 硬件注入尚未实现。
+`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。入口可用 `import { name } from "./module";` 递归链接 `src` 内显式 `export fun` / `export val` 的 MPL 或 MIL 模块；依赖顶层初始化只执行一次，私有符号由链接器隔离。`workspace:` 依赖由 `mpl install` 递归锁定到格式化的 `mpl.lock`，`check/build` 会验证根清单、包源码、`.mplh` 摘要、单版本约束和 target 能力，绝不自动更新锁文件。包可在自己的 `.mplh` 中用 `require` 声明命名硬件，并由调用方通过 `with` 严格注入。registry 下载和组合 Display 的尺寸约束验证尚未实现。
 
-`build` 的最后一个参数仍是 mlog 输出路径；编译器会在同一目录自动生成同名的 `.mil` 文件。例如 `build/... output.mlog` 会产生 `output.mil` 与 `output.mlog`。`.mil` 是便于检查高级糖降级和运行时展开的源级中间产物：普通变量、表达式及 `if`/`while`/`for` 等仍保持结构化写法，只有需要映射游戏能力的高级糖变为所选 profile 的宏调用。它不是把每条 mlog 指令换一种写法的包装格式；游戏中只粘贴 `.mlog`。
+手写 MIL 使用独立 ANTLR 前端，只能调用 target profile 公开宏；它与 MPL 一样经过严格类型、硬件契约、优化、Runtime、内存规划和 mlog 限制校验。
+
+`build` 的最后一个参数是构建目录。编译器在其中生成最终 `runtime.msch` 蓝图，以及 `Main.mlog`、`Main.mil`、`report.json`、`deployment.json` 和连接说明等可检查的中间产物。`.mil` 保留普通变量、表达式及 `if`/`while`/`for` 等结构化写法，只有需要映射游戏能力的高级糖变为所选 profile 的宏调用；它不是逐条包装 mlog。正常部署时把蓝图导入游戏，`.mlog` 用于排查单个处理器代码。
 
 默认构建在最终 `.mlog` 中使用最短的 `_0`、`_1` … 跳转标签以节省代码空间；排查生成逻辑时可加 `--debug`，让最终 target lowering 使用可读的完整标签名。源级 `.mil` 保留结构化控制流，通常不需要展示这些标签：
 
 ```bash
-./gradlew run --args='build --debug --target=v146 my-mpl-project my-mpl-project/output.mlog'
+./gradlew run --args='build --debug --target=v146 my-mpl-project my-mpl-project/build'
 ```
 
 编译信息默认使用中文；`--lang=zh-CN` 可显式指定该 catalogue，并为后续语言目录保留稳定的命令行接口。错误码不随翻译改变。
@@ -58,6 +63,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - [组合屏幕契约示例](examples/组合屏幕契约)：展示组合 Display 的硬件声明、绘制代码和蓝图构建产物。
 - [Dagger 三单位绕圈示例](examples/单位绕圈)：`Unit.getAllDagger()`、持续循环和单位移动的 v146 游戏内验收输入，以及部署限制说明。
 - [MPL/MIL 混合模块示例](examples/混合模块)：展示相对 import、导出常量、跨语言函数、硬件 alias 与完整蓝图构建产物。
+- [工作区包示例](examples/工作区包)：展示 `mpl install`、确定性锁文件、包 `.mplh require` 与 `with` 硬件注入。
 
 ## 当前范围
 
@@ -65,7 +71,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - 明确 MPL 与 mlog 的映射边界；
 - 规划 Java 编译器的前端、IR 与代码生成阶段。
 
-动态长度/泛型可变容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。包解析、String/对象的资源上界和基础 I/O 语义已有设计约定。
+动态长度/泛型可变容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。工作区包解析与基础硬件注入已实现；registry、组合屏幕尺寸匹配、String 动态序列和 class/new 仍在后续阶段。
 
 ## 开发约定
 

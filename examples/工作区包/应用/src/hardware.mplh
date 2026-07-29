@@ -1,0 +1,1 @@
+const StatusBoard: Message = link("message1");
