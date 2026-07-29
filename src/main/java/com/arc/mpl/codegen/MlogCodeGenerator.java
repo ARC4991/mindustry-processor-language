@@ -692,11 +692,27 @@ public final class MlogCodeGenerator {
     }
 
     private String emitBinary(HirBinary binary) {
+        if ("&&".equals(binary.operator()) || "||".equals(binary.operator())) {
+            return emitShortCircuitBinary(binary);
+        }
         String left = emitExpression(binary.left());
         String right = emitExpression(binary.right());
         String temporary = temporary();
         output.operation(operation(binary.operator()), temporary, left, right);
         return temporary;
+    }
+
+    /** Emits MPL's lazy boolean operators without relying on mlog's eager op instructions. */
+    private String emitShortCircuitBinary(HirBinary binary) {
+        String left = emitExpression(binary.left());
+        String result = temporary();
+        MlogProgramBuilder.Label end = label("short_circuit_end");
+        boolean conjunction = "&&".equals(binary.operator());
+        output.set(result, conjunction ? "0" : "1");
+        emitJump(end, conjunction ? JumpCondition.EQUAL : JumpCondition.NOT_EQUAL, left, "0");
+        output.set(result, emitExpression(binary.right()));
+        emitLabel(end);
+        return result;
     }
 
     private String emitAssignment(HirAssignment assignment) {
@@ -723,8 +739,6 @@ public final class MlogCodeGenerator {
             case "<=" -> Operation.LESS_THAN_EQ;
             case ">" -> Operation.GREATER_THAN;
             case ">=" -> Operation.GREATER_THAN_EQ;
-            case "&&" -> Operation.LAND;
-            case "||" -> Operation.OR;
             default -> throw new IllegalArgumentException("unsupported binary operator " + operator);
         };
     }

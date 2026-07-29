@@ -73,6 +73,27 @@ class MplCompilerTest {
     }
 
     @Test
+    void lowersLogicalOperatorsWithShortCircuitControlFlow(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var enabled: Bool = false;
+            var changed: Bool = false;
+            enabled && (changed = true);
+            enabled || (changed = true);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("jump mpl_short_circuit_end_0 equal mpl_enabled 0"));
+        assertTrue(mlog.contains("jump mpl_short_circuit_end_1 notEqual mpl_enabled 0"));
+        assertFalse(mlog.contains("op land"));
+        assertFalse(mlog.contains("op or"));
+        assertTrue(mlog.indexOf("jump mpl_short_circuit_end_0") < mlog.indexOf("set mpl_changed 1"));
+    }
+
+    @Test
     void compilesStructuredIfElseWithBranchLocalVariables(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
