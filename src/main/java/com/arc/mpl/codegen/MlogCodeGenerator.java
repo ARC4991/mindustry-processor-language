@@ -745,6 +745,9 @@ public final class MlogCodeGenerator {
             output.operation(operation, result, emitExpression(call.arguments().get(0)), "0");
             return result;
         }
+        if ("Int".equals(call.namespace()) && call.arguments().size() == 1) {
+            return emitIntConversion(call.name(), emitExpression(call.arguments().get(0)));
+        }
         throw new IllegalArgumentException("unsupported intrinsic: " + call.namespace() + "." + call.name());
     }
 
@@ -842,6 +845,21 @@ public final class MlogCodeGenerator {
         emitLabel(nonZero);
         output.operation(Operation.MOD, result, left, right);
         emitLabel(end);
+        return result;
+    }
+
+    /** Rounds a finite Float then clamps it to MPL's signed 32-bit Int domain. */
+    private String emitIntConversion(String conversion, String value) {
+        Operation operation = switch (conversion) {
+            case "floor" -> Operation.FLOOR;
+            case "ceil" -> Operation.CEIL;
+            case "round" -> Operation.ROUND;
+            default -> throw new IllegalArgumentException("unsupported Int conversion " + conversion);
+        };
+        String result = temporary();
+        output.operation(operation, result, value, "0");
+        output.operation(Operation.MIN, result, result, "2147483647");
+        output.operation(Operation.MAX, result, result, "-2147483648");
         return result;
     }
 

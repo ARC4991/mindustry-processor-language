@@ -118,7 +118,10 @@ final class MlogProgramBuilder {
         LAND("land"),
         OR("or"),
         SIN("sin"),
-        COS("cos");
+        COS("cos"),
+        FLOOR("floor"),
+        CEIL("ceil"),
+        ROUND("round");
 
         private final String mnemonic;
 

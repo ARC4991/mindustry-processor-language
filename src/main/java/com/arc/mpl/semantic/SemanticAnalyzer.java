@@ -1178,6 +1178,7 @@ public final class SemanticAnalyzer {
             && member.target() instanceof Identifier namespace) {
             if ("Math".equals(namespace.name())) return mathIntrinsic(member.member(), call.arguments(), call.span());
             if ("Clock".equals(namespace.name())) return clockIntrinsic(member.member(), call.arguments(), call.span());
+            if ("Int".equals(namespace.name())) return intIntrinsic(member.member(), call.arguments(), call.span());
         }
         if (call.callee() instanceof MemberAccessExpression member
             && member.target() instanceof Identifier namespace
@@ -1228,6 +1229,25 @@ public final class SemanticAnalyzer {
             return new HirConstant("0", ValueType.ERROR);
         }
         return new HirIntrinsicCall("Clock", name, List.of(), type);
+    }
+
+    private HirExpression intIntrinsic(String name, List<Expression> sourceArguments, SourceSpan span) {
+        if (!"floor".equals(name) && !"ceil".equals(name) && !"round".equals(name)) {
+            error("MPL3201", "Int 目前支持 floor(x)、ceil(x) 与 round(x)", span);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        if (sourceArguments.size() != 1) {
+            error("MPL3201", "Int." + name + "(...) 需要恰好一个 Float 参数", span);
+        }
+        List<HirExpression> arguments = new ArrayList<>();
+        for (Expression argument : sourceArguments) {
+            HirExpression value = analyzeExpression(argument);
+            if (value.type() != ValueType.FLOAT && value.type() != ValueType.ERROR) {
+                error("MPL3103", "Int." + name + "(...) 只接受 Float 参数", argument.span());
+            }
+            arguments.add(value);
+        }
+        return new HirIntrinsicCall("Int", name, arguments, ValueType.INT);
     }
 
     private ValueType binaryType(String operator, MplType left, MplType right, SourceSpan span) {

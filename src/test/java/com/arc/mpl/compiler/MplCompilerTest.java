@@ -167,6 +167,48 @@ class MplCompilerTest {
     }
 
     @Test
+    void lowersExplicitFloatToIntConversionsWithSaturatingBounds(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val downward: Int = Int.floor(Clock.tick);
+            val upward: Int = Int.ceil(Clock.tick);
+            val nearest: Int = Int.round(Clock.tick);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            op floor __mpl_tmp0 @tick 0
+            op min __mpl_tmp0 __mpl_tmp0 2147483647
+            op max __mpl_tmp0 __mpl_tmp0 -2147483648
+            set mpl_downward __mpl_tmp0
+            op ceil __mpl_tmp1 @tick 0
+            op min __mpl_tmp1 __mpl_tmp1 2147483647
+            op max __mpl_tmp1 __mpl_tmp1 -2147483648
+            set mpl_upward __mpl_tmp1
+            op round __mpl_tmp2 @tick 0
+            op min __mpl_tmp2 __mpl_tmp2 2147483647
+            op max __mpl_tmp2 __mpl_tmp2 -2147483648
+            set mpl_nearest __mpl_tmp2
+            stop
+            """, result.mlog().orElseThrow());
+        assertTrue(result.mil().orElseThrow().contains("val downward: Int = Int.floor(Clock.tick);"));
+    }
+
+    @Test
+    void rejectsNonFloatIntConversionArguments(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), "val index: Int = Int.floor(1);");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3103")
+            && diagnostic.message().contains("只接受 Float 参数")));
+    }
+
+    @Test
     void optimizesConstantExpressionsAndConstantBranchesBeforeMlogLowering(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
