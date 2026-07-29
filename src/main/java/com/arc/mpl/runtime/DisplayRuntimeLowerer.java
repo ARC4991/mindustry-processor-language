@@ -23,6 +23,9 @@ import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirMemberAccess;
+import com.arc.mpl.hir.HirNewObject;
+import com.arc.mpl.hir.HirObjectFieldAssignment;
+import com.arc.mpl.hir.HirObjectFieldRead;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirStatement;
 import com.arc.mpl.hir.HirTupleLiteral;
@@ -88,7 +91,7 @@ public final class DisplayRuntimeLowerer {
             .map(function -> new HirFunction(function.name(), function.parameters(), function.returnType(),
                 lowerStatements(function.body())))
             .toList();
-        return new HirProgram(functions, lowerStatements(program.statements()));
+        return new HirProgram(program.classes(), functions, lowerStatements(program.statements()));
     }
 
     private List<HirStatement> lowerStatements(List<HirStatement> statements) {
@@ -266,6 +269,11 @@ public final class DisplayRuntimeLowerer {
 
     private boolean containsFunctionCall(HirExpression expression) {
         if (expression instanceof HirFunctionCall) return true;
+        if (expression instanceof HirNewObject) return true;
+        if (expression instanceof HirObjectFieldRead read) return containsFunctionCall(read.target());
+        if (expression instanceof HirObjectFieldAssignment assignment) {
+            return containsFunctionCall(assignment.target()) || containsFunctionCall(assignment.value());
+        }
         if (expression instanceof HirAssignment assignment) return containsFunctionCall(assignment.value());
         if (expression instanceof HirBinary binary) {
             return containsFunctionCall(binary.left()) || containsFunctionCall(binary.right());

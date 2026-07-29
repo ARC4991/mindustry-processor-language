@@ -94,7 +94,7 @@ assignmentTarget: object=(IDENTIFIER | THIS) (DOT member=IDENTIFIER)?;
 
 logicalOrExpression: logicalAndExpression (OR_OR logicalAndExpression)*;
 logicalAndExpression: equalityExpression (AND_AND equalityExpression)*;
-equalityExpression: comparisonExpression ((EQUAL_EQUAL | BANG_EQUAL) comparisonExpression)*;
+equalityExpression: comparisonExpression ((STRICT_EQUAL | STRICT_NOT_EQUAL | EQUAL_EQUAL | BANG_EQUAL) comparisonExpression)*;
 comparisonExpression: additiveExpression ((LESS | LESS_EQUAL | GREATER | GREATER_EQUAL) additiveExpression)*;
 additiveExpression: multiplicativeExpression ((PLUS | MINUS) multiplicativeExpression)*;
 multiplicativeExpression: unaryExpression ((STAR | SLASH | PERCENT) unaryExpression)*;

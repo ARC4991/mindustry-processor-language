@@ -31,6 +31,10 @@ import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
+import com.arc.mpl.hir.HirClass;
+import com.arc.mpl.hir.HirNewObject;
+import com.arc.mpl.hir.HirObjectFieldAssignment;
+import com.arc.mpl.hir.HirObjectFieldRead;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirPrintStatement;
@@ -48,6 +52,7 @@ import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.BuildingType;
 import com.arc.mpl.hir.UnitType;
+import com.arc.mpl.hir.TupleType;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 
 import java.util.ArrayDeque;
@@ -77,6 +82,8 @@ public final class MlogCodeGenerator {
     private Map<String, MlogProgramBuilder.Label> functionEntries;
     private Map<String, HirFunction> functions;
     private Map<String, Integer> functionIndexes;
+    private Map<String, HirClass> classes;
+    private Map<String, List<Integer>> objectAllocations;
     private Set<String> globalVariables;
     private Map<String, HirHardwareLink> activeBuildingBindings;
     private String activeDrawTarget;
@@ -117,6 +124,9 @@ public final class MlogCodeGenerator {
         for (int index = 0; index < program.functions().size(); index++) {
             functionIndexes.put(program.functions().get(index).name(), index);
         }
+        classes = program.classes().stream().collect(java.util.stream.Collectors.toMap(
+            HirClass::name, value -> value, (left, right) -> left, java.util.LinkedHashMap::new));
+        objectAllocations = collectObjectAllocations(program);
         globalVariables = new HashSet<>();
         activeBuildingBindings = new HashMap<>();
         activeDrawTarget = null;
@@ -788,6 +798,9 @@ public final class MlogCodeGenerator {
         if (expression instanceof HirMemberAccess member) return emitMemberAccess(member);
         if (expression instanceof HirIntrinsicCall call) return emitIntrinsicCall(call);
         if (expression instanceof HirFunctionCall call) return emitFunctionCall(call);
+        if (expression instanceof HirNewObject allocation) return emitNewObject(allocation);
+        if (expression instanceof HirObjectFieldRead read) return emitObjectFieldRead(read);
+        if (expression instanceof HirObjectFieldAssignment assignment) return emitObjectFieldAssignment(assignment);
         return emitAssignment((HirAssignment) expression);
     }
 
@@ -893,6 +906,9 @@ public final class MlogCodeGenerator {
     }
 
     private String emitIndexAccess(HirIndexAccess access) {
+        if (access.target() instanceof HirObjectFieldRead read && access.index() instanceof HirConstant index) {
+            return emitObjectTupleElementRead(read, objectTupleIndex(read, index));
+        }
         if (!(access.target() instanceof HirVariable variable) || !(access.index() instanceof HirConstant index)) {
             throw new IllegalArgumentException("aggregate access must be statically resolved before target lowering");
         }
@@ -1029,6 +1045,212 @@ public final class MlogCodeGenerator {
         return result;
     }
 
+    private String emitNewObject(HirNewObject allocation) {
+        List<HirExpression> arguments = new java.util.ArrayList<>();
+        arguments.add(new HirConstant(Integer.toString(allocation.allocationId()), com.arc.mpl.hir.ValueType.INT));
+        arguments.addAll(allocation.arguments());
+        emitFunctionCall(new HirFunctionCall(allocation.constructorFunction(), arguments,
+            com.arc.mpl.hir.ValueType.VOID));
+        return Integer.toString(allocation.allocationId());
+    }
+
+    private String emitObjectFieldRead(HirObjectFieldRead read) {
+        if (read.type() instanceof TupleType) {
+            throw new IllegalArgumentException("元组对象字段必须通过常量下标读取："
+                + read.className() + "." + read.field());
+        }
+        return emitObjectSlotRead(read.target(), read.className(), read.field(), null);
+    }
+
+    private String emitObjectTupleElementRead(HirObjectFieldRead read, int index) {
+        return emitObjectSlotRead(read.target(), read.className(), read.field(), index);
+    }
+
+    private String emitObjectSlotRead(HirExpression sourceTarget, String className, String field, Integer element) {
+        String target = temporary();
+        output.set(target, emitExpression(sourceTarget));
+        String result = temporary();
+        output.set(result, "0");
+        MlogProgramBuilder.Label end = label("object_field_read_end");
+        for (int allocationId : allocations(className)) {
+            MlogProgramBuilder.Label next = label("object_field_read_next");
+            emitJump(next, JumpCondition.NOT_EQUAL, target, Integer.toString(allocationId));
+            output.set(result, objectFieldSlot(allocationId, field, element));
+            emitJump(end, JumpCondition.ALWAYS, "0", "0");
+            emitLabel(next);
+        }
+        emitLabel(end);
+        return result;
+    }
+
+    private String emitObjectFieldAssignment(HirObjectFieldAssignment assignment) {
+        HirClass.Field field = objectField(assignment.className(), assignment.field());
+        if (field.type() instanceof TupleType tuple) {
+            if (!"=".equals(assignment.operator()) || !(assignment.value() instanceof HirTupleLiteral literal)
+                || literal.elements().size() != tuple.elementTypes().size()) {
+                throw new IllegalArgumentException("元组对象字段只能由同形元组字面量整体初始化："
+                    + assignment.className() + "." + assignment.field());
+            }
+            String target = temporary();
+            output.set(target, emitExpression(assignment.target()));
+            List<String> values = new java.util.ArrayList<>();
+            for (HirExpression element : literal.elements()) {
+                String saved = temporary();
+                output.set(saved, emitExpression(element));
+                values.add(saved);
+            }
+            emitObjectTupleWrite(target, assignment.className(), assignment.field(), values);
+            return "0";
+        }
+        String target = temporary();
+        output.set(target, emitExpression(assignment.target()));
+        String value = temporary();
+        output.set(value, emitExpression(assignment.value()));
+        String result = temporary();
+        output.set(result, "0");
+        MlogProgramBuilder.Label end = label("object_field_write_end");
+        for (int allocationId : allocations(assignment.className())) {
+            MlogProgramBuilder.Label next = label("object_field_write_next");
+            emitJump(next, JumpCondition.NOT_EQUAL, target, Integer.toString(allocationId));
+            String slot = objectFieldSlot(allocationId, assignment.field(), null);
+            if ("=".equals(assignment.operator())) {
+                output.set(slot, value);
+                output.set(result, value);
+            } else {
+                String operator = assignment.operator().substring(0, 1);
+                String updated;
+                if (field.type() == com.arc.mpl.hir.ValueType.INT) {
+                    updated = emitIntBinary(operator, slot, value);
+                } else if (field.type() == com.arc.mpl.hir.ValueType.FLOAT && isFloatArithmetic(operator)) {
+                    updated = emitFloatBinary(operator, slot, value);
+                } else {
+                    updated = temporary();
+                    output.operation(operation(operator), updated, slot, value);
+                }
+                output.set(slot, updated);
+                output.set(result, updated);
+            }
+            emitJump(end, JumpCondition.ALWAYS, "0", "0");
+            emitLabel(next);
+        }
+        emitLabel(end);
+        return result;
+    }
+
+    private void emitObjectTupleWrite(String target, String className, String field, List<String> values) {
+        MlogProgramBuilder.Label end = label("object_tuple_write_end");
+        for (int allocationId : allocations(className)) {
+            MlogProgramBuilder.Label next = label("object_tuple_write_next");
+            emitJump(next, JumpCondition.NOT_EQUAL, target, Integer.toString(allocationId));
+            for (int index = 0; index < values.size(); index++) {
+                output.set(objectFieldSlot(allocationId, field, index), values.get(index));
+            }
+            emitJump(end, JumpCondition.ALWAYS, "0", "0");
+            emitLabel(next);
+        }
+        emitLabel(end);
+    }
+
+    private int objectTupleIndex(HirObjectFieldRead read, HirConstant index) {
+        HirClass.Field field = objectField(read.className(), read.field());
+        if (!(field.type() instanceof TupleType tuple)) {
+            throw new IllegalArgumentException("对象字段不是元组：" + read.className() + "." + read.field());
+        }
+        int value;
+        try {
+            value = Math.toIntExact(Long.parseLong(index.mlogLiteral()));
+        } catch (NumberFormatException | ArithmeticException exception) {
+            throw new IllegalArgumentException("对象元组字段下标不是 Int 常量", exception);
+        }
+        if (value < 0 || value >= tuple.elementTypes().size()) {
+            throw new IllegalArgumentException("对象元组字段下标越界：" + value);
+        }
+        return value;
+    }
+
+    private HirClass.Field objectField(String className, String fieldName) {
+        HirClass type = classes.get(className);
+        if (type == null) throw new IllegalArgumentException("unknown HIR class: " + className);
+        return type.fields().stream().filter(field -> field.name().equals(fieldName)).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("unknown HIR field: " + className + "." + fieldName));
+    }
+
+    private List<Integer> allocations(String className) {
+        return objectAllocations.getOrDefault(className, List.of());
+    }
+
+    private String objectFieldSlot(int allocationId, String field, Integer element) {
+        return "__mpl_obj" + allocationId + "_" + field + (element == null ? "" : "_e" + element);
+    }
+
+    private Map<String, List<Integer>> collectObjectAllocations(HirProgram program) {
+        Map<String, List<Integer>> found = new java.util.LinkedHashMap<>();
+        for (HirStatement statement : program.statements()) {
+            if (statement instanceof HirVariableDeclaration declaration) {
+                collectObjectAllocations(declaration.initializer(), found);
+            }
+        }
+        found.replaceAll((name, ids) -> ids.stream().sorted().toList());
+        return java.util.Collections.unmodifiableMap(found);
+    }
+
+    private void collectObjectAllocations(HirExpression expression, Map<String, List<Integer>> found) {
+        if (expression instanceof HirNewObject allocation) {
+            found.computeIfAbsent(allocation.className(), ignored -> new java.util.ArrayList<>())
+                .add(allocation.allocationId());
+            allocation.arguments().forEach(argument -> collectObjectAllocations(argument, found));
+            return;
+        }
+        if (expression instanceof HirFunctionCall call) {
+            call.arguments().forEach(argument -> collectObjectAllocations(argument, found));
+        } else if (expression instanceof HirAssignment assignment) {
+            collectObjectAllocations(assignment.value(), found);
+        } else if (expression instanceof HirBinary binary) {
+            collectObjectAllocations(binary.left(), found);
+            collectObjectAllocations(binary.right(), found);
+        } else if (expression instanceof HirUnary unary) {
+            collectObjectAllocations(unary.operand(), found);
+        } else if (expression instanceof HirIntrinsicCall call) {
+            call.arguments().forEach(argument -> collectObjectAllocations(argument, found));
+        } else if (expression instanceof HirMemberAccess member) {
+            collectObjectAllocations(member.target(), found);
+        } else if (expression instanceof HirArrayLiteral array) {
+            array.elements().forEach(element -> collectObjectAllocations(element, found));
+        } else if (expression instanceof HirTupleLiteral tuple) {
+            tuple.elements().forEach(element -> collectObjectAllocations(element, found));
+        } else if (expression instanceof HirCollectionLiteral collection) {
+            collection.elements().forEach(element -> collectObjectAllocations(element, found));
+        } else if (expression instanceof HirIndexAccess access) {
+            collectObjectAllocations(access.target(), found);
+            collectObjectAllocations(access.index(), found);
+        } else if (expression instanceof HirDynamicIndexAccess access) {
+            collectObjectAllocations(access.target(), found);
+            collectObjectAllocations(access.index(), found);
+        } else if (expression instanceof HirCollectionContains contains) {
+            collectObjectAllocations(contains.target(), found);
+            collectObjectAllocations(contains.candidate(), found);
+        } else if (expression instanceof HirUnitQuery query) {
+            query.filters().forEach(filter -> collectObjectAllocations(filter, found));
+        } else if (expression instanceof HirUnitQuerySize size) {
+            size.query().filters().forEach(filter -> collectObjectAllocations(filter, found));
+        } else if (expression instanceof HirUnitQueryGet get) {
+            get.query().filters().forEach(filter -> collectObjectAllocations(filter, found));
+            collectObjectAllocations(get.index(), found);
+        } else if (expression instanceof HirBuildingQuery query) {
+            query.filters().forEach(filter -> collectObjectAllocations(filter, found));
+        } else if (expression instanceof HirBuildingQuerySize size) {
+            size.query().filters().forEach(filter -> collectObjectAllocations(filter, found));
+        } else if (expression instanceof HirBuildingQueryGet get) {
+            get.query().filters().forEach(filter -> collectObjectAllocations(filter, found));
+            collectObjectAllocations(get.index(), found);
+        } else if (expression instanceof HirObjectFieldRead read) {
+            collectObjectAllocations(read.target(), found);
+        } else if (expression instanceof HirObjectFieldAssignment assignment) {
+            collectObjectAllocations(assignment.target(), found);
+            collectObjectAllocations(assignment.value(), found);
+        }
+    }
+
     private String emitMemberAccess(HirMemberAccess member) {
         if (member.target() instanceof HirHardwareLink hardware) {
             String result = temporary();
@@ -1137,6 +1359,9 @@ public final class MlogCodeGenerator {
         }
         String left = emitExpression(binary.left());
         String right = emitExpression(binary.right());
+        if ("===".equals(binary.operator()) || "!==".equals(binary.operator())) {
+            return emitIdentityComparison(left, right, "===".equals(binary.operator()));
+        }
         if (binary.type() == com.arc.mpl.hir.ValueType.INT) {
             return emitIntBinary(binary.operator(), left, right);
         }
@@ -1146,6 +1371,16 @@ public final class MlogCodeGenerator {
         String temporary = temporary();
         output.operation(operation(binary.operator()), temporary, left, right);
         return temporary;
+    }
+
+    private String emitIdentityComparison(String left, String right, boolean equal) {
+        String result = temporary();
+        MlogProgramBuilder.Label end = label("object_identity_end");
+        output.set(result, equal ? "1" : "0");
+        emitJump(end, JumpCondition.STRICT_EQUAL, left, right);
+        output.set(result, equal ? "0" : "1");
+        emitLabel(end);
+        return result;
     }
 
     /** Emits MPL's lazy boolean operators without relying on mlog's eager op instructions. */

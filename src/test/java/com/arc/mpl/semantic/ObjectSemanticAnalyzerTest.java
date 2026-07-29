@@ -142,6 +142,27 @@ class ObjectSemanticAnalyzerTest {
         assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
     }
 
+    @Test
+    void reservesValueEqualityAndProvidesExplicitObjectIdentity() {
+        SemanticResult valid = analyze("""
+            class Marker { public fun Marker() {} }
+            val first = new Marker();
+            val second = new Marker();
+            val same = first === first;
+            val different = first !== second;
+            """);
+        assertTrue(valid.diagnostics().isEmpty(), () -> valid.diagnostics().toString());
+
+        SemanticResult invalid = analyze("""
+            class Marker { public fun Marker() {} }
+            val first = new Marker();
+            val second = new Marker();
+            val same = first == second;
+            """);
+        assertTrue(invalid.program().isEmpty());
+        assertTrue(hasDiagnostic(invalid, "MPL3103", "不能比较"));
+    }
+
     private SemanticResult analyze(String source) {
         Program program = parser.parse(source, Path.of("main.mpl")).program().orElseThrow();
         return analyzer.analyze(program, Path.of("main.mpl"));

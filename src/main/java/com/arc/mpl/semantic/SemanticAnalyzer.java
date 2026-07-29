@@ -2285,6 +2285,7 @@ public final class SemanticAnalyzer {
                 yield left == ValueType.ERROR || right == ValueType.ERROR ? ValueType.ERROR : ValueType.BOOL;
             }
             case "==", "!=" -> compatibleForEquality(left, right, span) ? ValueType.BOOL : ValueType.ERROR;
+            case "===", "!==" -> compatibleForIdentity(left, right, span) ? ValueType.BOOL : ValueType.ERROR;
             case "&&", "||" -> {
                 requireBool(left, span, "逻辑运算符 " + operator);
                 requireBool(right, span, "逻辑运算符 " + operator);
@@ -2356,11 +2357,19 @@ public final class SemanticAnalyzer {
             error("MPL3103", "非空 " + object.displayName() + " 不需要与 null 比较", span);
             return false;
         }
+        error("MPL3103", "不能比较 " + display(left) + " 与 " + display(right), span);
+        return false;
+    }
+
+    private boolean compatibleForIdentity(MplType left, MplType right, SourceSpan span) {
+        if (left == ValueType.ERROR || right == ValueType.ERROR) return true;
+        if (left instanceof ObjectType object && right == ValueType.NULL) return object.nullable();
+        if (right instanceof ObjectType object && left == ValueType.NULL) return object.nullable();
         if (left instanceof ObjectType leftObject && right instanceof ObjectType rightObject
             && leftObject.className().equals(rightObject.className())) {
             return true;
         }
-        error("MPL3103", "不能比较 " + display(left) + " 与 " + display(right), span);
+        error("MPL3103", "对象身份比较需要同一用户类的引用", span);
         return false;
     }
 

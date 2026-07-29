@@ -32,6 +32,8 @@ MINUS_ASSIGN: '-=';
 STAR_ASSIGN: '*=';
 SLASH_ASSIGN: '/=';
 PERCENT_ASSIGN: '%=';
+STRICT_EQUAL: '===';
+STRICT_NOT_EQUAL: '!==';
 EQUAL_EQUAL: '==';
 BANG_EQUAL: '!=';
 LESS_EQUAL: '<=';

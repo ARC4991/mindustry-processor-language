@@ -30,6 +30,9 @@ import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirMemberAccess;
+import com.arc.mpl.hir.HirNewObject;
+import com.arc.mpl.hir.HirObjectFieldAssignment;
+import com.arc.mpl.hir.HirObjectFieldRead;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
@@ -72,7 +75,7 @@ public final class HirOptimizer {
         eliminatedLoops = 0;
         eliminatedStatements = 0;
         List<HirFunction> functions = input.functions().stream().map(this::optimizeFunction).toList();
-        HirProgram program = new HirProgram(functions, optimizeStatements(input.statements()));
+        HirProgram program = new HirProgram(input.classes(), functions, optimizeStatements(input.statements()));
         return new HirOptimizationResult(program,
             new OptimizationReport(constantFolds, eliminatedBranches, eliminatedLoops, eliminatedStatements));
     }
@@ -220,6 +223,17 @@ public final class HirOptimizer {
         }
         if (expression instanceof HirFunctionCall call) {
             return new HirFunctionCall(call.function(), optimizeExpressions(call.arguments()), call.type());
+        }
+        if (expression instanceof HirNewObject allocation) {
+            return new HirNewObject(allocation.allocationId(), allocation.className(), allocation.constructorFunction(),
+                optimizeExpressions(allocation.arguments()), allocation.type());
+        }
+        if (expression instanceof HirObjectFieldRead read) {
+            return new HirObjectFieldRead(optimizeExpression(read.target()), read.className(), read.field(), read.type());
+        }
+        if (expression instanceof HirObjectFieldAssignment assignment) {
+            return new HirObjectFieldAssignment(optimizeExpression(assignment.target()), assignment.className(),
+                assignment.field(), assignment.operator(), optimizeExpression(assignment.value()), assignment.type());
         }
         if (expression instanceof HirArrayLiteral array) {
             return new HirArrayLiteral(optimizeExpressions(array.elements()), array.type());

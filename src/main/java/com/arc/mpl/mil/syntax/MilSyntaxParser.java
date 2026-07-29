@@ -2,11 +2,15 @@ package com.arc.mpl.mil.syntax;
 
 import com.arc.mpl.ast.ArrayLiteral;
 import com.arc.mpl.ast.AssignmentExpression;
+import com.arc.mpl.ast.AccessModifier;
 import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.BlockStatement;
 import com.arc.mpl.ast.BooleanLiteral;
 import com.arc.mpl.ast.BreakStatement;
 import com.arc.mpl.ast.CallExpression;
+import com.arc.mpl.ast.ClassDeclaration;
+import com.arc.mpl.ast.ClassFieldDeclaration;
+import com.arc.mpl.ast.ClassMethodDeclaration;
 import com.arc.mpl.ast.ContinueStatement;
 import com.arc.mpl.ast.DoWhileStatement;
 import com.arc.mpl.ast.Expression;
@@ -24,10 +28,12 @@ import com.arc.mpl.ast.IndexExpression;
 import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
+import com.arc.mpl.ast.MemberAssignmentExpression;
 import com.arc.mpl.ast.MilGameSymbolExpression;
 import com.arc.mpl.ast.MilMacroBlockStatement;
 import com.arc.mpl.ast.MilMacroCallExpression;
 import com.arc.mpl.ast.NullLiteral;
+import com.arc.mpl.ast.NewExpression;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.ReturnStatement;
 import com.arc.mpl.ast.Statement;
@@ -135,6 +141,7 @@ public final class MilSyntaxParser {
             List<ImportDeclaration> imports = context.importDeclaration().stream()
                 .map(value -> (ImportDeclaration) visit(value)).toList();
             List<ExportDeclaration> exports = new ArrayList<>();
+            List<ClassDeclaration> classes = new ArrayList<>();
             List<FunctionDeclaration> functions = new ArrayList<>();
             List<Statement> statements = new ArrayList<>();
             for (MilParser.TopLevelDeclarationContext declaration : context.topLevelDeclaration()) {
@@ -143,6 +150,12 @@ public final class MilSyntaxParser {
                     functions.add(function);
                     if (declaration.exported != null) {
                         exports.add(new ExportDeclaration(function.name(), span(declaration)));
+                    }
+                } else if (declaration.classDeclaration() != null) {
+                    ClassDeclaration type = (ClassDeclaration) visit(declaration.classDeclaration());
+                    classes.add(type);
+                    if (declaration.exported != null) {
+                        exports.add(new ExportDeclaration(type.name(), span(declaration)));
                     }
                 } else if (declaration.variableDeclaration() != null) {
                     VariableDeclaration variable = (VariableDeclaration) visit(declaration.variableDeclaration());
@@ -154,7 +167,25 @@ public final class MilSyntaxParser {
                     statements.add((Statement) visit(declaration.statement()));
                 }
             }
-            return new Program(imports, exports, functions, statements);
+            return new Program(imports, exports, classes, functions, statements);
+        }
+
+        @Override
+        public ClassDeclaration visitClassDeclaration(MilParser.ClassDeclarationContext context) {
+            List<ClassFieldDeclaration> fields = new ArrayList<>();
+            List<ClassMethodDeclaration> methods = new ArrayList<>();
+            for (MilParser.ClassMemberContext member : context.classMember()) {
+                AccessModifier access = member.accessModifier() != null && member.accessModifier().PUBLIC() != null
+                    ? AccessModifier.PUBLIC : AccessModifier.PRIVATE;
+                if (member.fieldDeclaration() != null) {
+                    var field = member.fieldDeclaration();
+                    fields.add(new ClassFieldDeclaration(access, field.name.getText(), field.typeName.getText(), span(field)));
+                } else {
+                    methods.add(new ClassMethodDeclaration(access,
+                        (FunctionDeclaration) visit(member.functionDeclaration())));
+                }
+            }
+            return new ClassDeclaration(context.name.getText(), fields, methods, span(context));
         }
 
         @Override
@@ -270,10 +301,15 @@ public final class MilSyntaxParser {
 
         @Override
         public Object visitAssignmentExpression(MilParser.AssignmentExpressionContext context) {
-            if (context.IDENTIFIER() == null) return visit(context.logicalOrExpression());
-            Identifier target = new Identifier(context.IDENTIFIER().getText(), span(context.IDENTIFIER().getSymbol()));
-            return new AssignmentExpression(target, context.operator.getText(),
-                (Expression) visit(context.assignmentExpression()), span(context));
+            if (context.assignmentTarget() == null) return visit(context.logicalOrExpression());
+            MilParser.AssignmentTargetContext sourceTarget = context.assignmentTarget();
+            Identifier target = new Identifier(sourceTarget.object.getText(), span(sourceTarget.object));
+            Expression value = (Expression) visit(context.assignmentExpression());
+            if (sourceTarget.member != null) {
+                return new MemberAssignmentExpression(target, sourceTarget.member.getText(), context.operator.getText(),
+                    value, span(context));
+            }
+            return new AssignmentExpression(target, context.operator.getText(), value, span(context));
         }
 
         @Override public Object visitLogicalOrExpression(MilParser.LogicalOrExpressionContext context) {
@@ -320,6 +356,10 @@ public final class MilSyntaxParser {
 
         @Override
         public Object visitPrimaryExpression(MilParser.PrimaryExpressionContext context) {
+            if (context.NEW() != null) {
+                return new NewExpression(context.typeName.getText(), context.constructorArgument.stream()
+                    .map(value -> (Expression) visit(value)).toList(), span(context));
+            }
             if (context.INT_LITERAL() != null) {
                 return new IntegerLiteral(Long.parseLong(context.INT_LITERAL().getText()), span(context));
             }
@@ -334,6 +374,7 @@ public final class MilSyntaxParser {
                 return new BooleanLiteral(context.TRUE() != null, span(context));
             }
             if (context.NULL() != null) return new NullLiteral(span(context));
+            if (context.THIS() != null) return new Identifier("this", span(context));
             if (context.name != null) return new Identifier(context.name.getText(), span(context));
             if (context.macroInvocation() != null) return visit(context.macroInvocation());
             if (context.gameSymbol() != null) return visit(context.gameSymbol());

@@ -49,6 +49,96 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesDistinctStaticObjectsAndRegeneratesParseableMil(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            class Counter {
+                private value: Int;
+                public fun Counter(initial: Int) { this.value = initial; }
+                public fun add(amount: Int): Int {
+                    this.value += amount;
+                    return this.value;
+                }
+            }
+
+            val first = new Counter(1);
+            val second = new Counter(10);
+            val firstValue = first.add(2);
+            val secondValue = second.add(5);
+            val same = first === first;
+            val different = first !== second;
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("__mpl_obj1_value"), mlog);
+        assertTrue(mlog.contains("__mpl_obj2_value"), mlog);
+        assertTrue(mlog.contains("set mpl_first 1"), mlog);
+        assertTrue(mlog.contains("set mpl_second 2"), mlog);
+        assertTrue(mlog.contains("strictEqual"), mlog);
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("class Counter {"), mil);
+        assertTrue(mil.contains("val first: Counter = new Counter(1);"), mil);
+        assertTrue(mil.contains("first.add(2)"), mil);
+
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
+        assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
+    }
+
+    @Test
+    void laysOutScalarTupleObjectFields(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            class Point {
+                private coordinates: (Int, Int);
+                public fun Point(x: Int, y: Int) { this.coordinates = (x, y); }
+                public fun x(): Int { return this.coordinates[0]; }
+            }
+            val point = new Point(7, 9);
+            val pointX = point.x();
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("__mpl_obj1_coordinates_e0"), mlog);
+        assertTrue(mlog.contains("__mpl_obj1_coordinates_e1"), mlog);
+        assertTrue(result.mil().orElseThrow().contains("this.coordinates = (x, y);"));
+    }
+
+    @Test
+    void collectsNestedStaticAllocationsAndAllowsUnusedClasses(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            class Marker {
+                private id: Int;
+                public fun Marker(id: Int) { this.id = id; }
+                public fun get(): Int { return this.id; }
+            }
+            class Unused {
+                private value: Int;
+                public fun Unused() { this.value = 0; }
+                public fun get(): Int { return this.value; }
+            }
+            val pair = (new Marker(1), new Marker(2));
+            val selected = pair[1].get();
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("__mpl_obj1_id"), mlog);
+        assertTrue(mlog.contains("__mpl_obj2_id"), mlog);
+        assertTrue(result.mil().orElseThrow().contains("(new Marker(1), new Marker(2))"));
+    }
+
+    @Test
     void compilesAConfiguredMilEntryThroughRuntimeAndTargetLowering(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(project.resolve("mpl.json"), """

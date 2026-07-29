@@ -31,6 +31,10 @@ import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
+import com.arc.mpl.hir.HirClass;
+import com.arc.mpl.hir.HirNewObject;
+import com.arc.mpl.hir.HirObjectFieldAssignment;
+import com.arc.mpl.hir.HirObjectFieldRead;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
@@ -52,6 +56,8 @@ import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.hir.ValueType;
 
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -65,6 +71,9 @@ import java.util.Objects;
  * reads and hardware output.</p>
  */
 public final class MilCodeGenerator {
+    private Map<String, HirFunction> functions = Map.of();
+    private Map<String, ObjectMethod> objectMethods = Map.of();
+
     /**
      * Emits a deterministic, inspectable MIL program.
      *
@@ -74,14 +83,62 @@ public final class MilCodeGenerator {
      */
     public String generate(HirProgram program) {
         Objects.requireNonNull(program, "program");
+        functions = program.functions().stream().collect(java.util.stream.Collectors.toMap(
+            HirFunction::name, value -> value, (left, right) -> left, LinkedHashMap::new));
+        Map<String, ObjectMethod> methods = new LinkedHashMap<>();
+        for (HirClass type : program.classes()) {
+            for (HirClass.Method method : type.methods()) {
+                methods.put(method.functionName(), new ObjectMethod(method));
+            }
+        }
+        objectMethods = Map.copyOf(methods);
         Writer writer = new Writer();
         writer.line("// 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。");
         writer.line("// 普通结构保留为 MIL；@unit.* 与 @io.* 是由 target profile 展开的受限宏。");
-        for (HirFunction function : program.functions()) emitFunction(writer, function);
+        for (HirClass type : program.classes()) emitClass(writer, type);
+        for (HirFunction function : program.functions()) {
+            if (!objectMethods.containsKey(function.name())) emitFunction(writer, function);
+        }
         for (HirStatement statement : program.statements()) {
             emitStatement(writer, statement);
         }
         return writer.render();
+    }
+
+    private void emitClass(Writer writer, HirClass type) {
+        writer.line((type.exported() ? "export " : "") + "class " + identifier(type.name(), "类名") + " {");
+        writer.indent();
+        for (HirClass.Field field : type.fields()) {
+            writer.line(access(field.publicAccess()) + identifier(field.name(), "字段名") + ": "
+                + displayType(field.type()) + ";");
+        }
+        for (HirClass.Method method : type.methods()) {
+            HirFunction function = functions.get(method.functionName());
+            if (function == null) throw new IllegalArgumentException("MIL 缺少对象方法 HIR：" + method.functionName());
+            emitObjectMethod(writer, method, function);
+        }
+        writer.unindent();
+        writer.line("}");
+    }
+
+    private void emitObjectMethod(Writer writer, HirClass.Method method, HirFunction function) {
+        writer.append(access(method.publicAccess())).append("fun ")
+            .append(identifier(method.sourceName(), "方法名")).append("(");
+        for (int index = 1; index < function.parameters().size(); index++) {
+            if (index > 1) writer.append(", ");
+            var parameter = function.parameters().get(index);
+            writer.append(identifier(parameter.name(), "参数名")).append(": ").append(displayType(parameter.type()));
+        }
+        writer.append(")");
+        if (!method.constructor() && function.returnType() != ValueType.VOID) {
+            writer.append(": ").append(displayType(function.returnType()));
+        }
+        writer.append(" ");
+        emitBlock(writer, function.body());
+    }
+
+    private String access(boolean publicAccess) {
+        return publicAccess ? "public " : "private ";
     }
 
     private void emitFunction(Writer writer, HirFunction function) {
@@ -367,9 +424,32 @@ public final class MilCodeGenerator {
         if (value instanceof HirMemberAccess member) return unitMember(member);
         if (value instanceof HirIntrinsicCall call) return intrinsic(call);
         if (value instanceof HirFunctionCall call) {
+            ObjectMethod method = objectMethods.get(call.function());
+            if (method != null && !method.declaration().constructor()) {
+                if (call.arguments().isEmpty()) {
+                    throw new IllegalArgumentException("对象方法缺少 this 参数：" + call.function());
+                }
+                StringBuilder result = new StringBuilder(expression(call.arguments().get(0))).append('.')
+                    .append(identifier(method.declaration().sourceName(), "方法名")).append('(');
+                appendExpressions(result, call.arguments().subList(1, call.arguments().size()));
+                return result.append(')').toString();
+            }
             StringBuilder result = new StringBuilder(identifier(call.function(), "函数名")).append('(');
             appendExpressions(result, call.arguments());
             return result.append(')').toString();
+        }
+        if (value instanceof HirNewObject allocation) {
+            StringBuilder result = new StringBuilder("new ").append(identifier(allocation.className(), "类名"))
+                .append('(');
+            appendExpressions(result, allocation.arguments());
+            return result.append(')').toString();
+        }
+        if (value instanceof HirObjectFieldRead read) {
+            return expression(read.target()) + "." + identifier(read.field(), "字段名");
+        }
+        if (value instanceof HirObjectFieldAssignment assignment) {
+            return expression(assignment.target()) + "." + identifier(assignment.field(), "字段名") + " "
+                + assignment.operator() + " " + expression(assignment.value());
         }
         throw new IllegalArgumentException("MIL 尚不能序列化 HIR 表达式：" + value.getClass().getSimpleName());
     }
@@ -529,5 +609,8 @@ public final class MilCodeGenerator {
         private void writeIndentation() {
             text.append("    ".repeat(indentation));
         }
+    }
+
+    private record ObjectMethod(HirClass.Method declaration) {
     }
 }

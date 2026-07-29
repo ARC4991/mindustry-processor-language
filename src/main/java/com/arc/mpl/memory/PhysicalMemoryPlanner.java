@@ -24,6 +24,9 @@ import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirMemberAccess;
+import com.arc.mpl.hir.HirNewObject;
+import com.arc.mpl.hir.HirObjectFieldAssignment;
+import com.arc.mpl.hir.HirObjectFieldRead;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
@@ -182,6 +185,16 @@ public final class PhysicalMemoryPlanner {
         if (expression instanceof HirMemberAccess member) collectExpression(function, member.target(), declarations, required);
         if (expression instanceof HirIntrinsicCall call) collectExpressions(function, call.arguments(), declarations, required);
         if (expression instanceof HirFunctionCall call) collectExpressions(function, call.arguments(), declarations, required);
+        if (expression instanceof HirNewObject allocation) {
+            collectExpressions(function, allocation.arguments(), declarations, required);
+        }
+        if (expression instanceof HirObjectFieldRead read) {
+            collectExpression(function, read.target(), declarations, required);
+        }
+        if (expression instanceof HirObjectFieldAssignment assignment) {
+            collectExpression(function, assignment.target(), declarations, required);
+            collectExpression(function, assignment.value(), declarations, required);
+        }
         if (expression instanceof HirArrayLiteral array) collectExpressions(function, array.elements(), declarations, required);
         if (expression instanceof HirTupleLiteral tuple) collectExpressions(function, tuple.elements(), declarations, required);
         if (expression instanceof HirCollectionLiteral collection) collectExpressions(function, collection.elements(), declarations, required);

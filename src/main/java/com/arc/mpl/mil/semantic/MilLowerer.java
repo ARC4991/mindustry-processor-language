@@ -6,6 +6,8 @@ import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.BlockStatement;
 import com.arc.mpl.ast.BreakStatement;
 import com.arc.mpl.ast.CallExpression;
+import com.arc.mpl.ast.ClassDeclaration;
+import com.arc.mpl.ast.ClassMethodDeclaration;
 import com.arc.mpl.ast.ContinueStatement;
 import com.arc.mpl.ast.DoWhileStatement;
 import com.arc.mpl.ast.Expression;
@@ -18,7 +20,9 @@ import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.IndexExpression;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
+import com.arc.mpl.ast.MemberAssignmentExpression;
 import com.arc.mpl.ast.MethodCallExpression;
+import com.arc.mpl.ast.NewExpression;
 import com.arc.mpl.ast.MilDrawStatement;
 import com.arc.mpl.ast.MilGameSymbolExpression;
 import com.arc.mpl.ast.MilMacroBlockStatement;
@@ -62,10 +66,17 @@ public final class MilLowerer {
         file = sourceFile;
 
         Program source = document.program();
+        List<ClassDeclaration> classes = source.classes().stream().map(this::lowerClass).toList();
         List<FunctionDeclaration> functions = source.functions().stream().map(this::lowerFunction).toList();
         List<Statement> statements = source.statements().stream().map(this::lowerStatement).toList();
-        Program program = new Program(source.imports(), source.exports(), functions, statements);
+        Program program = new Program(source.imports(), source.exports(), classes, functions, statements);
         return new MilLoweringResult(diagnostics.isEmpty() ? Optional.of(program) : Optional.empty(), diagnostics);
+    }
+
+    private ClassDeclaration lowerClass(ClassDeclaration source) {
+        List<ClassMethodDeclaration> methods = source.methods().stream()
+            .map(method -> new ClassMethodDeclaration(method.access(), lowerFunction(method.function()))).toList();
+        return new ClassDeclaration(source.name(), source.fields(), methods, source.span());
     }
 
     private FunctionDeclaration lowerFunction(FunctionDeclaration function) {
@@ -157,6 +168,14 @@ public final class MilLowerer {
         if (expression instanceof AssignmentExpression assignment) {
             return new AssignmentExpression(assignment.target(), assignment.operator(), lowerExpression(assignment.value()),
                 assignment.span());
+        }
+        if (expression instanceof MemberAssignmentExpression assignment) {
+            return new MemberAssignmentExpression(lowerExpression(assignment.target()), assignment.member(),
+                assignment.operator(), lowerExpression(assignment.value()), assignment.span());
+        }
+        if (expression instanceof NewExpression allocation) {
+            return new NewExpression(allocation.className(), allocation.arguments().stream()
+                .map(this::lowerExpression).toList(), allocation.span());
         }
         if (expression instanceof BinaryExpression binary) {
             return new BinaryExpression(lowerExpression(binary.left()), binary.operator(),

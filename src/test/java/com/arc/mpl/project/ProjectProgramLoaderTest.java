@@ -59,7 +59,7 @@ class ProjectProgramLoaderTest {
             val counter: Counter = new Counter(4);
             val result = counter.get();
             """);
-        Files.writeString(source.resolve("counter.mpl"), """
+        Files.writeString(source.resolve("counter.mil"), """
             export class Counter {
                 private value: Int;
                 public fun Counter(initial: Int) { this.value = initial; }
