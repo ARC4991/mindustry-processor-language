@@ -6,7 +6,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 ## 快速试用
 
-当前原型支持初始化项目、基础数值/控制流、项目内及锁定工作区包的 MPL/MIL 混合模块、无继承 class/new、Message/Display I/O，以及 Unit/Building 对象查询。顶层 `new` 使用编译器管理的静态对象槽；构造器、public/private、可空用户对象和实例方法已经接通 MIL/mlog。`Set<Unit<T>>` 与 `LinkedBuildingSet<T>` 均可保存、过滤、计数、索引和遍历；可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
+当前原型支持初始化项目、基础数值/控制流、项目内及锁定工作区包的 MPL/MIL 混合模块、无继承 class/new、Message/Display I/O，以及 Unit/Building 对象查询。顶层 `new` 使用编译器管理的静态对象槽；函数和循环内可证明不逃逸的局部 `val` 按分配点复用固定槽。构造器、public/private、可空用户对象和实例方法已经接通 MIL/mlog。`Set<Unit<T>>` 与 `LinkedBuildingSet<T>` 均可保存、过滤、计数、索引和遍历；可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
 
 ```bash
 # 默认使用 v146；目录必须不存在或为空。
@@ -64,7 +64,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - [Dagger 三单位绕圈示例](examples/单位绕圈)：`Unit.getAllDagger()`、持续循环和单位移动的 v146 游戏内验收输入，以及部署限制说明。
 - [MPL/MIL 混合模块示例](examples/混合模块)：展示相对 import、导出常量、跨语言函数、硬件 alias 与完整蓝图构建产物。
 - [工作区包示例](examples/工作区包)：展示 `mpl install`、确定性锁文件、包 `.mplh require` 与 `with` 硬件注入。
-- [静态对象示例](examples/对象模型)：展示构造器、字段、实例方法、对象身份和两个独立实例的完整构建。
+- [对象模型示例](examples/对象模型)：展示构造器、字段、实例方法、对象身份、长期实例和函数内非逃逸临时实例的完整构建。
 
 ## 当前范围
 
@@ -72,7 +72,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - 明确 MPL 与 mlog 的映射边界；
 - 规划 Java 编译器的前端、IR 与代码生成阶段。
 
-动态长度/泛型可变容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。工作区包解析、严格硬件注入、组合屏幕尺寸匹配、绘制分发与顶层静态 class/new 已实现；registry、String 动态序列和循环/函数内动态对象池仍在后续阶段。
+动态长度/泛型可变容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。工作区包解析、严格硬件注入、组合屏幕尺寸匹配、绘制分发、顶层静态 class/new 与非逃逸局部分配点复用已实现；registry、String 动态序列和允许引用逃逸的物理对象池仍在后续阶段。
 
 ## 开发约定
 
