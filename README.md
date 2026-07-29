@@ -1,6 +1,6 @@
 # mindustry-processor-language
 
-MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处理器的高级语言与编译器项目。它将可读的 MPL 源码先编译为支持宏的中间语言，再编译为游戏可执行的 mlog 指令。
+MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处理器的高级语言与编译器项目。它先将 MPL 源码降级为支持 profile 宏的 MIL（Macro Intermediate Language），再生成游戏可执行的 mlog 指令。MIL 保留变量、表达式、函数和结构化控制流等 MPL 基础语法，只展开 UnitSet/Unit/Building、字符串运行时等高级糖及其运行时需求。
 
 项目目前处于语法设计阶段，尚未提供稳定的编译器版本。实现语言确定为 Java（JDK 17），解析器计划采用 ANTLR 4；任何标记为“讨论基线”的语法都可能调整。
 
@@ -16,9 +16,9 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 ./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/output.mlog'
 ```
 
-`build` 的最后一个参数仍是 mlog 输出路径；编译器会在同一目录自动生成同名的 `.mil` 文件。例如 `build/... output.mlog` 会产生 `output.mil` 与 `output.mlog`。MIL 使用 `@logic.*` 目标宏表达已完成的 lowering，便于检查 compiler/runtime 展开；游戏中只粘贴 `.mlog`。
+`build` 的最后一个参数仍是 mlog 输出路径；编译器会在同一目录自动生成同名的 `.mil` 文件。例如 `build/... output.mlog` 会产生 `output.mil` 与 `output.mlog`。`.mil` 是便于检查高级糖降级和运行时展开的源级中间产物：普通变量、表达式及 `if`/`while`/`for` 等仍保持结构化写法，只有需要映射游戏能力的高级糖变为所选 profile 的宏调用。它不是把每条 mlog 指令换一种写法的包装格式；游戏中只粘贴 `.mlog`。
 
-默认构建使用最短的 `_0`、`_1` … 跳转标签以节省代码空间；排查生成逻辑时可加 `--debug`，让 `.mil` 与 `.mlog` 保留可读的完整标签名：
+默认构建在最终 `.mlog` 中使用最短的 `_0`、`_1` … 跳转标签以节省代码空间；排查生成逻辑时可加 `--debug`，让最终 target lowering 使用可读的完整标签名。源级 `.mil` 保留结构化控制流，通常不需要展示这些标签：
 
 ```bash
 ./gradlew run --args='build --debug --target=v146 my-mpl-project my-mpl-project/output.mlog'
@@ -44,6 +44,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - [V146 目标配置（讨论稿）](docs/开发设计/V146目标配置（讨论稿）.md)：基线 Mindustry v146 profile，以及由源码确认的执行、内存和 I/O 限制。
 - [V159.7 目标配置（讨论稿）](docs/开发设计/V159.7目标配置（讨论稿）.md)：最新支持版本的 Logic 增量、特权边界和硬件限制。
 - [目标版本与优化策略（讨论稿）](docs/开发设计/目标版本与优化策略（讨论稿）.md)：多 profile 构建、包兼容性与新指令专用优化的规则。
+- [Profile 与构建产物 Schema（讨论稿）](docs/开发设计/数据格式/Profile与构建产物Schema（讨论稿）.md)：机器可读 target profile、构建报告、部署清单与只含处理器/Memory 的运行时蓝图契约。
 - [基于官方 Wiki 的设计审查（讨论稿）](docs/开发设计/基于官方Wiki的设计审查（讨论稿）.md)：将当前设计与官方 Logic Wiki 对照，记录目标层约束、缺失语义与原型优先级。
 - [基于 V146 源码的指令审查（讨论稿）](docs/开发设计/基于V146源码的指令审查（讨论稿）.md)：逐项记录 v146 指令的权限、缓冲、暂停与静默失败行为，以及对应的 MPL 约束。
 - [基础语法示例](docs/示例/基础语法示例.mpl)：讨论中的最小表面语法示例，未承诺可编译。
@@ -58,7 +59,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - 明确 MPL 与 mlog 的映射边界；
 - 规划 Java 编译器的前端、IR 与代码生成阶段。
 
-内建函数清单、模块系统、数组与元组的存储模型，以及函数调用约定仍待讨论。欢迎通过 Issue 或 Pull Request 参与；提交涉及语法变化时，请同步更新语言规范中的“讨论记录”。
+数组/泛型容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。包解析、静态函数 ABI、String/对象的资源上界和基础 I/O 语义已有设计约定。欢迎通过 Issue 或 Pull Request 参与；提交涉及语法变化时，请同步更新语言规范中的“讨论记录”。
 
 ## 开发约定
 

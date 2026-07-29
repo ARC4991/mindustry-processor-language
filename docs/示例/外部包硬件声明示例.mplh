@@ -1,9 +1,8 @@
 // @mpl/status-panel 的 hardware.mplh。
-// 包只能在 .mplh 中声明需求，不能看到调用方的 link 编号或内存槽位。
+// 包只能声明严格匹配的外部硬件需求，不能看到调用方的 link 编号、处理器或内存槽位。
 
-require memory virtual(
-    minSize: 512,
-    mode: Pool
+require screen: Display(
+    access: write
 );
 
 require screen: Display(

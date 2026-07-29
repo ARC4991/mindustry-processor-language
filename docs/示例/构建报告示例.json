@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "compiler": { "version": "0.1.0-dev" },
+  "inputDigest": "8d19b9f13a6f2f77908791d85f4ea08e64f3f142603a6660ebd4d98a0a2d3efa",
+  "targetProfile": "v146",
+  "success": true,
+  "diagnosticSummary": { "errors": 0, "warnings": 0 },
+  "totals": {
+    "instructions": 42,
+    "labels": 4,
+    "virtualSlots": 18,
+    "physicalSlots": 0,
+    "objectPoolSlots": 0,
+    "stringSlots": 0,
+    "runtimeSlots": 3
+  },
+  "shards": [
+    {
+      "id": "Main",
+      "processor": "logic",
+      "mlog": "output.mlog",
+      "ipt": 8,
+      "maxTokensPerStatement": 4,
+      "resources": {
+        "instructions": 42,
+        "labels": 4,
+        "virtualSlots": 18,
+        "physicalSlots": 0,
+        "objectPoolSlots": 0,
+        "stringSlots": 0,
+        "runtimeSlots": 3
+      }
+    }
+  ],
+  "optimizations": []
+}

@@ -1,9 +1,0 @@
-{
-  "name": "@mpl/status-panel",
-  "version": "0.1.0",
-  "target": {
-    "mindustry": "v146"
-  },
-  "entry": "src/index.mpl",
-  "hardware": "hardware.mplh"
-}

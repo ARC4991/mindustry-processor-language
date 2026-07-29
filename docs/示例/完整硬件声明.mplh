@@ -12,13 +12,4 @@ export const MainScreen: Display = Display.combine([
 
 export const AlertBoard: Message = link("message1");
 
-// 内存没有 MPL/MIL 名称，也不能被源码下标访问；编译器统一分配其容量。
-memory physical(
-    link: "memory1",
-    size: 512
-);
-
-memory virtual(
-    size: 4096,
-    mode: Pool
-);
+// 处理器、Memory 和内部连接由编译器自动生成到 runtime.msch，不能在 .mplh 声明。

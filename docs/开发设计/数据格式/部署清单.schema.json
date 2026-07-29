@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arc4991.github.io/mpl/schema/部署清单.schema.json",
+  "title": "MPL 多处理器部署清单",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "compiler", "inputDigest", "targetProfile", "layoutFingerprint", "runtimeTopology", "externalHardware", "prerequisites"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "compiler": { "type": "object", "additionalProperties": false, "required": ["version"], "properties": { "version": { "type": "string" } } },
+    "inputDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "targetProfile": { "type": "string" },
+    "layoutFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "runtimeTopology": { "$ref": "#/$defs/topology" },
+    "externalHardware": { "type": "array", "items": { "$ref": "#/$defs/externalHardware" } },
+    "prerequisites": { "type": "array", "items": { "$ref": "#/$defs/prerequisite" } }
+  },
+  "$defs": {
+    "topology": {
+      "type": "object", "additionalProperties": false,
+      "required": ["shards", "memorySegments"],
+      "properties": {
+        "blueprint": { "$ref": "#/$defs/blueprint" },
+        "shards": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/shard" } },
+        "memorySegments": { "type": "array", "items": { "$ref": "#/$defs/memory" } }
+      }
+    },
+    "blueprint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file", "blocks"],
+      "properties": {
+        "file": { "type": "string", "pattern": "\\.msch$" },
+        "blocks": { "type": "array", "items": { "type": "string", "enum": ["processor", "memory"] }, "uniqueItems": true }
+      }
+    },
+    "shard": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "processor", "mlog"],
+      "properties": {
+        "id": { "type": "string" },
+        "processor": { "type": "string" },
+        "mlog": { "type": "string", "pattern": "\\.mlog$" }
+      }
+    },
+    "memory": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "kind", "capacity", "bindings"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "enum": ["cell", "bank"] },
+        "capacity": { "type": "integer", "minimum": 1 },
+        "bindings": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["shard", "alias", "access"], "properties": { "shard": { "type": "string" }, "alias": { "type": "string" }, "access": { "enum": ["read", "write", "readWrite"] } } } }
+      }
+    },
+    "externalHardware": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mplName", "ownerShard", "alias", "type", "access"],
+      "properties": {
+        "mplName": { "type": "string" },
+        "ownerShard": { "type": "string" },
+        "alias": { "type": "string" },
+        "type": { "type": "string" },
+        "access": { "enum": ["read", "write", "readWrite"] },
+        "displayComposite": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "prerequisite": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "value"],
+      "properties": { "kind": { "type": "string" }, "value": {} }
+    }
+  }
+}

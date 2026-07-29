@@ -1,0 +1,2 @@
+// 只声明地图外硬件；处理器与内存由编译器自动放入 runtime.msch。
+export const AlertBoard: Message = link("message1");

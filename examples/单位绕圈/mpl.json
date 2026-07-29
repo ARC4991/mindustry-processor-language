@@ -1,0 +1,13 @@
+{
+  "name": "单位绕圈",
+  "version": "0.1.0",
+  "target": { "mindustry": "v146" },
+  "entry": "src/main.mpl",
+  "hardware": "src/hardware.mplh",
+  "runtime": {
+    "goal": "maxPerformance",
+    "processors": { "logic": 1, "hyper": 1 },
+    "memory": { "cell": 4, "bank": 2 }
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "compiler": { "version": "0.1.0-dev" },
+  "inputDigest": "8d19b9f13a6f2f77908791d85f4ea08e64f3f142603a6660ebd4d98a0a2d3efa",
+  "targetProfile": "v146",
+  "layoutFingerprint": "55362f94d5f79e2c49291460a1b8e9395c7f8112b3d1d847929d28c271077066",
+  "runtimeTopology": {
+    "blueprint": {
+      "file": "runtime.msch",
+      "blocks": ["processor", "memory"]
+    },
+    "shards": [
+      { "id": "Main", "processor": "hyper", "mlog": "Main.mlog" },
+      { "id": "Worker-0", "processor": "logic", "mlog": "Worker-0.mlog" }
+    ],
+    "memorySegments": [
+      {
+        "id": "Shared",
+        "kind": "bank",
+        "capacity": 512,
+        "bindings": [
+          { "shard": "Main", "alias": "memory1", "access": "readWrite" },
+          { "shard": "Worker-0", "alias": "memory1", "access": "readWrite" }
+        ]
+      }
+    ]
+  },
+  "externalHardware": [
+    { "mplName": "AlertBoard", "ownerShard": "Main", "alias": "message1", "type": "Message", "access": "write" },
+    { "mplName": "MainScreen", "ownerShard": "Main", "alias": "display1", "type": "Display", "access": "write" }
+  ],
+  "prerequisites": [
+    { "kind": "mapRule", "value": "logicUnitControl" }
+  ]
+}

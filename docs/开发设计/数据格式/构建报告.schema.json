@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arc4991.github.io/mpl/schema/构建报告.schema.json",
+  "title": "MPL 构建报告",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "compiler", "inputDigest", "targetProfile", "success", "diagnosticSummary", "totals", "shards", "optimizations"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "compiler": { "type": "object", "additionalProperties": false, "required": ["version"], "properties": { "version": { "type": "string" } } },
+    "inputDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "targetProfile": { "type": "string" },
+    "success": { "type": "boolean" },
+    "diagnosticSummary": { "type": "object", "additionalProperties": false, "required": ["errors", "warnings"], "properties": { "errors": { "type": "integer", "minimum": 0 }, "warnings": { "type": "integer", "minimum": 0 } } },
+    "totals": { "$ref": "#/$defs/resources" },
+    "shards": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/shard" } },
+    "optimizations": { "type": "array", "items": { "$ref": "#/$defs/optimization" } }
+  },
+  "$defs": {
+    "resources": {
+      "type": "object", "additionalProperties": false,
+      "required": ["instructions", "labels", "virtualSlots", "physicalSlots", "objectPoolSlots", "stringSlots", "runtimeSlots"],
+      "properties": {
+        "instructions": { "type": "integer", "minimum": 0 },
+        "labels": { "type": "integer", "minimum": 0 },
+        "virtualSlots": { "type": "integer", "minimum": 0 },
+        "physicalSlots": { "type": "integer", "minimum": 0 },
+        "objectPoolSlots": { "type": "integer", "minimum": 0 },
+        "stringSlots": { "type": "integer", "minimum": 0 },
+        "runtimeSlots": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "shard": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "processor", "mlog", "ipt", "maxTokensPerStatement", "resources"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$" },
+        "processor": { "type": "string" },
+        "mlog": { "type": "string" },
+        "ipt": { "type": "integer", "minimum": 1 },
+        "maxTokensPerStatement": { "type": "integer", "minimum": 1 },
+        "resources": { "$ref": "#/$defs/resources" }
+      }
+    },
+    "optimization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "shard", "estimatedInstructionsSaved"],
+      "properties": {
+        "name": { "type": "string" },
+        "shard": { "type": "string" },
+        "estimatedInstructionsSaved": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

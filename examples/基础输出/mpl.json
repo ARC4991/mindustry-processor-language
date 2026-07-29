@@ -1,9 +1,7 @@
 {
-  "name": "@example/dagger-circle",
+  "name": "基础输出",
   "version": "0.1.0",
-  "target": {
-    "mindustry": "v146"
-  },
+  "target": { "mindustry": "v146" },
   "entry": "src/main.mpl",
   "hardware": "src/hardware.mplh",
   "dependencies": {}

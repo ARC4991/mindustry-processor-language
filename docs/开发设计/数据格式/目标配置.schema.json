@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arc4991.github.io/mpl/schema/目标配置.schema.json",
+  "title": "MPL 目标配置",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "game", "capabilities", "limits", "processors", "hardware", "instructions", "contents", "macros"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^v[0-9]+(\\.[0-9]+)?$" },
+    "game": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "source"],
+      "properties": {
+        "version": { "type": "string" },
+        "commit": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    },
+    "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "limits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["maxInstructions", "maxJumpLabels", "maxTokensPerStatement", "maxGraphicsBufferCommands", "displayFlushCommandLimit", "maxMessageUtf16CodeUnits", "maxDrawCoordinateMagnitude"],
+      "properties": {
+        "maxInstructions": { "type": "integer", "minimum": 1 },
+        "maxJumpLabels": { "type": "integer", "minimum": 0 },
+        "maxTokensPerStatement": { "type": "integer", "minimum": 1 },
+        "maxGraphicsBufferCommands": { "type": "integer", "minimum": 1 },
+        "displayFlushCommandLimit": { "type": "integer", "minimum": 1 },
+        "maxMessageUtf16CodeUnits": { "type": "integer", "minimum": 1 },
+        "maxDrawCoordinateMagnitude": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "processors": { "type": "object", "additionalProperties": { "$ref": "#/$defs/processor" } },
+    "hardware": {
+      "type": "object", "additionalProperties": false,
+      "required": ["memoryCell", "memoryBank"],
+      "properties": {
+        "memoryCell": { "$ref": "#/$defs/memory" },
+        "memoryBank": { "$ref": "#/$defs/memory" }
+      }
+    },
+    "instructions": { "type": "array", "items": { "$ref": "#/$defs/instruction" } },
+    "contents": {
+      "type": "object", "additionalProperties": false,
+      "required": ["units", "buildings"],
+      "properties": {
+        "units": { "type": "array", "items": { "$ref": "#/$defs/content" } },
+        "buildings": { "type": "array", "items": { "$ref": "#/$defs/content" } }
+      }
+    },
+    "macros": { "type": "array", "items": { "$ref": "#/$defs/macro" } }
+  },
+  "$defs": {
+    "processor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ipt", "linkRange", "permissions"],
+      "properties": {
+        "ipt": { "type": "integer", "minimum": 1 },
+        "linkRange": { "type": "integer", "minimum": 0 },
+        "permissions": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "memory": {
+      "type": "object", "additionalProperties": false,
+      "required": ["capacity"],
+      "properties": { "capacity": { "type": "integer", "minimum": 1 } }
+    },
+    "instruction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["opcode", "operands", "permissions"],
+      "properties": {
+        "opcode": { "type": "string" },
+        "operands": { "type": "array", "items": { "type": "string" } },
+        "permissions": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "notes": { "type": "string" }
+      }
+    },
+    "content": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mplType", "mlogName", "fields", "actions"],
+      "properties": {
+        "mplType": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]*$" },
+        "mlogName": { "type": "string" },
+        "logicControllable": { "type": "boolean" },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/member" } },
+        "actions": { "type": "array", "items": { "$ref": "#/$defs/unitAction" } }
+      }
+    },
+    "member": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "target": { "type": "string" },
+        "permissions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "unitAction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "parameters", "target"],
+      "properties": {
+        "name": { "type": "string" },
+        "parameters": { "type": "array", "items": { "enum": ["Int", "Float", "Bool"] } },
+        "target": { "type": "string" },
+        "permissions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "macro": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "parameters", "effects", "maxCost", "lowering"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^@[a-z]+(\\.[a-zA-Z][a-zA-Z0-9]*)+$" },
+        "parameters": { "type": "array", "items": { "$ref": "#/$defs/member" } },
+        "effects": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "maxCost": { "type": "object", "additionalProperties": false, "required": ["instructions", "virtualSlots", "physicalSlots"], "properties": { "instructions": { "type": "integer", "minimum": 0 }, "virtualSlots": { "type": "integer", "minimum": 0 }, "physicalSlots": { "type": "integer", "minimum": 0 } } },
+        "lowering": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      }
+    }
+  }
+}

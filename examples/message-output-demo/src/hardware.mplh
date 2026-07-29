@@ -1,2 +1,0 @@
-// message1 是游戏处理器为该 Message Block 提供的链接变量名。
-const AlertBoard: Message = link("message1");

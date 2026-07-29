@@ -1,0 +1,8 @@
+{
+  "name": "组合屏幕契约",
+  "version": "0.1.0",
+  "target": { "mindustry": "v146" },
+  "entry": "src/main.mpl",
+  "hardware": "src/hardware.mplh",
+  "dependencies": {}
+}
