@@ -2,6 +2,7 @@
 .gradle/
 build/
 out/
+src/main/gen/
 *.class
 
 # IDE
