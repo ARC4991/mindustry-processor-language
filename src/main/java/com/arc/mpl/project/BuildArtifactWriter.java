@@ -15,14 +15,20 @@ import java.security.NoSuchAlgorithmException;
 public final class BuildArtifactWriter {
     public void write(Path directory, String mlog, String mil, TargetProfile profile,
                       HardwareContract hardware, RuntimePlan plan) throws IOException {
+        write(directory, mlog, mil, profile, hardware, plan, new ProjectMetadata("mpl-project", "0.0.0"));
+    }
+
+    public void write(Path directory, String mlog, String mil, TargetProfile profile,
+                      HardwareContract hardware, RuntimePlan plan, ProjectMetadata metadata) throws IOException {
         Files.createDirectories(directory);
         Files.writeString(directory.resolve("Main.mlog"), mlog);
         Files.writeString(directory.resolve("Main.mil"), mil);
-        Files.write(directory.resolve("runtime.msch"), new MindustrySchematicWriter().write(mlog, plan));
-        String digest = digest(mlog + "\n" + mil + "\n" + profile.id());
+        String digest = digest(mlog + "\n" + mil + "\n" + profile.id() + "\n" + metadata.name() + "\n" + metadata.version());
+        String blueprintName = "MPL-" + metadata.name() + "-" + metadata.version() + "-" + digest.substring(0, 12);
+        Files.write(directory.resolve("runtime.msch"), new MindustrySchematicWriter().write(mlog, plan, blueprintName, digest));
         Files.writeString(directory.resolve("report.json"), report(profile, plan, digest));
         Files.writeString(directory.resolve("deployment.json"), deployment(profile, hardware, plan, digest));
-        log.info("构建产物已写入：{}（processor={}，instructions={}）", directory, plan.processorId(), plan.instructions());
+        log.info("构建产物已写入：{}（blueprint={}，processor={}，instructions={}）", directory, blueprintName, plan.processorId(), plan.instructions());
     }
 
     private String report(TargetProfile profile, RuntimePlan plan, String digest) {

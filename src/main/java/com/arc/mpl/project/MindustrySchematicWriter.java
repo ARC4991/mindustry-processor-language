@@ -11,7 +11,7 @@ import java.util.zip.DeflaterOutputStream;
 /** Writes the audited v146 .msch wire format for the compiler runtime topology. */
 public final class MindustrySchematicWriter {
     /** Writes the current automatic single-shard topology. */
-    public byte[] write(String mlog, RuntimePlan plan) throws IOException {
+    public byte[] write(String mlog, RuntimePlan plan, String name, String buildHash) throws IOException {
         List<Tile> tiles = new ArrayList<>();
         List<Link> links = new ArrayList<>();
         String processor = switch (plan.processor()) {
@@ -32,16 +32,17 @@ public final class MindustrySchematicWriter {
             x += 3;
         }
         tiles.set(0, new Tile(processor, 1, 1, logicConfig(mlog, links)));
-        return schematic(tiles, Math.max(3, x), 3);
+        return schematic(tiles, Math.max(3, x), 3, name, buildHash);
     }
 
-    private byte[] schematic(List<Tile> tiles, int width, int height) throws IOException {
+    private byte[] schematic(List<Tile> tiles, int width, int height, String name, String buildHash) throws IOException {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         output.write(new byte[]{'m', 's', 'c', 'h', 1});
         try (DataOutputStream stream = new DataOutputStream(new DeflaterOutputStream(output))) {
             stream.writeShort(width); stream.writeShort(height);
-            stream.writeByte(2); stream.writeUTF("name"); stream.writeUTF("MPL runtime");
+            stream.writeByte(3); stream.writeUTF("name"); stream.writeUTF(name);
             stream.writeUTF("labels"); stream.writeUTF("[]");
+            stream.writeUTF("mpl.buildHash"); stream.writeUTF(buildHash);
             List<String> blocks = tiles.stream().map(Tile::block).distinct().toList();
             stream.writeByte(blocks.size());
             for (String block : blocks) stream.writeUTF(block);

@@ -14,6 +14,7 @@ import com.arc.mpl.project.BuildArtifactWriter;
 import com.arc.mpl.project.RuntimePlan;
 import com.arc.mpl.project.RuntimePlanner;
 import com.arc.mpl.project.RuntimePreferencesLoader;
+import com.arc.mpl.project.ProjectMetadata;
 
 import java.nio.file.Path;
 import java.nio.file.Files;
@@ -89,7 +90,7 @@ public final class MplCli {
                 RuntimePlan plan = new RuntimePlanner().plan(result.mlog().orElseThrow(), result.profile().orElseThrow(),
                     new RuntimePreferencesLoader().load(Path.of(build.projectDirectory())));
                 new BuildArtifactWriter().write(outputDirectory, result.mlog().orElseThrow(), result.mil().orElseThrow(),
-                    result.profile().orElseThrow(), hardware, plan);
+                    result.profile().orElseThrow(), hardware, plan, ProjectMetadata.load(Path.of(build.projectDirectory())));
                 Path mlogOutput = outputDirectory.resolve("Main.mlog");
                 Path milOutput = outputDirectory.resolve("Main.mil");
                 System.out.println(message(language, "cli.mil.written", milOutput));

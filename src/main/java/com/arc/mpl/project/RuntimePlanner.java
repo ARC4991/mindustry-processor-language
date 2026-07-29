@@ -63,7 +63,8 @@ public final class RuntimePlanner {
         if (preferences.goal() == RuntimePreferences.Goal.MAX_PERFORMANCE) {
             return candidates.stream().max(java.util.Comparator.comparingInt(profile::instructionsPerTick)).orElseThrow();
         }
-        return candidates.stream().filter(kind -> instructions <= profile.instructionsPerTick(kind)).findFirst()
+        return candidates.stream().filter(kind -> instructions <= profile.instructionsPerTick(kind))
+            .min(java.util.Comparator.comparingInt(profile::instructionsPerTick))
             .orElseGet(() -> candidates.stream().max(java.util.Comparator.comparingInt(profile::instructionsPerTick)).orElseThrow());
     }
 
