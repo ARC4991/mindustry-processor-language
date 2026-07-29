@@ -3,6 +3,7 @@ package com.arc.mpl.syntax;
 import com.arc.mpl.ast.AssignmentExpression;
 import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.ExpressionStatement;
+import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.VariableDeclaration;
 import org.junit.jupiter.api.Test;
 
@@ -47,5 +48,15 @@ class MplSyntaxParserTest {
         assertTrue(result.program().isEmpty());
         assertEquals("MPL2001", result.diagnostics().get(0).code());
         assertEquals(Path.of("main.mpl"), result.diagnostics().get(0).file().orElseThrow());
+    }
+
+    @Test
+    void representsElseIfAsANestedConditionalBranch() {
+        ParseResult result = parser.parse("if (false) { } else if (true) { } else { }", Path.of("main.mpl"));
+
+        assertTrue(result.succeeded());
+        IfStatement outer = assertInstanceOf(IfStatement.class, result.program().orElseThrow().statements().get(0));
+        IfStatement nested = assertInstanceOf(IfStatement.class, outer.elseBranch().orElseThrow());
+        assertTrue(nested.elseBranch().isPresent());
     }
 }

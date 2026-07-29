@@ -7,6 +7,9 @@ import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
+import com.arc.mpl.hir.HirBreak;
+import com.arc.mpl.hir.HirContinue;
+import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIf;
@@ -22,6 +25,8 @@ import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 
 import com.arc.mpl.codegen.MlogProgramBuilder.JumpCondition;
@@ -34,6 +39,7 @@ public final class MlogCodeGenerator {
     private MlogProgramBuilder output;
     private int temporaryIndex;
     private int unitIterationIndex;
+    private Deque<LoopTarget> loopTargets;
 
     /** Creates a compact release emitter, suitable for deployment to a processor. */
     public MlogCodeGenerator() {
@@ -49,6 +55,7 @@ public final class MlogCodeGenerator {
         output = new MlogProgramBuilder(labelStyle);
         temporaryIndex = 0;
         unitIterationIndex = 0;
+        loopTargets = new ArrayDeque<>();
         for (HirStatement statement : program.statements()) {
             emitStatement(statement);
         }
@@ -75,6 +82,10 @@ public final class MlogCodeGenerator {
             emitWhile(loop);
             return;
         }
+        if (statement instanceof HirDoWhile loop) {
+            emitDoWhile(loop);
+            return;
+        }
         if (statement instanceof HirIf branch) {
             emitIf(branch);
             return;
@@ -91,6 +102,14 @@ public final class MlogCodeGenerator {
             emitBuildingControl(control);
             return;
         }
+        if (statement instanceof HirBreak) {
+            emitLoopJump(true);
+            return;
+        }
+        if (statement instanceof HirContinue) {
+            emitLoopJump(false);
+            return;
+        }
         emitExpression(((HirExpressionStatement) statement).expression());
     }
 
@@ -100,16 +119,28 @@ public final class MlogCodeGenerator {
         emitLabel(start);
         String condition = emitExpression(loop.condition());
         emitJump(end, JumpCondition.EQUAL, condition, "0");
-        for (HirStatement statement : loop.body()) emitStatement(statement);
+        emitLoopBody(loop.body(), start, end);
         emitJump(start, JumpCondition.ALWAYS, "0", "0");
         emitLabel(end);
     }
 
+    private void emitDoWhile(HirDoWhile loop) {
+        MlogProgramBuilder.Label start = label("do_start");
+        MlogProgramBuilder.Label condition = label("do_condition");
+        MlogProgramBuilder.Label end = label("do_end");
+        emitLabel(start);
+        emitLoopBody(loop.body(), condition, end);
+        emitLabel(condition);
+        String accepted = emitExpression(loop.condition());
+        emitJump(start, JumpCondition.NOT_EQUAL, accepted, "0");
+        emitLabel(end);
+    }
+
     private void emitIf(HirIf branch) {
-        MlogProgramBuilder.Label otherwise = label("if_else");
+        MlogProgramBuilder.Label otherwise = branch.elseBody().isPresent() ? label("if_else") : null;
         MlogProgramBuilder.Label end = label("if_end");
         String condition = emitExpression(branch.condition());
-        emitJump(branch.elseBody().isPresent() ? otherwise : end, JumpCondition.EQUAL, condition, "0");
+        emitJump(otherwise == null ? end : otherwise, JumpCondition.EQUAL, condition, "0");
         for (HirStatement statement : branch.thenBody()) emitStatement(statement);
         if (branch.elseBody().isEmpty()) {
             emitLabel(end);
@@ -159,7 +190,7 @@ public final class MlogCodeGenerator {
             String accepted = emitExpression(filter);
             emitJump(next, JumpCondition.EQUAL, accepted, "0");
         }
-        for (HirStatement statement : iteration.body()) emitStatement(statement);
+        emitLoopBody(iteration.body(), next, end);
 
         emitLabel(next);
         // Rebind by object rather than type: this both validates the sentinel and
@@ -296,7 +327,7 @@ public final class MlogCodeGenerator {
         emitLabel(ownedConfirmed);
         emitFilterRejectionJump(iteration.filters(), next);
         emitLabel(body);
-        for (HirStatement statement : iteration.body()) emitStatement(statement);
+        emitLoopBody(iteration.body(), next, end);
 
         emitLabel(next);
         emitUnitScanAdvance(sentinel, iteration.mlogType(), scan, end);
@@ -358,6 +389,22 @@ public final class MlogCodeGenerator {
     private void emitBuildingControl(HirBuildingControl control) {
         List<String> arguments = control.arguments().stream().map(this::emitExpression).toList();
         output.buildingControl(control.target().gameAlias(), control.action(), arguments);
+    }
+
+    private void emitLoopBody(List<HirStatement> body, MlogProgramBuilder.Label continueTarget,
+                              MlogProgramBuilder.Label breakTarget) {
+        loopTargets.push(new LoopTarget(continueTarget, breakTarget));
+        try {
+            for (HirStatement statement : body) emitStatement(statement);
+        } finally {
+            loopTargets.pop();
+        }
+    }
+
+    private void emitLoopJump(boolean breaking) {
+        LoopTarget target = loopTargets.peek();
+        if (target == null) throw new IllegalStateException("循环跳转缺少目标");
+        emitJump(breaking ? target.breakTarget() : target.continueTarget(), JumpCondition.ALWAYS, "0", "0");
     }
 
     private String emitExpression(HirExpression expression) {
@@ -496,5 +543,8 @@ public final class MlogCodeGenerator {
 
     private String quote(String value) {
         return "\"" + value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\"", "\\\"") + "\"";
+    }
+
+    private record LoopTarget(MlogProgramBuilder.Label continueTarget, MlogProgramBuilder.Label breakTarget) {
     }
 }

@@ -78,6 +78,68 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesDoWhileBreakAndContinueToTheCorrectLoopTargets(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var count: Int = 0;
+            do {
+                count += 1;
+                if (count < 2) {
+                    continue;
+                }
+                if (count > 4) {
+                    break;
+                }
+            } while (count < 10);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            set mpl_count 0
+            mpl_do_start_0:
+            op add mpl_count mpl_count 1
+            op lessThan __mpl_tmp0 mpl_count 2
+            jump mpl_if_end_3 equal __mpl_tmp0 0
+            jump mpl_do_condition_1 always 0 0
+            mpl_if_end_3:
+            op greaterThan __mpl_tmp1 mpl_count 4
+            jump mpl_if_end_4 equal __mpl_tmp1 0
+            jump mpl_do_end_2 always 0 0
+            mpl_if_end_4:
+            mpl_do_condition_1:
+            op lessThan __mpl_tmp2 mpl_count 10
+            jump mpl_do_start_0 notEqual __mpl_tmp2 0
+            mpl_do_end_2:
+            stop
+            """, result.mlog().orElseThrow());
+        assertTrue(result.mil().orElseThrow().contains("do {"));
+        assertTrue(result.mil().orElseThrow().contains("continue;"));
+        assertTrue(result.mil().orElseThrow().contains("break;"));
+    }
+
+    @Test
+    void targetsUnitIterationNextAndEndForContinueAndBreak(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            for (var unit : Unit.getAllDagger()) {
+                if (!unit.alive) {
+                    continue;
+                }
+                break;
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("jump mpl_unit_next_1 always 0 0"));
+        assertTrue(mlog.contains("jump mpl_unit_end_2 always 0 0"));
+    }
+
+    @Test
     void compilesMessagePrintUsingTheAutomaticFirstMessageLink(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), "const AlertBoard: Message = link(\"message1\");");

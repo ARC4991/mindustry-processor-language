@@ -4,7 +4,10 @@ import com.arc.mpl.ast.AssignmentExpression;
 import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.BooleanLiteral;
 import com.arc.mpl.ast.BlockStatement;
+import com.arc.mpl.ast.BreakStatement;
 import com.arc.mpl.ast.CallExpression;
+import com.arc.mpl.ast.ContinueStatement;
+import com.arc.mpl.ast.DoWhileStatement;
 import com.arc.mpl.ast.Expression;
 import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.ForEachStatement;
@@ -97,6 +100,9 @@ public final class MplSyntaxParser {
             if (context.whileStatement() != null) {
                 return (Statement) visit(context.whileStatement());
             }
+            if (context.doWhileStatement() != null) {
+                return (Statement) visit(context.doWhileStatement());
+            }
             if (context.ifStatement() != null) {
                 return (Statement) visit(context.ifStatement());
             }
@@ -109,6 +115,8 @@ public final class MplSyntaxParser {
             if (context.variableDeclaration() != null) {
                 return (Statement) visit(context.variableDeclaration());
             }
+            if (context.BREAK() != null) return new BreakStatement(span(context));
+            if (context.CONTINUE() != null) return new ContinueStatement(span(context));
             Expression expression = (Expression) visit(context.expression());
             return new ExpressionStatement(expression, span(context));
         }
@@ -131,11 +139,22 @@ public final class MplSyntaxParser {
         }
 
         @Override
+        public DoWhileStatement visitDoWhileStatement(MplParser.DoWhileStatementContext context) {
+            return new DoWhileStatement(
+                (BlockStatement) visit(context.body),
+                (Expression) visit(context.condition),
+                span(context));
+        }
+
+        @Override
         public IfStatement visitIfStatement(MplParser.IfStatementContext context) {
+            Optional<Statement> alternative = Optional.empty();
+            if (context.elseBlock != null) alternative = Optional.of((BlockStatement) visit(context.elseBlock));
+            if (context.elseIf != null) alternative = Optional.of((IfStatement) visit(context.elseIf));
             return new IfStatement(
                 (Expression) visit(context.condition),
                 (BlockStatement) visit(context.thenBlock),
-                context.elseBlock == null ? Optional.empty() : Optional.of((BlockStatement) visit(context.elseBlock)),
+                alternative,
                 span(context));
         }
 

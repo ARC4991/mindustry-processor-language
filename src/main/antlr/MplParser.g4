@@ -8,9 +8,12 @@ program: statement* EOF;
 
 statement
     : whileStatement
+    | doWhileStatement
     | ifStatement
     | forEachStatement
     | block
+    | BREAK SEMICOLON
+    | CONTINUE SEMICOLON
     | variableDeclaration SEMICOLON
     | expression SEMICOLON
     ;
@@ -19,7 +22,10 @@ block: LBRACE statement* RBRACE;
 
 whileStatement: WHILE LPAREN condition=expression RPAREN body=block;
 
-ifStatement: IF LPAREN condition=expression RPAREN thenBlock=block (ELSE elseBlock=block)?;
+doWhileStatement: DO body=block WHILE LPAREN condition=expression RPAREN SEMICOLON;
+
+ifStatement: IF LPAREN condition=expression RPAREN thenBlock=block
+    (ELSE (elseBlock=block | elseIf=ifStatement))?;
 
 forEachStatement: FOR LPAREN VAR name=IDENTIFIER COLON iterable=expression RPAREN body=block;
 

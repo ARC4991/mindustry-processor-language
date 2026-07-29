@@ -4,6 +4,9 @@ import com.arc.mpl.hir.HirAssignment;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
+import com.arc.mpl.hir.HirBreak;
+import com.arc.mpl.hir.HirContinue;
+import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
@@ -79,6 +82,12 @@ public final class MilCodeGenerator {
             emitBlock(writer, loop.body());
             return;
         }
+        if (statement instanceof HirDoWhile loop) {
+            writer.append("do ");
+            emitBlock(writer, loop.body());
+            writer.line("while (" + expression(loop.condition()) + ");");
+            return;
+        }
         if (statement instanceof HirIf branch) {
             writer.append("if (").append(expression(branch.condition())).append(") ");
             emitBlock(writer, branch.thenBody());
@@ -98,6 +107,14 @@ public final class MilCodeGenerator {
         }
         if (statement instanceof HirBuildingControl control) {
             emitBuildingControl(writer, control);
+            return;
+        }
+        if (statement instanceof HirBreak) {
+            writer.line("break;");
+            return;
+        }
+        if (statement instanceof HirContinue) {
+            writer.line("continue;");
             return;
         }
         throw new IllegalArgumentException("MIL 尚不能序列化 HIR 语句：" + statement.getClass().getSimpleName());

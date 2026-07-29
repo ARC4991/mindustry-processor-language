@@ -4,7 +4,10 @@ import com.arc.mpl.ast.AssignmentExpression;
 import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.BlockStatement;
 import com.arc.mpl.ast.BooleanLiteral;
+import com.arc.mpl.ast.BreakStatement;
 import com.arc.mpl.ast.CallExpression;
+import com.arc.mpl.ast.ContinueStatement;
+import com.arc.mpl.ast.DoWhileStatement;
 import com.arc.mpl.ast.Expression;
 import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.FloatLiteral;
@@ -28,7 +31,10 @@ import com.arc.mpl.hir.HirAssignment;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
+import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirConstant;
+import com.arc.mpl.hir.HirContinue;
+import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirHardwareLink;
@@ -68,6 +74,7 @@ public final class SemanticAnalyzer {
     private Map<String, String> messages = Map.of();
     private Map<String, HardwareContract.LinkDeclaration> hardwareLinks = Map.of();
     private int unitIterationDepth;
+    private int loopDepth;
     private String activeUnitBinding;
 
     /** Uses the v146 baseline when semantic analysis is invoked outside a compiler request. */
@@ -104,6 +111,7 @@ public final class SemanticAnalyzer {
         }
         hardwareLinks = Map.copyOf(links);
         unitIterationDepth = 0;
+        loopDepth = 0;
         activeUnitBinding = null;
 
         List<HirStatement> statements = new ArrayList<>();
@@ -120,6 +128,9 @@ public final class SemanticAnalyzer {
         if (statement instanceof WhileStatement loop) {
             return analyzeWhile(loop);
         }
+        if (statement instanceof DoWhileStatement loop) {
+            return analyzeDoWhile(loop);
+        }
         if (statement instanceof IfStatement branch) {
             return analyzeIf(branch);
         }
@@ -128,6 +139,14 @@ public final class SemanticAnalyzer {
         }
         if (statement instanceof BlockStatement block) {
             return new HirBlock(analyzeBlock(block));
+        }
+        if (statement instanceof BreakStatement jump) {
+            if (loopDepth == 0) error("MPL3401", "break 只能出现在循环内", jump.span());
+            return new HirBreak();
+        }
+        if (statement instanceof ContinueStatement jump) {
+            if (loopDepth == 0) error("MPL3402", "continue 只能出现在循环内", jump.span());
+            return new HirContinue();
         }
         ExpressionStatement expressionStatement = (ExpressionStatement) statement;
         return analyzeExpressionStatement(expressionStatement.expression());
@@ -149,14 +168,36 @@ public final class SemanticAnalyzer {
     private HirStatement analyzeWhile(WhileStatement loop) {
         HirExpression condition = analyzeExpression(loop.condition());
         requireBool(condition.type(), loop.condition().span(), "while 条件");
-        return new HirWhile(condition, analyzeBlock(loop.body()));
+        return new HirWhile(condition, analyzeLoopBlock(loop.body()));
+    }
+
+    private HirStatement analyzeDoWhile(DoWhileStatement loop) {
+        List<HirStatement> body = analyzeLoopBlock(loop.body());
+        HirExpression condition = analyzeExpression(loop.condition());
+        requireBool(condition.type(), loop.condition().span(), "do-while 条件");
+        return new HirDoWhile(body, condition);
     }
 
     private HirStatement analyzeIf(IfStatement branch) {
         HirExpression condition = analyzeExpression(branch.condition());
         requireBool(condition.type(), branch.condition().span(), "if 条件");
-        Optional<List<HirStatement>> alternative = branch.elseBlock().map(this::analyzeBlock);
-        return new HirIf(condition, analyzeBlock(branch.thenBlock()), alternative);
+        List<HirStatement> consequence = analyzeBlock(branch.thenBlock());
+        Optional<List<HirStatement>> alternative = branch.elseBranch().map(this::analyzeAlternative);
+        return new HirIf(condition, consequence, alternative);
+    }
+
+    private List<HirStatement> analyzeAlternative(Statement alternative) {
+        if (alternative instanceof BlockStatement block) return analyzeBlock(block);
+        return List.of(analyzeStatement(alternative));
+    }
+
+    private List<HirStatement> analyzeLoopBlock(BlockStatement block) {
+        loopDepth++;
+        try {
+            return analyzeBlock(block);
+        } finally {
+            loopDepth--;
+        }
     }
 
     private HirStatement analyzeForEach(ForEachStatement loop) {
@@ -172,6 +213,7 @@ public final class SemanticAnalyzer {
         String previousBinding = activeUnitBinding;
         activeUnitBinding = loop.name();
         unitIterationDepth++;
+        loopDepth++;
         scopes.push(new HashMap<>());
         try {
             declare(loop.name(), new Symbol(ValueType.UNIT, false, null), loop.span());
@@ -191,6 +233,7 @@ public final class SemanticAnalyzer {
         } finally {
             scopes.pop();
             unitIterationDepth--;
+            loopDepth--;
             activeUnitBinding = previousBinding;
         }
     }

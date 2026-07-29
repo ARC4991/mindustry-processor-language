@@ -51,4 +51,15 @@ class SemanticAnalyzerTest {
         assertTrue(mutable.mutable());
         assertFalse(fixed.mutable());
     }
+
+    @Test
+    void rejectsBreakAndContinueOutsideLoops() {
+        Program program = parser.parse("break;\ncontinue;", Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertEquals(java.util.List.of("MPL3401", "MPL3402"),
+            result.diagnostics().stream().map(diagnostic -> diagnostic.code()).toList());
+    }
 }
