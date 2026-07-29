@@ -128,6 +128,7 @@ public final class SemanticAnalyzer {
     private final List<TopLevelCall> topLevelCalls = new ArrayList<>();
     private final Set<String> initializedGlobals = new HashSet<>();
     private final Deque<ArrayBoundsProof> arrayBoundsProofs = new ArrayDeque<>();
+    private final ObjectReceiverEscapeAnalyzer objectReceiverEscapeAnalyzer = new ObjectReceiverEscapeAnalyzer();
     private Path file;
     private Map<String, String> messages = Map.of();
     private Map<String, HardwareContract.LinkDeclaration> hardwareLinks = Map.of();
@@ -143,7 +144,8 @@ public final class SemanticAnalyzer {
     private String currentClass;
     private MplType currentReturnType;
     private boolean analyzingTopLevel;
-    private boolean allowStaticNew;
+    private ObjectAllocationContext objectAllocationContext;
+    private boolean borrowedObjectUse;
 
     /** Uses the v146 baseline when semantic analysis is invoked outside a compiler request. */
     public SemanticAnalyzer() {
@@ -197,7 +199,8 @@ public final class SemanticAnalyzer {
         currentClass = null;
         currentReturnType = null;
         analyzingTopLevel = true;
-        allowStaticNew = false;
+        objectAllocationContext = ObjectAllocationContext.DISALLOWED;
+        borrowedObjectUse = false;
 
         if (!program.imports().isEmpty() || !program.exports().isEmpty()) {
             SourceSpan span = !program.imports().isEmpty()
@@ -278,7 +281,8 @@ public final class SemanticAnalyzer {
         }
         String internalName = "__mpl_class_" + type.name() + "_" + function.name();
         MethodInfo method = new MethodInfo(function.name(), internalName, function, sourceParameters, returnType,
-            source.access() == com.arc.mpl.ast.AccessModifier.PUBLIC, constructor);
+            source.access() == com.arc.mpl.ast.AccessModifier.PUBLIC, constructor,
+            objectReceiverEscapeAnalyzer.receiverEscapes(function.body()));
         if (type.methods().putIfAbsent(function.name(), method) != null) {
             error("MPL3701", "类 " + type.name() + " 的方法重复：" + function.name(), function.span());
             return;
@@ -368,13 +372,13 @@ public final class SemanticAnalyzer {
         scopes.push(new HashMap<>());
         try {
             ObjectType thisType = new ObjectType(type.name(), false);
-            declare("this", new Symbol(thisType, false, null, null, null, null, false, function.span()), function.span());
+            declare("this", new Symbol(thisType, false, null, null, null, null, false, false, function.span()), function.span());
             List<HirFunctionParameter> parameters = new ArrayList<>();
             parameters.add(new HirFunctionParameter("this", thisType));
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
                 MplType parameterType = method.parameterTypes().get(index);
-                declare(parameter.name(), new Symbol(parameterType, false, null, null, null, null, false,
+                declare(parameter.name(), new Symbol(parameterType, false, null, null, null, null, false, false,
                     parameter.span()), parameter.span());
                 parameters.add(new HirFunctionParameter(parameter.name(), parameterType));
             }
@@ -556,7 +560,7 @@ public final class SemanticAnalyzer {
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
                 MplType type = signature.parameterTypes().get(index);
-                declare(parameter.name(), new Symbol(type, false, null, null, null, null, false, parameter.span()), parameter.span());
+                declare(parameter.name(), new Symbol(type, false, null, null, null, null, false, false, parameter.span()), parameter.span());
                 parameters.add(new HirFunctionParameter(parameter.name(), type));
             }
             List<HirStatement> body = analyzeBlock(function.body());
@@ -791,7 +795,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, null, null, false, false, loop.span()), loop.span());
             List<HirExpression> filters = new ArrayList<>();
             for (Expression filter : query.filters()) {
                 filters.add(analyzeUnitFilter(filter, loop.name()));
@@ -824,7 +828,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, null, null, false, false, loop.span()), loop.span());
             List<HirExpression> filters = query.filters().stream()
                 .map(filter -> renameUnitBinding(filter, query.bindingName(), loop.name())).toList();
             return new HirUnitIteration(loop.name(), query.unitType(), query.mlogType(), filters,
@@ -902,7 +906,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.BUILDING, false, null, null, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(ValueType.BUILDING, false, null, null, null, null, false, false, loop.span()), loop.span());
             List<HirHardwareLink> buildings = linkedBuildings(query.typeName());
             List<HirExpression> filters = query.filters().stream()
                 .map(filter -> analyzeBuildingFilter(filter, loop.name(), query.typeName())).toList();
@@ -925,7 +929,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.BUILDING, false, null, null, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(ValueType.BUILDING, false, null, null, null, null, false, false, loop.span()), loop.span());
             List<HirExpression> filters = query.filters().stream()
                 .map(filter -> renameBuildingBinding(filter, query.bindingName(), loop.name())).toList();
             return new HirBuildingIteration(loop.name(), query.buildingType(), query.mlogType(), query.buildings(), filters,
@@ -960,7 +964,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(elementType, false, null, null, null, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(elementType, false, null, null, null, null, false, false, loop.span()), loop.span());
             return new HirAggregateIteration(loop.name(), source, elementType, size, analyzeBlock(loop.body()));
         } finally {
             scopes.pop();
@@ -1159,7 +1163,7 @@ public final class SemanticAnalyzer {
         try {
             // Query parameters shadow an enclosing iteration binding just like Unit filter parameters.
             scopes.peek().put(parameter,
-                new Symbol(ValueType.BUILDING, false, null, null, null, null, false, source.span()));
+                new Symbol(ValueType.BUILDING, false, null, null, null, null, false, false, source.span()));
             HirExpression result = analyzeExpression(predicate);
             if (result.type() != ValueType.BOOL) {
                 error("MPL3201", "Building 查询的 .where(...) 过滤条件必须是 Bool", predicate.span());
@@ -1248,7 +1252,7 @@ public final class SemanticAnalyzer {
         scopes.push(new HashMap<>());
         try {
             // Lambda parameters deliberately shadow the enclosing loop binding.
-            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null, null, null, null, false, source.span()));
+            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null, null, null, null, false, false, source.span()));
             HirExpression result = analyzeExpression(predicate);
             if (result.type() != ValueType.BOOL) {
                 error("MPL3303", "Set<Unit<T>>.where(...) 的过滤条件必须是 Bool", predicate.span());
@@ -1694,16 +1698,21 @@ public final class SemanticAnalyzer {
                 .map(query -> analyzeBuildingQuery(query, "_"))
                 .orElse(null);
         }
-        boolean previousAllowStaticNew = allowStaticNew;
         boolean staticAllocationContext = analyzingTopLevel && currentFunction == null && scopes.size() == 1;
+        ObjectAllocationContext previousAllocationContext = objectAllocationContext;
+        ObjectAllocationContext declarationAllocationContext = staticAllocationContext
+            ? ObjectAllocationContext.STATIC
+            : !declaration.mutable() && declaration.initializer() instanceof NewExpression
+                ? ObjectAllocationContext.REUSABLE_LOCAL
+                : ObjectAllocationContext.DISALLOWED;
         HirExpression initializer;
         try {
-            allowStaticNew = staticAllocationContext;
+            objectAllocationContext = declarationAllocationContext;
             initializer = unitQuery != null ? unitQuery
                 : buildingQuery != null ? buildingQuery
                 : analyzeInitializer(declaration.initializer(), declaredType);
         } finally {
-            allowStaticNew = previousAllowStaticNew;
+            objectAllocationContext = previousAllocationContext;
         }
         if (initializer.type() == ValueType.BUILDING) {
             error("MPL3201", "硬件常量不能赋给普通变量；请直接读取字段或调用控制方法", declaration.initializer().span());
@@ -1741,9 +1750,11 @@ public final class SemanticAnalyzer {
                 declaration.initializer().span());
         }
         boolean global = currentFunction == null && scopes.size() == 1;
+        boolean reusableLocalObject = declarationAllocationContext == ObjectAllocationContext.REUSABLE_LOCAL
+            && initializer instanceof HirNewObject;
         if (declare(declaration.name(),
             new Symbol(type, declaration.mutable(), staticStringLength(initializer), staticAggregateSize(initializer), unitQuery,
-                buildingQuery, global, declaration.span()),
+                buildingQuery, reusableLocalObject, global, declaration.span()),
             declaration.span()) && global) {
             // The initializer has already been analyzed, so calls inside it
             // deliberately do not observe this variable as initialized.
@@ -1797,6 +1808,10 @@ public final class SemanticAnalyzer {
             if (currentFunction != null && symbol.type() instanceof UnitType) {
                 error("MPL3508", "第一版函数不能访问已保存的 UnitRef", identifier.span());
             }
+            if (symbol.reusableLocalObject() && !borrowedObjectUse) {
+                error("MPL3708", "局部对象 " + identifier.name()
+                    + " 的引用不能逃逸分配点；只能访问字段、比较身份或调用不泄露接收者的方法", identifier.span());
+            }
             recordGlobalAccess(identifier.name(), symbol, identifier.span());
             return new HirVariable(identifier.name(), symbol.type());
         }
@@ -1832,8 +1847,12 @@ public final class SemanticAnalyzer {
             return new HirUnary(unary.operator(), operand, type);
         }
         if (expression instanceof BinaryExpression binary) {
-            HirExpression left = analyzeExpression(binary.left());
-            HirExpression right = analyzeExpression(binary.right());
+            boolean identityOrNullComparison = "===".equals(binary.operator()) || "!==".equals(binary.operator())
+                || "==".equals(binary.operator()) || "!=".equals(binary.operator());
+            HirExpression left = identityOrNullComparison
+                ? analyzeBorrowedObjectExpression(binary.left()) : analyzeExpression(binary.left());
+            HirExpression right = identityOrNullComparison
+                ? analyzeBorrowedObjectExpression(binary.right()) : analyzeExpression(binary.right());
             if ("+".equals(binary.operator()) && left instanceof HirText leftText && right instanceof HirText rightText) {
                 return new HirText(leftText.value() + rightText.value());
             }
@@ -1925,7 +1944,7 @@ public final class SemanticAnalyzer {
             HirBuildingQuery buildingQuery = resolveBuildingQuery(member.target(), "_");
             if (buildingQuery != null) return new HirBuildingQuerySize(buildingQuery);
         }
-        HirExpression target = analyzeExpression(member.target());
+        HirExpression target = analyzeBorrowedObjectExpression(member.target());
         if (target.type() instanceof ObjectType object) {
             if (object.nullable()) {
                 error("MPL3706", "可空 " + object.displayName() + " 必须先通过 != null 检查", member.span());
@@ -2042,9 +2061,9 @@ public final class SemanticAnalyzer {
         }
         if (call.callee() instanceof MemberAccessExpression member
             && isPotentialObjectReceiver(member.target())) {
-            HirExpression target = analyzeExpression(member.target());
+            HirExpression target = analyzeBorrowedObjectExpression(member.target());
             if (target.type() instanceof ObjectType object) {
-                return analyzeObjectMethodCall(target, object, member.member(), call.arguments(), call.span());
+                return analyzeObjectMethodCall(target, member.target(), object, member.member(), call.arguments(), call.span());
             }
         }
         if (call.callee() instanceof Identifier functionName) {
@@ -2102,6 +2121,34 @@ public final class SemanticAnalyzer {
         return symbol != null && symbol.type() instanceof ObjectType;
     }
 
+    private boolean isReusableLocalObject(Expression expression) {
+        if (!(expression instanceof Identifier identifier)) return false;
+        Symbol symbol = lookup(identifier.name());
+        return symbol != null && symbol.reusableLocalObject();
+    }
+
+    private HirExpression analyzeBorrowedObjectExpression(Expression expression) {
+        if (!(expression instanceof Identifier)) return analyzeExpression(expression);
+        boolean previous = borrowedObjectUse;
+        borrowedObjectUse = true;
+        try {
+            return analyzeExpression(expression);
+        } finally {
+            borrowedObjectUse = previous;
+        }
+    }
+
+    private <T> T analyzeWithObjectAllocationContext(ObjectAllocationContext context,
+                                                     java.util.function.Supplier<T> analysis) {
+        ObjectAllocationContext previous = objectAllocationContext;
+        objectAllocationContext = context;
+        try {
+            return analysis.get();
+        } finally {
+            objectAllocationContext = previous;
+        }
+    }
+
     private HirExpression analyzeNew(NewExpression allocation) {
         ClassInfo type = classes.get(allocation.className());
         if (type == null) {
@@ -2109,8 +2156,8 @@ public final class SemanticAnalyzer {
             allocation.arguments().forEach(this::analyzeExpression);
             return new HirConstant("0", ValueType.ERROR);
         }
-        if (!allowStaticNew) {
-            error("MPL3708", "第一版 new 只能出现在顶层变量初始化中；动态对象池尚未接入", allocation.span());
+        if (objectAllocationContext == ObjectAllocationContext.DISALLOWED) {
+            error("MPL3708", "new 只能用于顶层静态值，或直接初始化不逃逸的局部 val", allocation.span());
         }
         MethodInfo constructor = type.constructor();
         if (constructor == null) {
@@ -2120,14 +2167,19 @@ public final class SemanticAnalyzer {
         if (!constructor.publicAccess() && !type.name().equals(currentClass)) {
             error("MPL3707", "构造器 " + type.name() + " 是 private", allocation.span());
         }
-        List<HirExpression> arguments = analyzeArguments(type.name(), constructor.parameterTypes(),
-            allocation.arguments(), allocation.span());
+        if (objectAllocationContext == ObjectAllocationContext.REUSABLE_LOCAL && constructor.receiverEscapes()) {
+            error("MPL3708", "构造器 " + type.name() + " 会泄露 this，不能用于可复用的局部分配点", allocation.span());
+        }
+        ObjectAllocationContext argumentContext = objectAllocationContext == ObjectAllocationContext.REUSABLE_LOCAL
+            ? ObjectAllocationContext.DISALLOWED : objectAllocationContext;
+        List<HirExpression> arguments = analyzeWithObjectAllocationContext(argumentContext,
+            () -> analyzeArguments(type.name(), constructor.parameterTypes(), allocation.arguments(), allocation.span()));
         recordCall(constructor.internalName(), allocation.span());
         return new HirNewObject(nextObjectAllocationId++, type.name(), constructor.internalName(), arguments,
             new ObjectType(type.name(), false));
     }
 
-    private HirExpression analyzeObjectMethodCall(HirExpression target, ObjectType object, String methodName,
+    private HirExpression analyzeObjectMethodCall(HirExpression target, Expression sourceTarget, ObjectType object, String methodName,
                                                   List<Expression> sourceArguments, SourceSpan span) {
         if (object.nullable()) {
             error("MPL3706", "可空 " + object.displayName() + " 必须先通过 != null 检查", span);
@@ -2143,6 +2195,10 @@ public final class SemanticAnalyzer {
         }
         if (!method.publicAccess() && !object.className().equals(currentClass)) {
             error("MPL3707", "方法 " + object.className() + "." + methodName + " 是 private", span);
+        }
+        if (isReusableLocalObject(sourceTarget) && method.receiverEscapes()) {
+            error("MPL3708", "方法 " + object.className() + "." + methodName
+                + " 会泄露接收者，不能对可复用的局部对象调用", span);
         }
         List<HirExpression> arguments = new ArrayList<>();
         arguments.add(target);
@@ -2177,7 +2233,7 @@ public final class SemanticAnalyzer {
     }
 
     private HirExpression analyzeObjectFieldAssignment(MemberAssignmentExpression assignment) {
-        HirExpression target = analyzeExpression(assignment.target());
+        HirExpression target = analyzeBorrowedObjectExpression(assignment.target());
         HirExpression value = analyzeExpression(assignment.value());
         if (!(target.type() instanceof ObjectType object)) {
             error("MPL3705", "成员赋值目标必须是用户对象", assignment.target().span());
@@ -2766,12 +2822,19 @@ public final class SemanticAnalyzer {
     }
 
     private record Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
-                          HirUnitQuery unitQuery, HirBuildingQuery buildingQuery, boolean global,
+                          HirUnitQuery unitQuery, HirBuildingQuery buildingQuery, boolean reusableLocalObject,
+                          boolean global,
                           SourceSpan declarationSpan) {
         private Symbol withType(MplType narrowedType) {
             return new Symbol(narrowedType, mutable, staticStringCodeUnits, staticAggregateSize, unitQuery, buildingQuery,
-                global, declarationSpan);
+                reusableLocalObject, global, declarationSpan);
         }
+    }
+
+    private enum ObjectAllocationContext {
+        DISALLOWED,
+        STATIC,
+        REUSABLE_LOCAL
     }
 
     private record FunctionSignature(FunctionDeclaration declaration, List<MplType> parameterTypes,
@@ -2805,7 +2868,7 @@ public final class SemanticAnalyzer {
 
     private record MethodInfo(String sourceName, String internalName, FunctionDeclaration declaration,
                               List<MplType> parameterTypes, MplType returnType, boolean publicAccess,
-                              boolean constructor) {
+                              boolean constructor, boolean receiverEscapes) {
         private MethodInfo {
             parameterTypes = List.copyOf(parameterTypes);
         }

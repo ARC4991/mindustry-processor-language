@@ -139,6 +139,50 @@ class MplCompilerTest {
     }
 
     @Test
+    void reusesLocalAllocationPointSlotsAcrossLoopsAndFunctions(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            class Counter {
+                private value: Int;
+                public fun Counter(initial: Int) { this.value = initial; }
+                public fun add(amount: Int): Int {
+                    this.value += amount;
+                    return this.value;
+                }
+            }
+
+            fun calculate(seed: Int): Int {
+                val local = new Counter(seed);
+                return local.add(2);
+            }
+
+            var index = 0;
+            while (index < 2) {
+                val item = new Counter(index);
+                item.add(1);
+                index += 1;
+            }
+            val result = calculate(5);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("__mpl_obj1_value"), mlog);
+        assertTrue(mlog.contains("__mpl_obj2_value"), mlog);
+        assertFalse(mlog.contains("__mpl_obj3_value"), mlog);
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("val item: Counter = new Counter(index);"), mil);
+        assertTrue(mil.contains("val local: Counter = new Counter(seed);"), mil);
+
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
+        assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
+    }
+
+    @Test
     void compilesAConfiguredMilEntryThroughRuntimeAndTargetLowering(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(project.resolve("mpl.json"), """

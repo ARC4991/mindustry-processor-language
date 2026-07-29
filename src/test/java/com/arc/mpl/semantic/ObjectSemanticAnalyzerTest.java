@@ -103,25 +103,85 @@ class ObjectSemanticAnalyzerTest {
     }
 
     @Test
-    void rejectsDynamicNewUntilTheObjectPoolRuntimeExists() {
+    void allowsReusableNonEscapingLocalAllocations() {
         SemanticResult result = analyze("""
             class Counter {
-                public fun Counter() {}
+                public value: Int;
+                public fun Counter(initial: Int) { this.value = initial; }
+                public fun add(amount: Int): Int {
+                    this.value += amount;
+                    return this.value;
+                }
             }
 
-            fun create(): Counter {
-                return new Counter();
+            fun calculate(seed: Int): Int {
+                val local = new Counter(seed);
+                return local.add(2);
             }
 
             while (true) {
-                val item = new Counter();
+                val item = new Counter(1);
+                item.add(3);
+                val same = item === item;
                 break;
             }
             """);
 
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        assertTrue(result.program().isPresent());
+    }
+
+    @Test
+    void rejectsLocalObjectAliasesReturnsArgumentsAndLeakingReceivers() {
+        SemanticResult result = analyze("""
+            fun consume(value: Counter) {}
+            fun identity(value: Counter): Counter { return value; }
+
+            class Counter {
+                public fun Counter() {}
+                public fun leak(): Counter { return this; }
+            }
+
+            fun createDirect(): Counter {
+                return new Counter();
+            }
+
+            fun returnLocal(): Counter {
+                val local = new Counter();
+                return local;
+            }
+
+            fun misuse() {
+                val item = new Counter();
+                val alias = item;
+                consume(item);
+                val compared = identity(item) === item;
+                item.leak();
+                var mutable = new Counter();
+            }
+            """);
+
         assertTrue(result.program().isEmpty());
-        assertEquals(2, result.diagnostics().stream()
+        assertEquals(7, result.diagnostics().stream()
             .filter(diagnostic -> "MPL3708".equals(diagnostic.code())).count());
+    }
+
+    @Test
+    void rejectsReusableAllocationWhenTheConstructorLeaksThis() {
+        SemanticResult result = analyze("""
+            fun consume(value: Counter) {}
+
+            class Counter {
+                public fun Counter() { consume(this); }
+            }
+
+            fun create() {
+                val item = new Counter();
+            }
+            """);
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(hasDiagnostic(result, "MPL3708", "构造器 Counter 会泄露 this"));
     }
 
     @Test

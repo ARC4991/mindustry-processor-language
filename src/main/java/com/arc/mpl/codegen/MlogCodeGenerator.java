@@ -126,7 +126,7 @@ public final class MlogCodeGenerator {
         }
         classes = program.classes().stream().collect(java.util.stream.Collectors.toMap(
             HirClass::name, value -> value, (left, right) -> left, java.util.LinkedHashMap::new));
-        objectAllocations = collectObjectAllocations(program);
+        objectAllocations = new ObjectAllocationCollector().collect(program);
         globalVariables = new HashSet<>();
         activeBuildingBindings = new HashMap<>();
         activeDrawTarget = null;
@@ -1181,74 +1181,6 @@ public final class MlogCodeGenerator {
 
     private String objectFieldSlot(int allocationId, String field, Integer element) {
         return "__mpl_obj" + allocationId + "_" + field + (element == null ? "" : "_e" + element);
-    }
-
-    private Map<String, List<Integer>> collectObjectAllocations(HirProgram program) {
-        Map<String, List<Integer>> found = new java.util.LinkedHashMap<>();
-        for (HirStatement statement : program.statements()) {
-            if (statement instanceof HirVariableDeclaration declaration) {
-                collectObjectAllocations(declaration.initializer(), found);
-            }
-        }
-        found.replaceAll((name, ids) -> ids.stream().sorted().toList());
-        return java.util.Collections.unmodifiableMap(found);
-    }
-
-    private void collectObjectAllocations(HirExpression expression, Map<String, List<Integer>> found) {
-        if (expression instanceof HirNewObject allocation) {
-            found.computeIfAbsent(allocation.className(), ignored -> new java.util.ArrayList<>())
-                .add(allocation.allocationId());
-            allocation.arguments().forEach(argument -> collectObjectAllocations(argument, found));
-            return;
-        }
-        if (expression instanceof HirFunctionCall call) {
-            call.arguments().forEach(argument -> collectObjectAllocations(argument, found));
-        } else if (expression instanceof HirAssignment assignment) {
-            collectObjectAllocations(assignment.value(), found);
-        } else if (expression instanceof HirBinary binary) {
-            collectObjectAllocations(binary.left(), found);
-            collectObjectAllocations(binary.right(), found);
-        } else if (expression instanceof HirUnary unary) {
-            collectObjectAllocations(unary.operand(), found);
-        } else if (expression instanceof HirIntrinsicCall call) {
-            call.arguments().forEach(argument -> collectObjectAllocations(argument, found));
-        } else if (expression instanceof HirMemberAccess member) {
-            collectObjectAllocations(member.target(), found);
-        } else if (expression instanceof HirArrayLiteral array) {
-            array.elements().forEach(element -> collectObjectAllocations(element, found));
-        } else if (expression instanceof HirTupleLiteral tuple) {
-            tuple.elements().forEach(element -> collectObjectAllocations(element, found));
-        } else if (expression instanceof HirCollectionLiteral collection) {
-            collection.elements().forEach(element -> collectObjectAllocations(element, found));
-        } else if (expression instanceof HirIndexAccess access) {
-            collectObjectAllocations(access.target(), found);
-            collectObjectAllocations(access.index(), found);
-        } else if (expression instanceof HirDynamicIndexAccess access) {
-            collectObjectAllocations(access.target(), found);
-            collectObjectAllocations(access.index(), found);
-        } else if (expression instanceof HirCollectionContains contains) {
-            collectObjectAllocations(contains.target(), found);
-            collectObjectAllocations(contains.candidate(), found);
-        } else if (expression instanceof HirUnitQuery query) {
-            query.filters().forEach(filter -> collectObjectAllocations(filter, found));
-        } else if (expression instanceof HirUnitQuerySize size) {
-            size.query().filters().forEach(filter -> collectObjectAllocations(filter, found));
-        } else if (expression instanceof HirUnitQueryGet get) {
-            get.query().filters().forEach(filter -> collectObjectAllocations(filter, found));
-            collectObjectAllocations(get.index(), found);
-        } else if (expression instanceof HirBuildingQuery query) {
-            query.filters().forEach(filter -> collectObjectAllocations(filter, found));
-        } else if (expression instanceof HirBuildingQuerySize size) {
-            size.query().filters().forEach(filter -> collectObjectAllocations(filter, found));
-        } else if (expression instanceof HirBuildingQueryGet get) {
-            get.query().filters().forEach(filter -> collectObjectAllocations(filter, found));
-            collectObjectAllocations(get.index(), found);
-        } else if (expression instanceof HirObjectFieldRead read) {
-            collectObjectAllocations(read.target(), found);
-        } else if (expression instanceof HirObjectFieldAssignment assignment) {
-            collectObjectAllocations(assignment.target(), found);
-            collectObjectAllocations(assignment.value(), found);
-        }
     }
 
     private String emitMemberAccess(HirMemberAccess member) {
