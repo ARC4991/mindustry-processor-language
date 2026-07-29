@@ -16,6 +16,8 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 ./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/output.mlog'
 ```
 
+`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。手写 MIL 使用独立 ANTLR 前端，只能调用 target profile 公开宏；它与 MPL 一样经过严格类型、硬件契约、优化、Runtime、内存规划和 mlog 限制校验。当前尚未实现跨文件 `import/export`，因此一次构建只执行一个入口文件。
+
 `build` 的最后一个参数仍是 mlog 输出路径；编译器会在同一目录自动生成同名的 `.mil` 文件。例如 `build/... output.mlog` 会产生 `output.mil` 与 `output.mlog`。`.mil` 是便于检查高级糖降级和运行时展开的源级中间产物：普通变量、表达式及 `if`/`while`/`for` 等仍保持结构化写法，只有需要映射游戏能力的高级糖变为所选 profile 的宏调用。它不是把每条 mlog 指令换一种写法的包装格式；游戏中只粘贴 `.mlog`。
 
 默认构建在最终 `.mlog` 中使用最短的 `_0`、`_1` … 跳转标签以节省代码空间；排查生成逻辑时可加 `--debug`，让最终 target lowering 使用可读的完整标签名。源级 `.mil` 保留结构化控制流，通常不需要展示这些标签：
