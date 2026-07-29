@@ -359,6 +359,50 @@ class MplCompilerTest {
     }
 
     @Test
+    void expandsBuildingTraversalOverDeclaredLinksOnly(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
+            const NorthTurret: Duo = link("duo1");
+            const SouthTurret: Duo = link("duo2");
+            const Status: Message = link("message1");
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var health: Float = 0.0;
+            for (var turret : Building.getAllDuo()) {
+                health += turret.health;
+                turret.shoot(turret.x, turret.y, true);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("duo1 @health"));
+        assertTrue(mlog.contains("duo2 @health"));
+        assertTrue(mlog.contains("control duo1 shoot"));
+        assertTrue(mlog.contains("control duo2 shoot"));
+        assertTrue(result.mil().orElseThrow().contains("for (var turret : Building.getAllDuo()) {"));
+    }
+
+    @Test
+    void removesBuildingTraversalWhenNoMatchingLinkIsDeclared(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Status: Message = link(\"message1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            for (var turret : Building.getAllDuo()) {
+                turret.shoot(1.0, 2.0, true);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals("stop\n", result.mlog().orElseThrow());
+    }
+
+    @Test
     void compilesImmutableStaticStringsAndFoldsLiteralConcatenation(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),

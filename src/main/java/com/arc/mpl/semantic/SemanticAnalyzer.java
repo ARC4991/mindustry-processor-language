@@ -39,6 +39,7 @@ import com.arc.mpl.hir.HirAggregateIteration;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
+import com.arc.mpl.hir.HirBuildingIteration;
 import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
@@ -106,6 +107,8 @@ public final class SemanticAnalyzer {
     private int unitIterationDepth;
     private int loopDepth;
     private String activeUnitBinding;
+    private String activeBuildingBinding;
+    private String activeBuildingType;
     private String currentFunction;
     private MplType currentReturnType;
     private boolean analyzingTopLevel;
@@ -136,7 +139,7 @@ public final class SemanticAnalyzer {
         diagnostics.clear();
         file = sourceFile;
         this.messages = Map.copyOf(hardware.messages());
-        Map<String, HardwareContract.LinkDeclaration> links = new HashMap<>();
+        Map<String, HardwareContract.LinkDeclaration> links = new LinkedHashMap<>();
         for (HardwareContract.LinkDeclaration link : hardware.links()) {
             if (links.put(link.mplName(), link) != null) {
                 throw new IllegalArgumentException("重复的硬件常量：" + link.mplName());
@@ -151,6 +154,8 @@ public final class SemanticAnalyzer {
         unitIterationDepth = 0;
         loopDepth = 0;
         activeUnitBinding = null;
+        activeBuildingBinding = null;
+        activeBuildingType = null;
         currentFunction = null;
         currentReturnType = null;
         analyzingTopLevel = true;
@@ -370,13 +375,17 @@ public final class SemanticAnalyzer {
     }
 
     private HirStatement analyzeForEach(ForEachStatement loop) {
-        if (currentFunction != null) {
-            error("MPL3508", "第一版函数不支持 UnitSet 遍历", loop.span());
-        }
         Optional<UnitQuery> query = parseUnitQuery(loop.iterable());
-        if (query.isEmpty()) {
-            return analyzeAggregateForEach(loop);
+        if (query.isPresent()) {
+            return analyzeUnitForEach(loop, query.orElseThrow());
         }
+        Optional<BuildingQuery> buildingQuery = parseBuildingQuery(loop.iterable());
+        if (buildingQuery.isPresent()) return analyzeBuildingForEach(loop, buildingQuery.orElseThrow());
+        return analyzeAggregateForEach(loop);
+    }
+
+    private HirStatement analyzeUnitForEach(ForEachStatement loop, UnitQuery query) {
+        if (currentFunction != null) error("MPL3508", "第一版函数不支持 UnitSet 遍历", loop.span());
         if (unitIterationDepth > 0) {
             error("MPL3306", "第一版不支持嵌套 Unit 遍历", loop.span());
         }
@@ -389,23 +398,44 @@ public final class SemanticAnalyzer {
         try {
             declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, false, loop.span()), loop.span());
             List<HirExpression> filters = new ArrayList<>();
-            for (Expression filter : query.orElseThrow().filters()) {
+            for (Expression filter : query.filters()) {
                 filters.add(analyzeUnitFilter(filter, loop.name()));
             }
             List<HirStatement> body = analyzeBlock(loop.body());
-            TargetProfile.UnitType type = query.orElseThrow().type();
+            TargetProfile.UnitType type = query.type();
             return new HirUnitIteration(
                 loop.name(),
-                query.orElseThrow().typeName(),
+                query.typeName(),
                 type.mlogName(),
                 filters,
-                query.orElseThrow().managedLimit(),
+                query.managedLimit(),
                 body);
         } finally {
             scopes.pop();
             unitIterationDepth--;
             loopDepth--;
             activeUnitBinding = previousBinding;
+        }
+    }
+
+    private HirStatement analyzeBuildingForEach(ForEachStatement loop, BuildingQuery query) {
+        String previousBinding = activeBuildingBinding;
+        String previousType = activeBuildingType;
+        activeBuildingBinding = loop.name();
+        activeBuildingType = query.typeName();
+        loopDepth++;
+        scopes.push(new HashMap<>());
+        try {
+            declare(loop.name(), new Symbol(ValueType.BUILDING, false, null, null, false, loop.span()), loop.span());
+            List<HirHardwareLink> buildings = hardwareLinks.values().stream()
+                .filter(link -> query.typeName().equals(link.mplType()))
+                .map(link -> new HirHardwareLink(link.mplName(), link.gameAlias(), link.mplType())).toList();
+            return new HirBuildingIteration(loop.name(), query.typeName(), buildings, analyzeBlock(loop.body()));
+        } finally {
+            scopes.pop();
+            loopDepth--;
+            activeBuildingBinding = previousBinding;
+            activeBuildingType = previousType;
         }
     }
 
@@ -504,6 +534,29 @@ public final class SemanticAnalyzer {
         return Optional.of(new UnitQuery(typeName, type.orElseThrow(), List.copyOf(filters), managedLimit));
     }
 
+    private Optional<BuildingQuery> parseBuildingQuery(Expression iterable) {
+        if (!(iterable instanceof CallExpression call)
+            || !(call.callee() instanceof MemberAccessExpression member)
+            || !(member.target() instanceof Identifier namespace)
+            || !"Building".equals(namespace.name())) {
+            return Optional.empty();
+        }
+        if (!member.member().startsWith("getAll") || member.member().length() == "getAll".length()) {
+            error("MPL3201", "Building 查询必须形如 Building.getAllDuo()", member.span());
+            return Optional.empty();
+        }
+        if (!call.arguments().isEmpty()) {
+            error("MPL3201", "第一版 Building.getAll类型() 不接受参数；筛选将在后续实现", call.span());
+            return Optional.empty();
+        }
+        String typeName = member.member().substring("getAll".length());
+        if (profile.buildingType(typeName).isEmpty()) {
+            error("MPL3201", "当前 target 不支持 Building.getAll" + typeName + "()", member.span());
+            return Optional.empty();
+        }
+        return Optional.of(new BuildingQuery(typeName));
+    }
+
     private HirExpression analyzeUnitFilter(Expression source, String bindingName) {
         String parameter = "_";
         Expression predicate = source;
@@ -583,6 +636,11 @@ public final class SemanticAnalyzer {
             && "set".equals(member.member())) {
             return analyzeArraySet(target.name(), targetSymbol, collection, call.arguments(), call.span());
         }
+        if (targetSymbol != null && targetSymbol.type() == ValueType.BUILDING
+            && target.name().equals(activeBuildingBinding) && activeBuildingType != null) {
+            return analyzeBuildingControl(new HirVariable(target.name(), ValueType.BUILDING), activeBuildingType,
+                target.name(), member.member(), call.arguments(), call.span());
+        }
         if (targetSymbol != null && targetSymbol.type() == ValueType.UNIT) {
             return analyzeUnitControl(target.name(), member.member(), call.arguments(), call.span());
         }
@@ -591,10 +649,16 @@ public final class SemanticAnalyzer {
 
     private HirStatement analyzeBuildingControl(HardwareContract.LinkDeclaration link, String method,
                                                 List<Expression> sourceArguments, SourceSpan span) {
-        TargetProfile.BuildingType building = profile.buildingType(link.mplType()).orElse(null);
+        return analyzeBuildingControl(new HirHardwareLink(link.mplName(), link.gameAlias(), link.mplType()), link.mplType(),
+            link.mplName(), method, sourceArguments, span);
+    }
+
+    private HirStatement analyzeBuildingControl(HirExpression target, String buildingType, String targetName, String method,
+                                                List<Expression> sourceArguments, SourceSpan span) {
+        TargetProfile.BuildingType building = profile.buildingType(buildingType).orElse(null);
         TargetProfile.BuildingAction action = building == null ? null : building.actions().get(method);
         if (action == null) {
-            error("MPL3201", "硬件 " + link.mplName() + "（" + link.mplType() + "）不支持控制方法：" + method, span);
+            error("MPL3201", "建筑 " + targetName + "（" + buildingType + "）不支持控制方法：" + method, span);
             return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
         }
         if (sourceArguments.size() != action.parameterTypes().size()) {
@@ -611,7 +675,7 @@ public final class SemanticAnalyzer {
             arguments.add(argument);
         }
         String control = action.target().substring("control ".length());
-        return new HirBuildingControl(new HirHardwareLink(link.mplName(), link.gameAlias(), link.mplType()), control, arguments);
+        return new HirBuildingControl(target, control, arguments);
     }
 
     private HirStatement analyzeLegacyMethodCall(MethodCallExpression call) {
@@ -854,6 +918,16 @@ public final class SemanticAnalyzer {
                 return new HirMemberAccess(target, member.member(), ValueType.ERROR);
             }
             return new HirMemberAccess(target, member.member(), type.orElseThrow());
+        }
+        if (target.type() == ValueType.BUILDING && target instanceof HirVariable variable
+            && variable.name().equals(activeBuildingBinding) && activeBuildingType != null) {
+            TargetProfile.BuildingType building = profile.buildingType(activeBuildingType).orElseThrow();
+            ValueType type = building.propertyTypes().get(member.member());
+            if (type == null) {
+                error("MPL3201", "建筑 " + activeBuildingType + " 不支持只读属性：" + member.member(), member.span());
+                return new HirMemberAccess(target, member.member(), ValueType.ERROR);
+            }
+            return new HirMemberAccess(target, member.member(), type);
         }
         error("MPL3201", "当前阶段不支持该成员访问", member.span());
         return new HirConstant("0", ValueType.ERROR);
@@ -1355,5 +1429,8 @@ public final class SemanticAnalyzer {
     }
 
     private record UnitQuery(String typeName, TargetProfile.UnitType type, List<Expression> filters, int managedLimit) {
+    }
+
+    private record BuildingQuery(String typeName) {
     }
 }

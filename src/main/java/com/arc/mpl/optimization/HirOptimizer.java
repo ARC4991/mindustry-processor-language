@@ -7,6 +7,7 @@ import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirBuildingControl;
+import com.arc.mpl.hir.HirBuildingIteration;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
@@ -115,6 +116,14 @@ public final class HirOptimizer {
             return List.of(new HirUnitIteration(iteration.bindingName(), iteration.unitType(), iteration.mlogType(),
                 optimizeExpressions(iteration.filters()), iteration.managedLimit(), optimizeStatements(iteration.body())));
         }
+        if (statement instanceof HirBuildingIteration iteration) {
+            if (iteration.buildings().isEmpty()) {
+                eliminatedStatements++;
+                return List.of();
+            }
+            return List.of(new HirBuildingIteration(iteration.bindingName(), iteration.buildingType(), iteration.buildings(),
+                optimizeStatements(iteration.body())));
+        }
         if (statement instanceof HirAggregateIteration iteration) {
             return List.of(new HirAggregateIteration(iteration.bindingName(), iteration.source(), iteration.elementType(),
                 iteration.size(), optimizeStatements(iteration.body())));
@@ -123,7 +132,8 @@ public final class HirOptimizer {
             return List.of(new HirUnitControl(control.bindingName(), control.command(), optimizeExpressions(control.arguments())));
         }
         if (statement instanceof HirBuildingControl control) {
-            return List.of(new HirBuildingControl(control.target(), control.action(), optimizeExpressions(control.arguments())));
+            return List.of(new HirBuildingControl(optimizeExpression(control.target()), control.action(),
+                optimizeExpressions(control.arguments())));
         }
         if (statement instanceof HirCollectionSet update) {
             return List.of(new HirCollectionSet(update.target(), update.index(), optimizeExpression(update.value())));

@@ -12,6 +12,7 @@ import com.arc.mpl.hir.HirFunction;
 import com.arc.mpl.hir.HirFunctionCall;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
+import com.arc.mpl.hir.HirBuildingIteration;
 import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
@@ -59,6 +60,7 @@ public final class MlogCodeGenerator {
     private Map<String, HirFunction> functions;
     private Map<String, Integer> functionIndexes;
     private Set<String> globalVariables;
+    private Map<String, HirHardwareLink> activeBuildingBindings;
     private String currentFunction;
 
     /** Creates a compact release emitter, suitable for deployment to a processor. */
@@ -84,6 +86,7 @@ public final class MlogCodeGenerator {
             functionIndexes.put(program.functions().get(index).name(), index);
         }
         globalVariables = new HashSet<>();
+        activeBuildingBindings = new HashMap<>();
         for (HirStatement statement : program.statements()) {
             if (statement instanceof HirVariableDeclaration declaration) globalVariables.add(declaration.name());
         }
@@ -148,6 +151,10 @@ public final class MlogCodeGenerator {
         }
         if (statement instanceof HirAggregateIteration iteration) {
             emitAggregateIteration(iteration);
+            return;
+        }
+        if (statement instanceof HirBuildingIteration iteration) {
+            emitBuildingIteration(iteration);
             return;
         }
         if (statement instanceof HirUnitControl control) {
@@ -484,7 +491,33 @@ public final class MlogCodeGenerator {
 
     private void emitBuildingControl(HirBuildingControl control) {
         List<String> arguments = control.arguments().stream().map(this::emitExpression).toList();
-        output.buildingControl(control.target().gameAlias(), control.action(), arguments);
+        output.buildingControl(resolveBuildingTarget(control.target()), control.action(), arguments);
+    }
+
+    private void emitBuildingIteration(HirBuildingIteration iteration) {
+        MlogProgramBuilder.Label end = label("building_end");
+        HirHardwareLink previous = activeBuildingBindings.get(iteration.bindingName());
+        try {
+            for (HirHardwareLink building : iteration.buildings()) {
+                MlogProgramBuilder.Label next = label("building_next");
+                activeBuildingBindings.put(iteration.bindingName(), building);
+                emitLoopBody(iteration.body(), next, end);
+                emitLabel(next);
+            }
+        } finally {
+            if (previous == null) activeBuildingBindings.remove(iteration.bindingName());
+            else activeBuildingBindings.put(iteration.bindingName(), previous);
+        }
+        emitLabel(end);
+    }
+
+    private String resolveBuildingTarget(HirExpression target) {
+        if (target instanceof HirHardwareLink hardware) return hardware.gameAlias();
+        if (target instanceof HirVariable variable && variable.type() == com.arc.mpl.hir.ValueType.BUILDING) {
+            HirHardwareLink building = activeBuildingBindings.get(variable.name());
+            if (building != null) return building.gameAlias();
+        }
+        throw new IllegalArgumentException("building control lacks an active linked building target: " + target);
     }
 
     private void emitLoopBody(List<HirStatement> body, MlogProgramBuilder.Label continueTarget,
@@ -590,6 +623,13 @@ public final class MlogCodeGenerator {
         if (member.target() instanceof HirHardwareLink hardware) {
             String result = temporary();
             output.sensor(result, hardware.gameAlias(), "@" + member.member());
+            return result;
+        }
+        if (member.target() instanceof HirVariable variable && variable.type() == com.arc.mpl.hir.ValueType.BUILDING) {
+            HirHardwareLink building = activeBuildingBindings.get(variable.name());
+            if (building == null) throw new IllegalArgumentException("building field access lacks an active binding: " + variable.name());
+            String result = temporary();
+            output.sensor(result, building.gameAlias(), "@" + member.member());
             return result;
         }
         if (!(member.target() instanceof HirVariable variable) || variable.type() != com.arc.mpl.hir.ValueType.UNIT) {

@@ -6,6 +6,7 @@ import com.arc.mpl.hir.HirArrayLiteral;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
+import com.arc.mpl.hir.HirBuildingIteration;
 import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
@@ -150,6 +151,12 @@ public final class MilCodeGenerator {
             emitBlock(writer, iteration.body());
             return;
         }
+        if (statement instanceof HirBuildingIteration iteration) {
+            writer.append("for (var ").append(identifier(iteration.bindingName(), "遍历变量"))
+                .append(" : Building.getAll").append(identifier(iteration.buildingType(), "建筑类型")).append("()) ");
+            emitBlock(writer, iteration.body());
+            return;
+        }
         if (statement instanceof HirUnitControl control) {
             emitUnitControl(writer, control);
             return;
@@ -237,10 +244,16 @@ public final class MilCodeGenerator {
     /** Keeps building control target-aware in MIL instead of leaking a raw mlog instruction. */
     private void emitBuildingControl(Writer writer, HirBuildingControl control) {
         writer.append("@building.control(")
-            .append(targetLink(control.target().gameAlias()))
+            .append(buildingTarget(control.target()))
             .append(", ").append(identifier(control.action(), "建筑控制动作"));
         for (HirExpression argument : control.arguments()) writer.append(", ").append(expression(argument));
         writer.line(");");
+    }
+
+    private String buildingTarget(HirExpression target) {
+        if (target instanceof HirHardwareLink hardware) return targetLink(hardware.gameAlias());
+        if (target.type() == ValueType.BUILDING) return expression(target);
+        throw new IllegalArgumentException("MIL 建筑控制目标必须是链接或 Building 绑定");
     }
 
     private String expression(HirExpression value) {
