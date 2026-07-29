@@ -8,6 +8,5 @@ export class StatusPanel {
         screen.clear(Color.black);
         screen.fill(Color.green);
         screen.fillRect(4, 4, count, 8);
-        screen.flush();
     }
 }
