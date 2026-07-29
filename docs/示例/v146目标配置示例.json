@@ -118,6 +118,35 @@
       "lowering": ["ubind", "sensor", "op", "jump", "set"]
     },
     {
+      "name": "@unit.countManaged",
+      "visibility": "public",
+      "body": "none",
+      "parameters": [
+        { "name": "type", "type": "GameUnitType" },
+        { "name": "binding", "type": "UnitBinding" },
+        { "name": "limit", "type": "Int" },
+        { "name": "filters", "type": "UnitFilter[]" }
+      ],
+      "effects": ["readsWorld", "bindsUnit", "claimsUnits"],
+      "maxCost": { "instructions": 48, "virtualSlots": 8, "physicalSlots": 0 },
+      "lowering": ["ubind", "sensor", "ucontrol", "op", "jump"]
+    },
+    {
+      "name": "@unit.getManaged",
+      "visibility": "public",
+      "body": "none",
+      "parameters": [
+        { "name": "type", "type": "GameUnitType" },
+        { "name": "binding", "type": "UnitBinding" },
+        { "name": "index", "type": "Int" },
+        { "name": "limit", "type": "Int" },
+        { "name": "filters", "type": "UnitFilter[]" }
+      ],
+      "effects": ["readsWorld", "bindsUnit", "claimsUnits", "createsUnitRef"],
+      "maxCost": { "instructions": 56, "virtualSlots": 11, "physicalSlots": 0 },
+      "lowering": ["ubind", "sensor", "ucontrol", "op", "jump", "set"]
+    },
+    {
       "name": "@unit.refRead",
       "visibility": "public",
       "body": "none",
