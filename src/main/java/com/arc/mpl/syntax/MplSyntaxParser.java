@@ -1,6 +1,7 @@
 package com.arc.mpl.syntax;
 
 import com.arc.mpl.ast.AssignmentExpression;
+import com.arc.mpl.ast.ArrayLiteral;
 import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.BooleanLiteral;
 import com.arc.mpl.ast.BlockStatement;
@@ -16,6 +17,7 @@ import com.arc.mpl.ast.FunctionDeclaration;
 import com.arc.mpl.ast.FunctionParameter;
 import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.Identifier;
+import com.arc.mpl.ast.IndexExpression;
 import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
@@ -24,6 +26,7 @@ import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.ReturnStatement;
 import com.arc.mpl.ast.Statement;
 import com.arc.mpl.ast.StringLiteral;
+import com.arc.mpl.ast.TupleLiteral;
 import com.arc.mpl.ast.UnaryExpression;
 import com.arc.mpl.ast.VariableDeclaration;
 import com.arc.mpl.ast.WhileStatement;
@@ -296,6 +299,10 @@ public final class MplSyntaxParser {
                     result = new MemberAccessExpression(result, suffix.member.getText(), span(context));
                     continue;
                 }
+                if (suffix.index != null) {
+                    result = new IndexExpression(result, (Expression) visit(suffix.index), span(context));
+                    continue;
+                }
                 List<Expression> arguments = new ArrayList<>();
                 for (MplParser.ExpressionContext argument : suffix.expression()) {
                     arguments.add((Expression) visit(argument));
@@ -322,6 +329,14 @@ public final class MplSyntaxParser {
             }
             if (context.name != null) {
                 return new Identifier(context.name.getText(), span(context));
+            }
+            if (context.LBRACK() != null) {
+                List<Expression> elements = context.expression().stream().map(value -> (Expression) visit(value)).toList();
+                return new ArrayLiteral(elements, span(context));
+            }
+            if (!context.tupleElement.isEmpty()) {
+                List<Expression> elements = context.tupleElement.stream().map(value -> (Expression) visit(value)).toList();
+                return new TupleLiteral(elements, span(context));
             }
             return visit(context.grouped);
         }

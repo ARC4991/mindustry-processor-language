@@ -1,6 +1,7 @@
 package com.arc.mpl.semantic;
 
 import com.arc.mpl.ast.AssignmentExpression;
+import com.arc.mpl.ast.ArrayLiteral;
 import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.BlockStatement;
 import com.arc.mpl.ast.BooleanLiteral;
@@ -16,6 +17,7 @@ import com.arc.mpl.ast.ForStatement;
 import com.arc.mpl.ast.FunctionDeclaration;
 import com.arc.mpl.ast.FunctionParameter;
 import com.arc.mpl.ast.Identifier;
+import com.arc.mpl.ast.IndexExpression;
 import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
@@ -25,6 +27,7 @@ import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.ReturnStatement;
 import com.arc.mpl.ast.Statement;
 import com.arc.mpl.ast.StringLiteral;
+import com.arc.mpl.ast.TupleLiteral;
 import com.arc.mpl.ast.UnaryExpression;
 import com.arc.mpl.ast.VariableDeclaration;
 import com.arc.mpl.ast.WhileStatement;
@@ -32,10 +35,14 @@ import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.Diagnostic.SourceSpan;
 import com.arc.mpl.diagnostic.Severity;
 import com.arc.mpl.hir.HirAssignment;
+import com.arc.mpl.hir.HirAggregateIteration;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirBreak;
+import com.arc.mpl.hir.HirCollectionContains;
+import com.arc.mpl.hir.HirCollectionLiteral;
+import com.arc.mpl.hir.HirCollectionSet;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
@@ -48,18 +55,24 @@ import com.arc.mpl.hir.HirFunctionParameter;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIf;
+import com.arc.mpl.hir.HirArrayLiteral;
+import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirStatement;
 import com.arc.mpl.hir.HirText;
+import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
+import com.arc.mpl.hir.MplType;
+import com.arc.mpl.hir.CollectionType;
+import com.arc.mpl.hir.TupleType;
 import com.arc.mpl.hir.ValueType;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
@@ -94,7 +107,7 @@ public final class SemanticAnalyzer {
     private int loopDepth;
     private String activeUnitBinding;
     private String currentFunction;
-    private ValueType currentReturnType;
+    private MplType currentReturnType;
     private boolean analyzingTopLevel;
 
     /** Uses the v146 baseline when semantic analysis is invoked outside a compiler request. */
@@ -197,12 +210,15 @@ public final class SemanticAnalyzer {
     }
 
     private void registerFunction(FunctionDeclaration function) {
-        List<ValueType> parameters = function.parameters().stream()
+        List<MplType> parameters = function.parameters().stream()
             .map(parameter -> parseType(parameter.typeName(), parameter.span())).toList();
         if (parameters.contains(ValueType.VOID)) {
             error("MPL3503", "函数参数不能使用 Void 类型", function.span());
         }
-        ValueType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.VOID);
+        MplType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.VOID);
+        if (parameters.stream().anyMatch(this::isAggregate) || isAggregate(returnType)) {
+            error("MPL3602", "第一版函数 ABI 尚不支持聚合类型参数或返回值", function.span());
+        }
         FunctionSignature signature = new FunctionSignature(function, parameters, returnType);
         if (hardwareLinks.containsKey(function.name()) || functions.putIfAbsent(function.name(), signature) != null) {
             error("MPL3501", "函数已声明：" + function.name(), function.span());
@@ -217,7 +233,7 @@ public final class SemanticAnalyzer {
             return new HirFunction(function.name(), List.of(), ValueType.ERROR, List.of());
         }
         String previousFunction = currentFunction;
-        ValueType previousReturnType = currentReturnType;
+        MplType previousReturnType = currentReturnType;
         currentFunction = function.name();
         currentReturnType = signature.returnType();
         scopes.push(new HashMap<>());
@@ -225,8 +241,8 @@ public final class SemanticAnalyzer {
             List<HirFunctionParameter> parameters = new ArrayList<>();
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
-                ValueType type = signature.parameterTypes().get(index);
-                declare(parameter.name(), new Symbol(type, false, null, false, parameter.span()), parameter.span());
+                MplType type = signature.parameterTypes().get(index);
+                declare(parameter.name(), new Symbol(type, false, null, null, false, parameter.span()), parameter.span());
                 parameters.add(new HirFunctionParameter(parameter.name(), type));
             }
             List<HirStatement> body = analyzeBlock(function.body());
@@ -359,8 +375,7 @@ public final class SemanticAnalyzer {
         }
         Optional<UnitQuery> query = parseUnitQuery(loop.iterable());
         if (query.isEmpty()) {
-            error("MPL3301", "当前阶段 for 只支持 Unit.getAll类型() 查询", loop.iterable().span());
-            return new HirBlock(analyzeBlock(loop.body()));
+            return analyzeAggregateForEach(loop);
         }
         if (unitIterationDepth > 0) {
             error("MPL3306", "第一版不支持嵌套 Unit 遍历", loop.span());
@@ -372,7 +387,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, false, loop.span()), loop.span());
+            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, null, false, loop.span()), loop.span());
             List<HirExpression> filters = new ArrayList<>();
             for (Expression filter : query.orElseThrow().filters()) {
                 filters.add(analyzeUnitFilter(filter, loop.name()));
@@ -391,6 +406,29 @@ public final class SemanticAnalyzer {
             unitIterationDepth--;
             loopDepth--;
             activeUnitBinding = previousBinding;
+        }
+    }
+
+    private HirStatement analyzeAggregateForEach(ForEachStatement loop) {
+        HirExpression iterable = analyzeExpression(loop.iterable());
+        if (!(iterable instanceof HirVariable source) || !isAggregate(iterable.type())) {
+            error("MPL3601", "for 遍历目标必须是已声明的元组、数组、List、Set 或 Unit 查询", loop.iterable().span());
+            return new HirBlock(analyzeBlock(loop.body()));
+        }
+        Integer size = aggregateSize(loop.iterable(), iterable.type());
+        MplType elementType = aggregateIterationElementType(iterable.type(), loop.iterable().span());
+        if (size == null || elementType == ValueType.ERROR) {
+            return new HirBlock(analyzeBlock(loop.body()));
+        }
+
+        loopDepth++;
+        scopes.push(new HashMap<>());
+        try {
+            declare(loop.name(), new Symbol(elementType, false, null, null, false, loop.span()), loop.span());
+            return new HirAggregateIteration(loop.name(), source, elementType, size, analyzeBlock(loop.body()));
+        } finally {
+            scopes.pop();
+            loopDepth--;
         }
     }
 
@@ -477,7 +515,7 @@ public final class SemanticAnalyzer {
         scopes.push(new HashMap<>());
         try {
             // Lambda parameters deliberately shadow the enclosing loop binding.
-            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null, false, source.span()));
+            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null, null, false, source.span()));
             HirExpression result = analyzeExpression(predicate);
             if (result.type() != ValueType.BOOL) {
                 error("MPL3303", "UnitSet.where(...) 的过滤条件必须是 Bool", predicate.span());
@@ -541,6 +579,10 @@ public final class SemanticAnalyzer {
         }
 
         Symbol targetSymbol = lookup(target.name());
+        if (targetSymbol != null && targetSymbol.type() instanceof CollectionType collection
+            && "set".equals(member.member())) {
+            return analyzeArraySet(target.name(), targetSymbol, collection, call.arguments(), call.span());
+        }
         if (targetSymbol != null && targetSymbol.type() == ValueType.UNIT) {
             return analyzeUnitControl(target.name(), member.member(), call.arguments(), call.span());
         }
@@ -579,6 +621,26 @@ public final class SemanticAnalyzer {
         }
         error("MPL3201", "当前阶段不支持该成员调用", call.span());
         return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+    }
+
+    private HirStatement analyzeArraySet(String target, Symbol symbol, CollectionType type,
+                                         List<Expression> arguments, SourceSpan span) {
+        if (type.kind() != CollectionType.Kind.ARRAY) {
+            error("MPL3601", "只有 Array 支持 set(index, value)", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (!symbol.mutable()) error("MPL3104", "不能修改 val Array：" + target, span);
+        if (arguments.size() != 2) {
+            error("MPL3601", "Array.set(index, value) 需要两个参数", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        Optional<Integer> index = staticAggregateIndex(arguments.get(0), symbol.staticAggregateSize());
+        HirExpression value = analyzeExpression(arguments.get(1));
+        if (!type.elementType().canAssignFrom(value.type())) {
+            error("MPL3103", "不能将 " + display(value.type()) + " 写入 " + type.displayName(), arguments.get(1).span());
+        }
+        return index.<HirStatement>map(valueAt -> new HirCollectionSet(target, valueAt, value))
+            .orElseGet(() -> new HirExpressionStatement(new HirConstant("0", ValueType.ERROR)));
     }
 
     private HirStatement analyzePrintCall(String linkName, List<Expression> sourceArguments) {
@@ -623,27 +685,46 @@ public final class SemanticAnalyzer {
     }
 
     private HirStatement analyzeDeclaration(VariableDeclaration declaration) {
-        HirExpression initializer = analyzeExpression(declaration.initializer());
+        MplType declaredType = declaration.declaredType().map(value -> parseType(value, declaration.span())).orElse(null);
+        HirExpression initializer = analyzeInitializer(declaration.initializer(), declaredType);
         if (initializer.type() == ValueType.BUILDING) {
             error("MPL3201", "硬件常量不能赋给普通变量；请直接读取字段或调用控制方法", declaration.initializer().span());
         }
-        ValueType type = declaration.declaredType().map(value -> parseType(value, declaration.span())).orElse(initializer.type());
+        MplType type = declaredType == null ? initializer.type() : declaredType;
         if (type == ValueType.VOID) error("MPL3103", "变量不能使用 Void 类型", declaration.span());
         if (!type.canAssignFrom(initializer.type())) {
             error("MPL3103", "不能将 " + display(initializer.type()) + " 赋给 " + display(type), declaration.initializer().span());
+        }
+        if (isAggregate(type) && !(initializer instanceof HirArrayLiteral)
+            && !(initializer instanceof HirTupleLiteral) && !(initializer instanceof HirCollectionLiteral)) {
+            error("MPL3601", "当前阶段不支持复制聚合值；请在声明处使用字面量或集合工厂", declaration.initializer().span());
         }
         if (type == ValueType.STRING && declaration.mutable()) {
             error("MPL3103", "当前阶段 String 仅支持 val 静态值；动态 String runtime 尚未启用", declaration.span());
         }
         boolean global = currentFunction == null && scopes.size() == 1;
         if (declare(declaration.name(),
-            new Symbol(type, declaration.mutable(), staticStringLength(initializer), global, declaration.span()),
+            new Symbol(type, declaration.mutable(), staticStringLength(initializer), staticAggregateSize(initializer), global,
+                declaration.span()),
             declaration.span()) && global) {
             // The initializer has already been analyzed, so calls inside it
             // deliberately do not observe this variable as initialized.
             initializedGlobals.add(declaration.name());
         }
         return new HirVariableDeclaration(declaration.name(), type, declaration.mutable(), initializer);
+    }
+
+    /** Resolves empty aggregate literals from an explicit declaration type. */
+    private HirExpression analyzeInitializer(Expression initializer, MplType expectedType) {
+        if (expectedType instanceof CollectionType collection && initializer instanceof ArrayLiteral array
+            && array.elements().isEmpty() && collection.kind() == CollectionType.Kind.ARRAY) {
+            return new HirArrayLiteral(List.of(), collection);
+        }
+        if (expectedType instanceof CollectionType collection && initializer instanceof CallExpression call
+            && call.arguments().isEmpty() && collectionFactory(call.callee()).filter(collection.kind()::equals).isPresent()) {
+            return new HirCollectionLiteral(List.of(), collection);
+        }
+        return analyzeExpression(initializer);
     }
 
     private HirExpression analyzeExpression(Expression expression) {
@@ -654,6 +735,8 @@ public final class SemanticAnalyzer {
             return new HirConstant(Double.toString(decimal.value()), ValueType.FLOAT);
         }
         if (expression instanceof StringLiteral text) return new HirText(text.value());
+        if (expression instanceof ArrayLiteral array) return analyzeArrayLiteral(array);
+        if (expression instanceof TupleLiteral tuple) return analyzeTupleLiteral(tuple);
         if (expression instanceof BooleanLiteral bool) {
             return new HirConstant(bool.value() ? "1" : "0", ValueType.BOOL);
         }
@@ -670,6 +753,9 @@ public final class SemanticAnalyzer {
                 ? activeUnitBinding
                 : identifier.name();
             return new HirVariable(name, symbol.type());
+        }
+        if (expression instanceof IndexExpression access) {
+            return analyzeIndexAccess(access);
         }
         if (expression instanceof MemberAccessExpression member) {
             return analyzeMemberAccess(member);
@@ -715,6 +801,9 @@ public final class SemanticAnalyzer {
             error("MPL3104", "不能给 val 重新赋值：" + assignment.target().name(), assignment.target().span());
         }
         if ("=".equals(assignment.operator())) {
+            if (isAggregate(target.type())) {
+                error("MPL3601", "当前阶段不能整体重新赋值聚合值；可变 Array 请使用 set(index, value)", assignment.span());
+            }
             if (!target.type().canAssignFrom(value.type())) {
                 error("MPL3103", "不能将 " + display(value.type()) + " 赋给 " + display(target.type()), assignment.value().span());
             }
@@ -746,6 +835,14 @@ public final class SemanticAnalyzer {
             }
         }
         HirExpression target = analyzeExpression(member.target());
+        if ("size".equals(member.member()) && isAggregate(target.type())) {
+            Integer size = aggregateSize(member.target(), target.type());
+            if (size == null) {
+                error("MPL3601", "当前聚合值缺少可静态证明的长度", member.span());
+                return new HirConstant("0", ValueType.ERROR);
+            }
+            return new HirConstant(Integer.toString(size), ValueType.INT);
+        }
         if (target.type() == ValueType.UNIT) {
             if ("flag".equals(member.member())) {
                 error("MPL3304", "Unit.flag 是编译器私有运行时属性，MPL 不允许访问", member.span());
@@ -763,6 +860,16 @@ public final class SemanticAnalyzer {
     }
 
     private HirExpression analyzeCallExpression(CallExpression call) {
+        Optional<CollectionType.Kind> factory = collectionFactory(call.callee());
+        if (factory.isPresent()) return analyzeCollectionFactory(factory.orElseThrow(), call.arguments(), call.span());
+        if (call.callee() instanceof MemberAccessExpression member && "get".equals(member.member())
+            && call.arguments().size() == 1) {
+            return analyzeIndexAccess(member.target(), call.arguments().get(0), call.span());
+        }
+        if (call.callee() instanceof MemberAccessExpression member && "contains".equals(member.member())
+            && call.arguments().size() == 1) {
+            return analyzeCollectionContains(member.target(), call.arguments().get(0), call.span());
+        }
         if (call.callee() instanceof Identifier functionName) {
             FunctionSignature signature = functions.get(functionName.name());
             if (signature == null) {
@@ -845,7 +952,7 @@ public final class SemanticAnalyzer {
         return new HirIntrinsicCall("Clock", name, List.of(), type);
     }
 
-    private ValueType binaryType(String operator, ValueType left, ValueType right, SourceSpan span) {
+    private ValueType binaryType(String operator, MplType left, MplType right, SourceSpan span) {
         return switch (operator) {
             case "+" -> left == ValueType.STRING || right == ValueType.STRING
                 ? typeError("String 拼接当前仅支持两个字符串字面量；动态拼接需要 String runtime", span)
@@ -873,24 +980,26 @@ public final class SemanticAnalyzer {
         };
     }
 
-    private ValueType numericResult(ValueType left, ValueType right, SourceSpan span, String context) {
+    private ValueType numericResult(MplType left, MplType right, SourceSpan span, String context) {
         requireNumeric(left, span, context);
         requireNumeric(right, span, context);
         if (left == ValueType.ERROR || right == ValueType.ERROR) return ValueType.ERROR;
         return left == ValueType.FLOAT || right == ValueType.FLOAT ? ValueType.FLOAT : ValueType.INT;
     }
 
-    private ValueType requireNumeric(ValueType type, SourceSpan span, String context) {
-        return type == ValueType.INT || type == ValueType.FLOAT || type == ValueType.ERROR ? type
-            : typeError(context + " 只接受 Int 或 Float", span);
+    private ValueType requireNumeric(MplType type, SourceSpan span, String context) {
+        if (type == ValueType.INT || type == ValueType.FLOAT || type == ValueType.ERROR) {
+            return (ValueType) type;
+        }
+        return typeError(context + " 只接受 Int 或 Float", span);
     }
 
-    private ValueType requireBool(ValueType type, SourceSpan span, String context) {
-        return type == ValueType.BOOL || type == ValueType.ERROR ? type
-            : typeError(context + " 只接受 Bool", span);
+    private ValueType requireBool(MplType type, SourceSpan span, String context) {
+        if (type == ValueType.BOOL || type == ValueType.ERROR) return (ValueType) type;
+        return typeError(context + " 只接受 Bool", span);
     }
 
-    private boolean compatibleForEquality(ValueType left, ValueType right, SourceSpan span) {
+    private boolean compatibleForEquality(MplType left, MplType right, SourceSpan span) {
         if (left == ValueType.ERROR || right == ValueType.ERROR || left == right
             || left == ValueType.INT && right == ValueType.FLOAT || left == ValueType.FLOAT && right == ValueType.INT) {
             return true;
@@ -899,7 +1008,27 @@ public final class SemanticAnalyzer {
         return false;
     }
 
-    private ValueType parseType(String name, SourceSpan span) {
+    private MplType parseType(String name, SourceSpan span) {
+        if (name.endsWith("[]")) {
+            MplType element = parseType(name.substring(0, name.length() - 2), span);
+            return collectionType(CollectionType.Kind.ARRAY, element, span);
+        }
+        if (name.startsWith("List<") && name.endsWith(">")) {
+            return collectionType(CollectionType.Kind.LIST, name.substring("List<".length(), name.length() - 1), span);
+        }
+        if (name.startsWith("Set<") && name.endsWith(">")) {
+            return collectionType(CollectionType.Kind.SET, name.substring("Set<".length(), name.length() - 1), span);
+        }
+        if (name.startsWith("(") && name.endsWith(")")) {
+            List<String> members = splitTopLevel(name.substring(1, name.length() - 1));
+            if (members.size() < 2) return typeError("元组类型至少需要两个元素", span);
+            List<MplType> types = members.stream().map(member -> parseType(member, span)).toList();
+            if (types.contains(ValueType.ERROR) || types.contains(ValueType.VOID)) return ValueType.ERROR;
+            if (types.stream().anyMatch(this::isAggregate)) {
+                return typeError("当前阶段不支持嵌套聚合类型；需要 Memory runtime", span);
+            }
+            return new TupleType(types);
+        }
         return switch (name) {
             case "Int" -> ValueType.INT;
             case "Float" -> ValueType.FLOAT;
@@ -913,6 +1042,212 @@ public final class SemanticAnalyzer {
     private ValueType typeError(String message, SourceSpan span) {
         error("MPL3103", message, span);
         return ValueType.ERROR;
+    }
+
+    private MplType collectionType(CollectionType.Kind kind, String elementName, SourceSpan span) {
+        MplType element = parseType(elementName, span);
+        return collectionType(kind, element, span);
+    }
+
+    private MplType collectionType(CollectionType.Kind kind, MplType element, SourceSpan span) {
+        if (element == ValueType.ERROR || element == ValueType.VOID) return ValueType.ERROR;
+        if (isAggregate(element)) return typeError("当前阶段不支持嵌套聚合类型；需要 Memory runtime", span);
+        return new CollectionType(kind, element);
+    }
+
+    private List<String> splitTopLevel(String text) {
+        List<String> result = new ArrayList<>();
+        int nesting = 0;
+        int start = 0;
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (character == '<' || character == '(' || character == '[') nesting++;
+            if (character == '>' || character == ')' || character == ']') nesting--;
+            if (character == ',' && nesting == 0) {
+                result.add(text.substring(start, index));
+                start = index + 1;
+            }
+        }
+        result.add(text.substring(start));
+        return result;
+    }
+
+    private HirExpression analyzeArrayLiteral(ArrayLiteral array) {
+        if (array.elements().isEmpty()) {
+            error("MPL3601", "空数组字面量缺少可推导的元素类型", array.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        List<HirExpression> elements = array.elements().stream().map(this::analyzeExpression).toList();
+        MplType elementType = commonElementType(elements.stream().map(HirExpression::type).toList(), array.span());
+        if (elementType == ValueType.ERROR) return new HirConstant("0", ValueType.ERROR);
+        if (isAggregate(elementType)) {
+            error("MPL3601", "当前阶段不支持嵌套聚合值；需要 Memory runtime", array.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        return new HirArrayLiteral(elements, new CollectionType(CollectionType.Kind.ARRAY, elementType));
+    }
+
+    private HirExpression analyzeTupleLiteral(TupleLiteral tuple) {
+        List<HirExpression> elements = tuple.elements().stream().map(this::analyzeExpression).toList();
+        List<MplType> types = elements.stream().map(HirExpression::type).toList();
+        if (types.contains(ValueType.ERROR) || types.contains(ValueType.VOID)) return new HirConstant("0", ValueType.ERROR);
+        if (types.stream().anyMatch(this::isAggregate)) {
+            error("MPL3601", "当前阶段不支持嵌套聚合值；需要 Memory runtime", tuple.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        return new HirTupleLiteral(elements, new TupleType(types));
+    }
+
+    private MplType commonElementType(List<MplType> types, SourceSpan span) {
+        MplType result = types.get(0);
+        for (int index = 1; index < types.size(); index++) {
+            MplType candidate = types.get(index);
+            if (result.equals(candidate)) continue;
+            if ((result == ValueType.INT && candidate == ValueType.FLOAT)
+                || (result == ValueType.FLOAT && candidate == ValueType.INT)) {
+                result = ValueType.FLOAT;
+                continue;
+            }
+            return typeError("数组元素必须具有可统一推导的类型，不能混用 " + display(result) + " 与 "
+                + display(candidate), span);
+        }
+        return result;
+    }
+
+    private Optional<CollectionType.Kind> collectionFactory(Expression callee) {
+        if (callee instanceof Identifier identifier) {
+            return switch (identifier.name()) {
+                case "listOf" -> Optional.of(CollectionType.Kind.LIST);
+                case "setOf" -> Optional.of(CollectionType.Kind.SET);
+                default -> Optional.empty();
+            };
+        }
+        if (callee instanceof MemberAccessExpression member && member.target() instanceof Identifier namespace
+            && "of".equals(member.member())) {
+            return switch (namespace.name()) {
+                case "List" -> Optional.of(CollectionType.Kind.LIST);
+                case "Set" -> Optional.of(CollectionType.Kind.SET);
+                default -> Optional.empty();
+            };
+        }
+        return Optional.empty();
+    }
+
+    private HirExpression analyzeCollectionFactory(CollectionType.Kind kind, List<Expression> sourceElements, SourceSpan span) {
+        if (sourceElements.isEmpty()) {
+            error("MPL3601", kind + " 空字面量缺少可推导的元素类型", span);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        List<HirExpression> elements = sourceElements.stream().map(this::analyzeExpression).toList();
+        MplType elementType = commonElementType(elements.stream().map(HirExpression::type).toList(), span);
+        if (elementType == ValueType.ERROR) return new HirConstant("0", ValueType.ERROR);
+        if (kind == CollectionType.Kind.SET && !hasStaticallyDistinctElements(elements)) {
+            error("MPL3601", "第一版 Set 元素必须是互不相同的静态字面量", span);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        return new HirCollectionLiteral(elements, new CollectionType(kind, elementType));
+    }
+
+    private boolean hasStaticallyDistinctElements(List<HirExpression> elements) {
+        Set<String> values = new HashSet<>();
+        for (HirExpression element : elements) {
+            String key;
+            if (element instanceof HirConstant constant) key = constant.type().displayName() + ":" + constant.mlogLiteral();
+            else if (element instanceof HirText text) key = "String:" + text.value();
+            else return false;
+            if (!values.add(key)) return false;
+        }
+        return true;
+    }
+
+    private HirExpression analyzeCollectionContains(Expression sourceTarget, Expression sourceCandidate, SourceSpan span) {
+        HirExpression target = analyzeExpression(sourceTarget);
+        HirExpression candidate = analyzeExpression(sourceCandidate);
+        if (!(target.type() instanceof CollectionType collection)) {
+            error("MPL3601", "contains(value) 仅支持 Array、List 或 Set", span);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        if (!collection.elementType().canAssignFrom(candidate.type())) {
+            error("MPL3103", "contains 参数必须是 " + collection.elementType().displayName(), sourceCandidate.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        Integer size = aggregateSize(sourceTarget, target.type());
+        if (size == null) {
+            error("MPL3601", "contains 需要可静态确定长度的聚合值", span);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        return new HirCollectionContains(target, candidate, size);
+    }
+
+    private HirExpression analyzeIndexAccess(IndexExpression access) {
+        return analyzeIndexAccess(access.target(), access.index(), access.span());
+    }
+
+    private HirExpression analyzeIndexAccess(Expression sourceTarget, Expression sourceIndex, SourceSpan span) {
+        HirExpression target = analyzeExpression(sourceTarget);
+        HirExpression index = analyzeExpression(sourceIndex);
+        if (index.type() != ValueType.INT) {
+            error("MPL3601", "聚合下标必须是 Int", sourceIndex.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        if (!(index instanceof HirConstant constant)) {
+            error("MPL3601", "当前阶段只支持可在编译期确定的聚合下标；动态下标需要 Memory runtime", span);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        Integer size = aggregateSize(sourceTarget, target.type());
+        Optional<Integer> staticIndex = staticAggregateIndex(sourceIndex, size);
+        if (staticIndex.isEmpty()) return new HirConstant("0", ValueType.ERROR);
+        int position = staticIndex.orElseThrow();
+        MplType elementType = null;
+        if (target.type() instanceof TupleType tuple) elementType = tuple.elementTypes().get(position);
+        if (target.type() instanceof CollectionType collection) elementType = collection.elementType();
+        if (elementType == null) {
+            error("MPL3601", "下标访问仅支持元组、数组、List 或 Set", sourceTarget.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        return new HirIndexAccess(target, index, elementType);
+    }
+
+    private boolean isAggregate(MplType type) {
+        return type instanceof TupleType || type instanceof CollectionType;
+    }
+
+    private MplType aggregateIterationElementType(MplType type, SourceSpan span) {
+        if (type instanceof CollectionType collection) return collection.elementType();
+        if (type instanceof TupleType tuple) {
+            MplType first = tuple.elementTypes().get(0);
+            if (tuple.elementTypes().stream().allMatch(first::equals)) return first;
+            return typeError("只有元素类型一致的元组可以直接 for 遍历", span);
+        }
+        return typeError("该类型不可遍历：" + display(type), span);
+    }
+
+    private Integer aggregateSize(Expression source, MplType type) {
+        if (type instanceof TupleType tuple) return tuple.elementTypes().size();
+        if (source instanceof Identifier identifier) {
+            Symbol symbol = lookup(identifier.name());
+            return symbol == null ? null : symbol.staticAggregateSize();
+        }
+        if (source instanceof ArrayLiteral array) return array.elements().size();
+        if (source instanceof TupleLiteral tuple) return tuple.elements().size();
+        return null;
+    }
+
+    private Optional<Integer> staticAggregateIndex(Expression source, Integer size) {
+        if (!(source instanceof IntegerLiteral literal)) {
+            error("MPL3601", "当前阶段只支持可在编译期确定的聚合下标；动态下标需要 Memory runtime", source.span());
+            return Optional.empty();
+        }
+        if (literal.value() < 0 || literal.value() > Integer.MAX_VALUE) {
+            error("MPL3601", "聚合下标超出 Int 范围", source.span());
+            return Optional.empty();
+        }
+        int index = (int) literal.value();
+        if (size == null || index >= size) {
+            error("MPL3601", "聚合下标越界：" + index, source.span());
+            return Optional.empty();
+        }
+        return Optional.of(index);
     }
 
     private boolean declare(String name, Symbol symbol, SourceSpan span) {
@@ -981,17 +1316,8 @@ public final class SemanticAnalyzer {
         diagnostics.add(new Diagnostic(Severity.ERROR, code, message, Optional.ofNullable(file), Optional.of(span)));
     }
 
-    private String display(ValueType type) {
-        return switch (type) {
-            case INT -> "Int";
-            case FLOAT -> "Float";
-            case BOOL -> "Bool";
-            case STRING -> "String";
-            case UNIT -> "Unit";
-            case BUILDING -> "Building";
-            case VOID -> "Void";
-            case ERROR -> "错误类型";
-        };
+    private String display(MplType type) {
+        return type.displayName();
     }
 
     /** Static bound is known only for immutable literal-backed strings in the first String slice. */
@@ -1004,12 +1330,19 @@ public final class SemanticAnalyzer {
         return 0;
     }
 
-    private record Symbol(ValueType type, boolean mutable, Integer staticStringCodeUnits, boolean global,
+    private Integer staticAggregateSize(HirExpression expression) {
+        if (expression instanceof HirArrayLiteral array) return array.elements().size();
+        if (expression instanceof HirTupleLiteral tuple) return tuple.elements().size();
+        if (expression instanceof HirCollectionLiteral collection) return collection.elements().size();
+        return null;
+    }
+
+    private record Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize, boolean global,
                           SourceSpan declarationSpan) {
     }
 
-    private record FunctionSignature(FunctionDeclaration declaration, List<ValueType> parameterTypes,
-                                     ValueType returnType) {
+    private record FunctionSignature(FunctionDeclaration declaration, List<MplType> parameterTypes,
+                                     MplType returnType) {
         private FunctionSignature {
             parameterTypes = List.copyOf(parameterTypes);
         }

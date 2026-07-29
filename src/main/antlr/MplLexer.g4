@@ -39,6 +39,8 @@ LESS: '<';
 GREATER: '>';
 LPAREN: '(';
 RPAREN: ')';
+LBRACK: '[';
+RBRACK: ']';
 LBRACE: '{';
 RBRACE: '}';
 COLON: ':';

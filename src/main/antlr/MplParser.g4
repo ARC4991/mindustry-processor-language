@@ -7,9 +7,19 @@ options { tokenVocab = MplLexer; }
 program: (functionDeclaration | statement)* EOF;
 
 functionDeclaration: FUN name=IDENTIFIER LPAREN (parameter (COMMA parameter)*)? RPAREN
-    (COLON returnType=IDENTIFIER)? body=block;
+    (COLON returnType=typeReference)? body=block;
 
-parameter: name=IDENTIFIER COLON typeName=IDENTIFIER;
+parameter: name=IDENTIFIER COLON typeName=typeReference;
+
+typeReference
+    : typeAtom (LBRACK RBRACK)*
+    ;
+
+typeAtom
+    : IDENTIFIER LESS typeReference GREATER
+    | LPAREN typeReference (COMMA typeReference)+ RPAREN
+    | IDENTIFIER
+    ;
 
 statement
     : whileStatement
@@ -41,7 +51,7 @@ forStatement: FOR LPAREN
 forEachStatement: FOR LPAREN VAR name=IDENTIFIER COLON iterable=expression RPAREN body=block;
 
 variableDeclaration
-    : kind=(VAR | VAL) name=IDENTIFIER (COLON typeName=IDENTIFIER)? ASSIGN expression
+    : kind=(VAR | VAL) name=IDENTIFIER (COLON typeName=typeReference)? ASSIGN expression
     ;
 
 expression
@@ -73,6 +83,7 @@ postfixExpression: primaryExpression postfixSuffix*;
 postfixSuffix
     : DOT member=IDENTIFIER
     | LPAREN (expression (COMMA expression)*)? RPAREN
+    | LBRACK index=expression RBRACK
     ;
 
 primaryExpression
@@ -82,5 +93,7 @@ primaryExpression
     | TRUE
     | FALSE
     | name=IDENTIFIER
+    | LBRACK (expression (COMMA expression)*)? RBRACK
+    | LPAREN tupleElement+=expression (COMMA tupleElement+=expression)+ RPAREN
     | LPAREN grouped=expression RPAREN
     ;

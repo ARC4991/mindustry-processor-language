@@ -5,7 +5,7 @@ import java.util.Objects;
 /** A source-level declaration retained for structured MIL serialization. */
 public record HirVariableDeclaration(
     String name,
-    ValueType type,
+    MplType type,
     boolean mutable,
     HirExpression initializer
 ) implements HirStatement {
@@ -20,7 +20,7 @@ public record HirVariableDeclaration(
      * callers must preserve whether the declaration was {@code var} or
      * {@code val}.
      */
-    public HirVariableDeclaration(String name, ValueType type, HirExpression initializer) {
+    public HirVariableDeclaration(String name, MplType type, HirExpression initializer) {
         this(name, type, true, initializer);
     }
 }

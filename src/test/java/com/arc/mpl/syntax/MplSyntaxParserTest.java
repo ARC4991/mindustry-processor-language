@@ -1,10 +1,12 @@
 package com.arc.mpl.syntax;
 
 import com.arc.mpl.ast.AssignmentExpression;
+import com.arc.mpl.ast.ArrayLiteral;
 import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.ForStatement;
 import com.arc.mpl.ast.IfStatement;
+import com.arc.mpl.ast.TupleLiteral;
 import com.arc.mpl.ast.VariableDeclaration;
 import org.junit.jupiter.api.Test;
 
@@ -97,5 +99,23 @@ class MplSyntaxParserTest {
         assertEquals("add", result.program().orElseThrow().functions().get(0).name());
         assertEquals(2, result.program().orElseThrow().functions().get(0).parameters().size());
         assertEquals(1, result.program().orElseThrow().statements().size());
+    }
+
+    @Test
+    void parsesTupleAndArrayTypesUsingThePublicAggregateSyntax() {
+        ParseResult result = parser.parse("""
+            val test : (Int,Int,Int) = (1,2,3);
+            val array : Int[] = [1,2,3,4,5];
+            """, Path.of("main.mpl"));
+
+        assertTrue(result.succeeded());
+        VariableDeclaration tuple = assertInstanceOf(VariableDeclaration.class,
+            result.program().orElseThrow().statements().get(0));
+        VariableDeclaration array = assertInstanceOf(VariableDeclaration.class,
+            result.program().orElseThrow().statements().get(1));
+        assertEquals("(Int,Int,Int)", tuple.declaredType().orElseThrow());
+        assertInstanceOf(TupleLiteral.class, tuple.initializer());
+        assertEquals("Int[]", array.declaredType().orElseThrow());
+        assertInstanceOf(ArrayLiteral.class, array.initializer());
     }
 }

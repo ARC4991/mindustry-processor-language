@@ -2,6 +2,7 @@ package com.arc.mpl.semantic;
 
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.hir.HirVariableDeclaration;
+import com.arc.mpl.hir.CollectionType;
 import com.arc.mpl.syntax.MplSyntaxParser;
 import org.junit.jupiter.api.Test;
 
@@ -206,5 +207,96 @@ class SemanticAnalyzerTest {
 
         assertTrue(result.program().isEmpty());
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3508")));
+    }
+
+    @Test
+    void infersHomogeneousArrayElementTypeAndChecksStaticIndexBounds() {
+        Program program = parser.parse("""
+            val values = [1, 2, 3];
+            var selected: Int = values[1];
+            var count: Int = values.size;
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isPresent());
+        HirVariableDeclaration values = assertInstanceOf(HirVariableDeclaration.class,
+            result.program().orElseThrow().statements().get(0));
+        assertEquals(new CollectionType(CollectionType.Kind.ARRAY, com.arc.mpl.hir.ValueType.INT), values.type());
+    }
+
+    @Test
+    void rejectsDynamicAndOutOfRangeAggregateIndexes() {
+        Program program = parser.parse("""
+            val values: Int[] = [1, 2, 3];
+            var index: Int = 1;
+            var dynamic: Int = values[index];
+            var invalid: Int = values[3];
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertEquals(2, result.diagnostics().stream().filter(diagnostic -> diagnostic.code().equals("MPL3601")).count());
+    }
+
+    @Test
+    void supportsStaticListAndSetOperationsAndTraversal() {
+        Program program = parser.parse("""
+            val list: List<Int> = listOf(1, 2, 3);
+            val set: Set<Int> = Set.of(2, 4, 6);
+            var first: Int = list.get(0);
+            var found: Bool = set.contains(4);
+            for (var value : list) {
+                first = value;
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isPresent());
+        HirVariableDeclaration list = assertInstanceOf(HirVariableDeclaration.class,
+            result.program().orElseThrow().statements().get(0));
+        HirVariableDeclaration set = assertInstanceOf(HirVariableDeclaration.class,
+            result.program().orElseThrow().statements().get(1));
+        assertEquals(new CollectionType(CollectionType.Kind.LIST, com.arc.mpl.hir.ValueType.INT), list.type());
+        assertEquals(new CollectionType(CollectionType.Kind.SET, com.arc.mpl.hir.ValueType.INT), set.type());
+    }
+
+    @Test
+    void resolvesEmptyCollectionsFromAnExplicitTypeAndRejectsAggregateCopies() {
+        Program validProgram = parser.parse("""
+            val emptyArray: Int[] = [];
+            val emptyList: List<Int> = List.of();
+            val emptySet: Set<Int> = setOf();
+            var size: Int = emptyArray.size + emptyList.size + emptySet.size;
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult validResult = analyzer.analyze(validProgram, Path.of("main.mpl"));
+
+        assertTrue(validResult.program().isPresent());
+
+        Program invalidProgram = parser.parse("""
+            var source: Int[] = [1, 2];
+            var copy = source;
+            source = [3, 4];
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult invalidResult = analyzer.analyze(invalidProgram, Path.of("main.mpl"));
+
+        assertTrue(invalidResult.program().isEmpty());
+        assertEquals(2, invalidResult.diagnostics().stream().filter(diagnostic -> "MPL3601".equals(diagnostic.code())).count());
+    }
+
+    @Test
+    void rejectsNestedStaticAggregateLayoutsUntilMemoryRuntimeExists() {
+        Program program = parser.parse("""
+            val matrix: Int[][] = [[1, 2], [3, 4]];
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3601".equals(diagnostic.code())));
     }
 }

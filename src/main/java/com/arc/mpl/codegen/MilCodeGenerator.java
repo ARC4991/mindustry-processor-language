@@ -1,10 +1,15 @@
 package com.arc.mpl.codegen;
 
 import com.arc.mpl.hir.HirAssignment;
+import com.arc.mpl.hir.HirAggregateIteration;
+import com.arc.mpl.hir.HirArrayLiteral;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirBreak;
+import com.arc.mpl.hir.HirCollectionContains;
+import com.arc.mpl.hir.HirCollectionLiteral;
+import com.arc.mpl.hir.HirCollectionSet;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirHardwareLink;
@@ -15,6 +20,7 @@ import com.arc.mpl.hir.HirFor;
 import com.arc.mpl.hir.HirFunction;
 import com.arc.mpl.hir.HirFunctionCall;
 import com.arc.mpl.hir.HirIntrinsicCall;
+import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirPrintStatement;
@@ -22,12 +28,14 @@ import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirStatement;
 import com.arc.mpl.hir.HirText;
+import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
+import com.arc.mpl.hir.MplType;
 import com.arc.mpl.hir.ValueType;
 
 import java.util.List;
@@ -136,12 +144,23 @@ public final class MilCodeGenerator {
             emitUnitIteration(writer, iteration);
             return;
         }
+        if (statement instanceof HirAggregateIteration iteration) {
+            writer.append("for (var ").append(identifier(iteration.bindingName(), "遍历变量"))
+                .append(" : ").append(expression(iteration.source())).append(") ");
+            emitBlock(writer, iteration.body());
+            return;
+        }
         if (statement instanceof HirUnitControl control) {
             emitUnitControl(writer, control);
             return;
         }
         if (statement instanceof HirBuildingControl control) {
             emitBuildingControl(writer, control);
+            return;
+        }
+        if (statement instanceof HirCollectionSet update) {
+            writer.line(identifier(update.target(), "Array") + ".set(" + update.index() + ", "
+                + expression(update.value()) + ");");
             return;
         }
         if (statement instanceof HirBreak) {
@@ -228,6 +247,16 @@ public final class MilCodeGenerator {
         if (value instanceof HirConstant constant) return constant(constant);
         if (value instanceof HirText text) return quote(text.value());
         if (value instanceof HirVariable variable) return identifier(variable.name(), "变量");
+        if (value instanceof HirArrayLiteral array) return aggregateLiteral("[", "]", array.elements());
+        if (value instanceof HirTupleLiteral tuple) return aggregateLiteral("(", ")", tuple.elements());
+        if (value instanceof HirCollectionLiteral collection) {
+            String factory = collection.type().kind() == com.arc.mpl.hir.CollectionType.Kind.LIST ? "listOf" : "setOf";
+            return aggregateLiteral(factory + "(", ")", collection.elements());
+        }
+        if (value instanceof HirIndexAccess access) return expression(access.target()) + "[" + expression(access.index()) + "]";
+        if (value instanceof HirCollectionContains contains) {
+            return expression(contains.target()) + ".contains(" + expression(contains.candidate()) + ")";
+        }
         if (value instanceof HirUnary unary) {
             return "(" + unary.operator() + expression(unary.operand()) + ")";
         }
@@ -246,6 +275,12 @@ public final class MilCodeGenerator {
             return result.append(')').toString();
         }
         throw new IllegalArgumentException("MIL 尚不能序列化 HIR 表达式：" + value.getClass().getSimpleName());
+    }
+
+    private String aggregateLiteral(String prefix, String suffix, List<HirExpression> elements) {
+        StringBuilder result = new StringBuilder(prefix);
+        appendExpressions(result, elements);
+        return result.append(suffix).toString();
     }
 
     /**
@@ -303,17 +338,9 @@ public final class MilCodeGenerator {
         }
     }
 
-    private String displayType(ValueType type) {
-        return switch (type) {
-            case INT -> "Int";
-            case FLOAT -> "Float";
-            case BOOL -> "Bool";
-            case STRING -> "String";
-            case UNIT -> "Unit";
-            case BUILDING -> "Building";
-            case VOID -> "Void";
-            case ERROR -> throw new IllegalArgumentException("不能将含错误类型的 HIR 序列化为 MIL");
-        };
+    private String displayType(MplType type) {
+        if (type == ValueType.ERROR) throw new IllegalArgumentException("不能将含错误类型的 HIR 序列化为 MIL");
+        return type.displayName();
     }
 
     /** Prefixes game-owned hardware aliases so they cannot look like MPL variables. */

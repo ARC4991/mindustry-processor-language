@@ -8,7 +8,7 @@ public record HirIntrinsicCall(
     String namespace,
     String name,
     List<HirExpression> arguments,
-    ValueType type
+    MplType type
 ) implements HirExpression {
     public HirIntrinsicCall {
         Objects.requireNonNull(namespace, "namespace");

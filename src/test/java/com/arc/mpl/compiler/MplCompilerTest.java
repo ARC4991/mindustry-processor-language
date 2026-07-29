@@ -140,6 +140,35 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesStaticAggregateTraversalWithContinueAndBreak(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val values: Int[] = [1, 2, 3];
+            var total: Int = 0;
+            for (var value : values) {
+                if (value == 2) {
+                    continue;
+                }
+                total += value;
+                if (value == 3) {
+                    break;
+                }
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("set mpl_value mpl_values_e0"));
+        assertTrue(mlog.contains("set mpl_value mpl_values_e1"));
+        assertTrue(mlog.contains("set mpl_value mpl_values_e2"));
+        assertTrue(mlog.contains("jump mpl_aggregate_next_1 always 0 0"));
+        assertTrue(mlog.contains("jump mpl_aggregate_end_0 always 0 0"));
+        assertTrue(result.mil().orElseThrow().contains("for (var value : values) {"));
+    }
+
+    @Test
     void compilesCountingForAndRunsUpdateAfterContinue(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
@@ -240,6 +269,61 @@ class MplCompilerTest {
         assertTrue(mlog.contains("set @counter __mpl_fn1_return"));
         assertFalse(mlog.contains("__mpl_fn_a_param_b_c"));
         assertFalse(mlog.contains("__mpl_fn_a_b_param_c"));
+    }
+
+    @Test
+    void compilesStaticallyLaidOutTupleAndArrayElements(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val test : (Int,Int,Int) = (1,2,3);
+            val array : Int[] = [1,2,3,4,5];
+            var selected: Int = test[1] + array[3];
+            var count: Int = array.size;
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            set mpl_test_e0 1
+            set mpl_test_e1 2
+            set mpl_test_e2 3
+            set mpl_array_e0 1
+            set mpl_array_e1 2
+            set mpl_array_e2 3
+            set mpl_array_e3 4
+            set mpl_array_e4 5
+            op add __mpl_tmp0 mpl_test_e1 mpl_array_e3
+            set mpl_selected __mpl_tmp0
+            set mpl_count 5
+            stop
+            """, result.mlog().orElseThrow());
+        assertTrue(result.mil().orElseThrow().contains("val test: (Int, Int, Int) = (1, 2, 3);"));
+        assertTrue(result.mil().orElseThrow().contains("val array: Int[] = [1, 2, 3, 4, 5];"));
+    }
+
+    @Test
+    void compilesStaticListSetMembershipAndArrayElementUpdate(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var array: Int[] = [1, 2, 3];
+            array.set(1, 9);
+            val queue: List<Int> = listOf(2, 4, 6);
+            val tags: Set<Int> = Set.of(3, 5, 7);
+            var found: Bool = queue.contains(4);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("set mpl_array_e1 9"));
+        assertTrue(mlog.contains("set mpl_queue_e0 2"));
+        assertTrue(mlog.contains("set mpl_tags_e2 7"));
+        assertTrue(mlog.contains("op equal __mpl_tmp2 mpl_queue_e0 __mpl_tmp0"));
+        assertTrue(mlog.contains("op or __mpl_tmp1 __mpl_tmp1 __mpl_tmp2"));
+        assertTrue(result.mil().orElseThrow().contains("val queue: List<Int> = listOf(2, 4, 6);"));
+        assertTrue(result.mil().orElseThrow().contains("val tags: Set<Int> = setOf(3, 5, 7);"));
     }
 
     @Test

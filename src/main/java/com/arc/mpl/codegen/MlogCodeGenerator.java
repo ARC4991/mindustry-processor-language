@@ -1,6 +1,8 @@
 package com.arc.mpl.codegen;
 
 import com.arc.mpl.hir.HirAssignment;
+import com.arc.mpl.hir.HirAggregateIteration;
+import com.arc.mpl.hir.HirArrayLiteral;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
@@ -11,10 +13,14 @@ import com.arc.mpl.hir.HirFunctionCall;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirBreak;
+import com.arc.mpl.hir.HirCollectionContains;
+import com.arc.mpl.hir.HirCollectionLiteral;
+import com.arc.mpl.hir.HirCollectionSet;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
+import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirProgram;
@@ -23,6 +29,7 @@ import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirStatement;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirText;
+import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirVariable;
@@ -95,6 +102,18 @@ public final class MlogCodeGenerator {
 
     private void emitStatement(HirStatement statement) {
         if (statement instanceof HirVariableDeclaration declaration) {
+            if (declaration.initializer() instanceof HirArrayLiteral array) {
+                emitAggregateDeclaration(declaration.name(), array.elements());
+                return;
+            }
+            if (declaration.initializer() instanceof HirTupleLiteral tuple) {
+                emitAggregateDeclaration(declaration.name(), tuple.elements());
+                return;
+            }
+            if (declaration.initializer() instanceof HirCollectionLiteral collection) {
+                emitAggregateDeclaration(declaration.name(), collection.elements());
+                return;
+            }
             output.set(variable(declaration.name()), emitExpression(declaration.initializer()));
             return;
         }
@@ -127,12 +146,20 @@ public final class MlogCodeGenerator {
             emitUnitIteration(iteration);
             return;
         }
+        if (statement instanceof HirAggregateIteration iteration) {
+            emitAggregateIteration(iteration);
+            return;
+        }
         if (statement instanceof HirUnitControl control) {
             emitUnitControl(control);
             return;
         }
         if (statement instanceof HirBuildingControl control) {
             emitBuildingControl(control);
+            return;
+        }
+        if (statement instanceof HirCollectionSet update) {
+            output.set(aggregateSlot(update.target(), update.index()), emitExpression(update.value()));
             return;
         }
         if (statement instanceof HirBreak) {
@@ -479,13 +506,64 @@ public final class MlogCodeGenerator {
     private String emitExpression(HirExpression expression) {
         if (expression instanceof HirConstant constant) return constant.mlogLiteral();
         if (expression instanceof HirText text) return quote(text.value());
+        if (expression instanceof HirArrayLiteral || expression instanceof HirTupleLiteral || expression instanceof HirCollectionLiteral) {
+            throw new IllegalArgumentException("aggregate literal must be assigned before target lowering");
+        }
         if (expression instanceof HirVariable variable) return variable(variable.name());
+        if (expression instanceof HirIndexAccess access) return emitIndexAccess(access);
+        if (expression instanceof HirCollectionContains contains) return emitCollectionContains(contains);
         if (expression instanceof HirUnary unary) return emitUnary(unary);
         if (expression instanceof HirBinary binary) return emitBinary(binary);
         if (expression instanceof HirMemberAccess member) return emitMemberAccess(member);
         if (expression instanceof HirIntrinsicCall call) return emitIntrinsicCall(call);
         if (expression instanceof HirFunctionCall call) return emitFunctionCall(call);
         return emitAssignment((HirAssignment) expression);
+    }
+
+    private void emitAggregateDeclaration(String name, List<HirExpression> elements) {
+        for (int index = 0; index < elements.size(); index++) {
+            output.set(aggregateSlot(name, index), emitExpression(elements.get(index)));
+        }
+    }
+
+    private void emitAggregateIteration(HirAggregateIteration iteration) {
+        MlogProgramBuilder.Label end = label("aggregate_end");
+        for (int index = 0; index < iteration.size(); index++) {
+            MlogProgramBuilder.Label next = label("aggregate_next");
+            output.set(variable(iteration.bindingName()), aggregateSlot(iteration.source().name(), index));
+            emitLoopBody(iteration.body(), next, end);
+            emitLabel(next);
+        }
+        emitLabel(end);
+    }
+
+    private String emitIndexAccess(HirIndexAccess access) {
+        if (!(access.target() instanceof HirVariable variable) || !(access.index() instanceof HirConstant index)) {
+            throw new IllegalArgumentException("aggregate access must be statically resolved before target lowering");
+        }
+        int position;
+        try {
+            position = Math.toIntExact(Long.parseLong(index.mlogLiteral()));
+        } catch (NumberFormatException | ArithmeticException exception) {
+            throw new IllegalArgumentException("invalid aggregate index: " + index.mlogLiteral(), exception);
+        }
+        return aggregateSlot(variable.name(), position);
+    }
+
+    private String emitCollectionContains(HirCollectionContains contains) {
+        if (!(contains.target() instanceof HirVariable variable)) {
+            throw new IllegalArgumentException("collection contains target must be a variable");
+        }
+        String candidate = temporary();
+        output.set(candidate, emitExpression(contains.candidate()));
+        String result = temporary();
+        output.set(result, "0");
+        for (int index = 0; index < contains.size(); index++) {
+            String equal = temporary();
+            output.operation(Operation.EQUAL, equal, aggregateSlot(variable.name(), index), candidate);
+            output.operation(Operation.OR, result, result, equal);
+        }
+        return result;
     }
 
     private String emitFunctionCall(HirFunctionCall call) {
@@ -618,6 +696,11 @@ public final class MlogCodeGenerator {
             return functionParameterSlot(currentFunction, name);
         }
         return functionPrefix(currentFunction) + "_local_" + name;
+    }
+
+    private String aggregateSlot(String name, int index) {
+        if (index < 0) throw new IllegalArgumentException("aggregate index must be non-negative");
+        return variable(name) + "_e" + index;
     }
 
     private String functionParameterSlot(String function, String parameter) {
