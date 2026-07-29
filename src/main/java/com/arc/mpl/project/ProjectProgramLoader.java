@@ -1,6 +1,7 @@
 package com.arc.mpl.project;
 
 import com.arc.mpl.ast.ExportDeclaration;
+import com.arc.mpl.ast.ClassDeclaration;
 import com.arc.mpl.ast.FunctionDeclaration;
 import com.arc.mpl.ast.ImportDeclaration;
 import com.arc.mpl.ast.Program;
@@ -255,16 +256,18 @@ public final class ProjectProgramLoader {
         Map<Path, Map<String, String>> bindings = bindImports(declarations, exports);
         if (!diagnostics.isEmpty()) return new Program(List.of());
 
+        List<ClassDeclaration> classes = new ArrayList<>();
         List<FunctionDeclaration> functions = new ArrayList<>();
         List<Statement> statements = new ArrayList<>();
         for (Path path : order) {
             SourceModule module = modules.get(path);
             Program rewritten = new ModuleSymbolRewriter(bindings.get(path), declarations.get(path))
                 .rewrite(module.program());
+            classes.addAll(rewritten.classes());
             functions.addAll(rewritten.functions());
             statements.addAll(rewritten.statements());
         }
-        return new Program(functions, statements);
+        return new Program(List.of(), List.of(), classes, functions, statements);
     }
 
     private Map<Path, Map<String, String>> allocateDeclarations() {
@@ -281,6 +284,9 @@ public final class ProjectProgramLoader {
     private void allocateModuleDeclarations(Path path, Map<Path, Map<String, String>> result, Set<String> used) {
         Map<String, String> names = new LinkedHashMap<>();
         SourceModule module = modules.get(path);
+        for (ClassDeclaration declaration : module.program().classes()) {
+            declare(path, names, used, declaration.name(), declaration.span());
+        }
         for (FunctionDeclaration function : module.program().functions()) {
             declare(path, names, used, function.name(), function.span());
         }

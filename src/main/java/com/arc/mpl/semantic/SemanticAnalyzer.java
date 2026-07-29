@@ -7,6 +7,9 @@ import com.arc.mpl.ast.BlockStatement;
 import com.arc.mpl.ast.BooleanLiteral;
 import com.arc.mpl.ast.BreakStatement;
 import com.arc.mpl.ast.CallExpression;
+import com.arc.mpl.ast.ClassDeclaration;
+import com.arc.mpl.ast.ClassFieldDeclaration;
+import com.arc.mpl.ast.ClassMethodDeclaration;
 import com.arc.mpl.ast.ContinueStatement;
 import com.arc.mpl.ast.DoWhileStatement;
 import com.arc.mpl.ast.Expression;
@@ -22,9 +25,11 @@ import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
+import com.arc.mpl.ast.MemberAssignmentExpression;
 import com.arc.mpl.ast.MethodCallExpression;
 import com.arc.mpl.ast.MilDrawStatement;
 import com.arc.mpl.ast.NullLiteral;
+import com.arc.mpl.ast.NewExpression;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.ReturnStatement;
 import com.arc.mpl.ast.Statement;
@@ -49,6 +54,7 @@ import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
+import com.arc.mpl.hir.HirClass;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
@@ -67,6 +73,9 @@ import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirArrayLiteral;
 import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirMemberAccess;
+import com.arc.mpl.hir.HirNewObject;
+import com.arc.mpl.hir.HirObjectFieldAssignment;
+import com.arc.mpl.hir.HirObjectFieldRead;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
@@ -83,6 +92,7 @@ import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.MplType;
+import com.arc.mpl.hir.ObjectType;
 import com.arc.mpl.hir.BuildingType;
 import com.arc.mpl.hir.CollectionType;
 import com.arc.mpl.hir.LinkedBuildingSetType;
@@ -112,6 +122,7 @@ public final class SemanticAnalyzer {
     private final Deque<Map<String, Symbol>> scopes = new ArrayDeque<>();
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private final Map<String, FunctionSignature> functions = new LinkedHashMap<>();
+    private final Map<String, ClassInfo> classes = new LinkedHashMap<>();
     private final Map<String, Set<String>> callGraph = new HashMap<>();
     private final Map<String, Set<String>> directGlobalDependencies = new HashMap<>();
     private final List<TopLevelCall> topLevelCalls = new ArrayList<>();
@@ -123,13 +134,16 @@ public final class SemanticAnalyzer {
     private Map<String, HardwareContract.Resource> hardwareResources = Map.of();
     private int unitIterationDepth;
     private int nextManagedQueryId;
+    private int nextObjectAllocationId;
     private int loopDepth;
     private String activeUnitBinding;
     private String activeBuildingBinding;
     private String activeBuildingType;
     private String currentFunction;
+    private String currentClass;
     private MplType currentReturnType;
     private boolean analyzingTopLevel;
+    private boolean allowStaticNew;
 
     /** Uses the v146 baseline when semantic analysis is invoked outside a compiler request. */
     public SemanticAnalyzer() {
@@ -166,6 +180,7 @@ public final class SemanticAnalyzer {
         hardwareLinks = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(links));
         hardwareResources = Map.copyOf(hardware.resources());
         functions.clear();
+        classes.clear();
         callGraph.clear();
         directGlobalDependencies.clear();
         topLevelCalls.clear();
@@ -173,13 +188,16 @@ public final class SemanticAnalyzer {
         arrayBoundsProofs.clear();
         unitIterationDepth = 0;
         nextManagedQueryId = 0;
+        nextObjectAllocationId = 1;
         loopDepth = 0;
         activeUnitBinding = null;
         activeBuildingBinding = null;
         activeBuildingType = null;
         currentFunction = null;
+        currentClass = null;
         currentReturnType = null;
         analyzingTopLevel = true;
+        allowStaticNew = false;
 
         if (!program.imports().isEmpty() || !program.exports().isEmpty()) {
             SourceSpan span = !program.imports().isEmpty()
@@ -188,6 +206,8 @@ public final class SemanticAnalyzer {
             return new SemanticResult(Optional.empty(), diagnostics);
         }
 
+        for (ClassDeclaration declaration : program.classes()) registerClassName(declaration);
+        for (ClassDeclaration declaration : program.classes()) registerClassMembers(declaration);
         for (FunctionDeclaration function : program.functions()) registerFunction(function);
 
         List<HirStatement> statements = new ArrayList<>();
@@ -198,11 +218,83 @@ public final class SemanticAnalyzer {
         } finally {
             analyzingTopLevel = false;
         }
-        List<HirFunction> analyzedFunctions = program.functions().stream().map(this::analyzeFunction).toList();
+        List<HirFunction> analyzedFunctions = new ArrayList<>();
+        for (ClassInfo type : classes.values()) {
+            for (MethodInfo method : type.methods().values()) analyzedFunctions.add(analyzeMethod(type, method));
+        }
+        analyzedFunctions.addAll(program.functions().stream().map(this::analyzeFunction).toList());
         rejectRecursiveFunctions();
         validateTopLevelCalls();
+        Set<String> exported = program.exports().stream().map(com.arc.mpl.ast.ExportDeclaration::name)
+            .collect(java.util.stream.Collectors.toSet());
+        List<HirClass> hirClasses = classes.values().stream().map(type -> type.toHir(exported.contains(type.name()))).toList();
         return new SemanticResult(diagnostics.isEmpty()
-            ? Optional.of(new HirProgram(analyzedFunctions, statements)) : Optional.empty(), diagnostics);
+            ? Optional.of(new HirProgram(hirClasses, analyzedFunctions, statements)) : Optional.empty(), diagnostics);
+    }
+
+    private void registerClassName(ClassDeclaration declaration) {
+        if (!declaration.name().matches("[A-Z][A-Za-z0-9]*") && !declaration.name().startsWith("__module_")) {
+            error("MPL3701", "类名必须使用大驼峰命名：" + declaration.name(), declaration.span());
+        }
+        if (hardwareResources.containsKey(declaration.name()) || hardwareLinks.containsKey(declaration.name())
+            || classes.putIfAbsent(declaration.name(),
+            new ClassInfo(declaration.name(), declaration)) != null) {
+            error("MPL3701", "类已声明：" + declaration.name(), declaration.span());
+        }
+    }
+
+    private void registerClassMembers(ClassDeclaration declaration) {
+        ClassInfo type = classes.get(declaration.name());
+        if (type == null || type.declaration() != declaration) return;
+        for (ClassFieldDeclaration source : declaration.fields()) {
+            MplType fieldType = parseType(source.typeName(), source.span());
+            if (!supportedObjectField(fieldType)) {
+                error("MPL3702", "第一版对象字段只支持标量与标量元组：" + source.name(), source.span());
+            }
+            FieldInfo field = new FieldInfo(source.name(), fieldType,
+                source.access() == com.arc.mpl.ast.AccessModifier.PUBLIC, source.span());
+            if (type.fields().putIfAbsent(source.name(), field) != null) {
+                error("MPL3701", "类 " + type.name() + " 的字段重复：" + source.name(), source.span());
+            }
+        }
+        for (ClassMethodDeclaration source : declaration.methods()) registerMethod(type, source);
+        if (type.constructor() == null) {
+            error("MPL3703", "类 " + type.name() + " 必须声明一个同名构造器", declaration.span());
+        }
+    }
+
+    private void registerMethod(ClassInfo type, ClassMethodDeclaration source) {
+        FunctionDeclaration function = source.function();
+        boolean constructor = function.name().equals(type.name());
+        if (constructor && function.returnType().isPresent()) {
+            error("MPL3703", "构造器不能声明返回类型：" + type.name(), function.span());
+        }
+        MplType returnType = constructor ? ValueType.VOID
+            : function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.VOID);
+        List<MplType> sourceParameters = function.parameters().stream()
+            .map(parameter -> parseType(parameter.typeName(), parameter.span())).toList();
+        if (sourceParameters.stream().anyMatch(this::isAggregate) || isAggregate(returnType)) {
+            error("MPL3602", "第一版方法 ABI 尚不支持聚合参数及返回值", function.span());
+        }
+        String internalName = "__mpl_class_" + type.name() + "_" + function.name();
+        MethodInfo method = new MethodInfo(function.name(), internalName, function, sourceParameters, returnType,
+            source.access() == com.arc.mpl.ast.AccessModifier.PUBLIC, constructor);
+        if (type.methods().putIfAbsent(function.name(), method) != null) {
+            error("MPL3701", "类 " + type.name() + " 的方法重复：" + function.name(), function.span());
+            return;
+        }
+        if (constructor) type.constructor(method);
+        List<MplType> hiddenParameters = new ArrayList<>();
+        hiddenParameters.add(new ObjectType(type.name(), false));
+        hiddenParameters.addAll(sourceParameters);
+        functions.put(internalName, new FunctionSignature(function, hiddenParameters, returnType));
+        callGraph.put(internalName, new HashSet<>());
+        directGlobalDependencies.put(internalName, new HashSet<>());
+    }
+
+    private boolean supportedObjectField(MplType type) {
+        if (type == ValueType.INT || type == ValueType.FLOAT || type == ValueType.BOOL || type == ValueType.STRING) return true;
+        return type instanceof TupleType tuple && tuple.elementTypes().stream().allMatch(this::supportedObjectField);
     }
 
     private HirStatement analyzeStatement(Statement statement) {
@@ -257,11 +349,196 @@ public final class SemanticAnalyzer {
             error("MPL3602", "第一版函数 ABI 尚不支持聚合、Set<Unit<T>> 或 UnitRef 参数及返回值", function.span());
         }
         FunctionSignature signature = new FunctionSignature(function, parameters, returnType);
-        if (hardwareLinks.containsKey(function.name()) || functions.putIfAbsent(function.name(), signature) != null) {
+        if (hardwareLinks.containsKey(function.name()) || classes.containsKey(function.name())
+            || functions.putIfAbsent(function.name(), signature) != null) {
             error("MPL3501", "函数已声明：" + function.name(), function.span());
         }
         callGraph.putIfAbsent(function.name(), new HashSet<>());
         directGlobalDependencies.putIfAbsent(function.name(), new HashSet<>());
+    }
+
+    private HirFunction analyzeMethod(ClassInfo type, MethodInfo method) {
+        FunctionDeclaration function = method.declaration();
+        String previousFunction = currentFunction;
+        String previousClass = currentClass;
+        MplType previousReturnType = currentReturnType;
+        currentFunction = method.internalName();
+        currentClass = type.name();
+        currentReturnType = method.returnType();
+        scopes.push(new HashMap<>());
+        try {
+            ObjectType thisType = new ObjectType(type.name(), false);
+            declare("this", new Symbol(thisType, false, null, null, null, null, false, function.span()), function.span());
+            List<HirFunctionParameter> parameters = new ArrayList<>();
+            parameters.add(new HirFunctionParameter("this", thisType));
+            for (int index = 0; index < function.parameters().size(); index++) {
+                FunctionParameter parameter = function.parameters().get(index);
+                MplType parameterType = method.parameterTypes().get(index);
+                declare(parameter.name(), new Symbol(parameterType, false, null, null, null, null, false,
+                    parameter.span()), parameter.span());
+                parameters.add(new HirFunctionParameter(parameter.name(), parameterType));
+            }
+            if (method.constructor()) validateConstructorInitialization(type, function);
+            List<HirStatement> body = analyzeBlock(function.body());
+            if (method.returnType() != ValueType.VOID && !guaranteesReturn(body)) {
+                error("MPL3504", "方法 " + type.name() + "." + method.sourceName()
+                    + " 并非所有路径都返回 " + display(method.returnType()), function.span());
+            }
+            return new HirFunction(method.internalName(), parameters, method.returnType(), body);
+        } finally {
+            scopes.pop();
+            currentFunction = previousFunction;
+            currentClass = previousClass;
+            currentReturnType = previousReturnType;
+        }
+    }
+
+    private void validateConstructorInitialization(ClassInfo type, FunctionDeclaration constructor) {
+        Set<String> assigned = definitelyAssignedFields(constructor.body().statements(), Set.of(), type);
+        Set<String> missing = new java.util.TreeSet<>(type.fields().keySet());
+        missing.removeAll(assigned);
+        if (!missing.isEmpty()) {
+            error("MPL3704", "构造器 " + type.name() + " 未在所有路径初始化字段："
+                + String.join("、", missing), constructor.span());
+        }
+    }
+
+    private Set<String> definitelyAssignedFields(List<Statement> statements, Set<String> incoming, ClassInfo type) {
+        Set<String> assigned = new HashSet<>(incoming);
+        for (Statement statement : statements) {
+            if (statement instanceof ExpressionStatement expression
+                && expression.expression() instanceof MemberAssignmentExpression assignment
+                && assignment.target() instanceof Identifier target && "this".equals(target.name())
+                && type.fields().containsKey(assignment.member())) {
+                if (!"=".equals(assignment.operator()) && !assigned.contains(assignment.member())) {
+                    error("MPL3704", "字段 " + assignment.member() + " 在初始化前被读取", assignment.span());
+                }
+                validateConstructorReads(assignment.value(), assigned, type);
+                if ("=".equals(assignment.operator())) assigned.add(assignment.member());
+                continue;
+            }
+            if (statement instanceof ExpressionStatement expression) {
+                validateConstructorReads(expression.expression(), assigned, type);
+                continue;
+            }
+            if (statement instanceof VariableDeclaration declaration) {
+                validateConstructorReads(declaration.initializer(), assigned, type);
+                continue;
+            }
+            if (statement instanceof BlockStatement block) {
+                assigned = new HashSet<>(definitelyAssignedFields(block.statements(), assigned, type));
+                continue;
+            }
+            if (statement instanceof IfStatement branch) {
+                validateConstructorReads(branch.condition(), assigned, type);
+                Set<String> branchInput = Set.copyOf(assigned);
+                Set<String> thenAssigned = definitelyAssignedFields(branch.thenBlock().statements(), branchInput, type);
+                Set<String> elseAssigned = branch.elseBranch()
+                    .map(alternative -> definitelyAssignedFields(List.of(alternative), branchInput, type))
+                    .orElse(branchInput);
+                assigned = new HashSet<>(thenAssigned);
+                assigned.retainAll(elseAssigned);
+                continue;
+            }
+            if (statement instanceof DoWhileStatement loop) {
+                assigned = new HashSet<>(definitelyAssignedFields(loop.body().statements(), assigned, type));
+                validateConstructorReads(loop.condition(), assigned, type);
+                continue;
+            }
+            if (statement instanceof WhileStatement loop) {
+                validateConstructorReads(loop.condition(), assigned, type);
+                definitelyAssignedFields(loop.body().statements(), assigned, type);
+                continue;
+            }
+            if (statement instanceof ForStatement loop) {
+                if (loop.declarationInitializer().isPresent()) {
+                    validateConstructorReads(loop.declarationInitializer().orElseThrow().initializer(), assigned, type);
+                }
+                if (loop.expressionInitializer().isPresent()) {
+                    validateConstructorReads(loop.expressionInitializer().orElseThrow(), assigned, type);
+                }
+                if (loop.condition().isPresent()) {
+                    validateConstructorReads(loop.condition().orElseThrow(), assigned, type);
+                }
+                definitelyAssignedFields(loop.body().statements(), assigned, type);
+                if (loop.update().isPresent()) validateConstructorReads(loop.update().orElseThrow(), assigned, type);
+                continue;
+            }
+            if (statement instanceof ForEachStatement loop) {
+                validateConstructorReads(loop.iterable(), assigned, type);
+                definitelyAssignedFields(loop.body().statements(), assigned, type);
+                continue;
+            }
+            if (statement instanceof ReturnStatement returned) {
+                if (returned.value().isPresent()) {
+                    validateConstructorReads(returned.value().orElseThrow(), assigned, type);
+                }
+                Set<String> missing = new java.util.TreeSet<>(type.fields().keySet());
+                missing.removeAll(assigned);
+                if (!missing.isEmpty()) {
+                    error("MPL3704", "构造器提前返回前未初始化字段：" + String.join("、", missing), statement.span());
+                }
+            }
+        }
+        return Set.copyOf(assigned);
+    }
+
+    private void validateConstructorReads(Expression expression, Set<String> assigned, ClassInfo type) {
+        if (expression instanceof MemberAccessExpression member) {
+            if (member.target() instanceof Identifier target && "this".equals(target.name())
+                && type.fields().containsKey(member.member()) && !assigned.contains(member.member())) {
+                error("MPL3704", "字段 " + member.member() + " 在初始化前被读取", member.span());
+            }
+            validateConstructorReads(member.target(), assigned, type);
+            return;
+        }
+        if (expression instanceof MemberAssignmentExpression assignment) {
+            validateConstructorReads(assignment.target(), assigned, type);
+            validateConstructorReads(assignment.value(), assigned, type);
+            return;
+        }
+        if (expression instanceof AssignmentExpression assignment) {
+            validateConstructorReads(assignment.value(), assigned, type);
+            return;
+        }
+        if (expression instanceof BinaryExpression binary) {
+            validateConstructorReads(binary.left(), assigned, type);
+            validateConstructorReads(binary.right(), assigned, type);
+            return;
+        }
+        if (expression instanceof UnaryExpression unary) {
+            validateConstructorReads(unary.operand(), assigned, type);
+            return;
+        }
+        if (expression instanceof CallExpression call) {
+            validateConstructorReads(call.callee(), assigned, type);
+            call.arguments().forEach(value -> validateConstructorReads(value, assigned, type));
+            return;
+        }
+        if (expression instanceof MethodCallExpression call) {
+            call.arguments().forEach(value -> validateConstructorReads(value, assigned, type));
+            return;
+        }
+        if (expression instanceof LambdaExpression lambda) {
+            validateConstructorReads(lambda.body(), assigned, type);
+            return;
+        }
+        if (expression instanceof NewExpression allocation) {
+            allocation.arguments().forEach(value -> validateConstructorReads(value, assigned, type));
+            return;
+        }
+        if (expression instanceof IndexExpression access) {
+            validateConstructorReads(access.target(), assigned, type);
+            validateConstructorReads(access.index(), assigned, type);
+            return;
+        }
+        if (expression instanceof ArrayLiteral array) {
+            array.elements().forEach(value -> validateConstructorReads(value, assigned, type));
+            return;
+        }
+        if (expression instanceof TupleLiteral tuple) {
+            tuple.elements().forEach(value -> validateConstructorReads(value, assigned, type));
+        }
     }
 
     private HirFunction analyzeFunction(FunctionDeclaration function) {
@@ -399,6 +676,9 @@ public final class SemanticAnalyzer {
         }
         if (symbol.type() instanceof BuildingType building && building.nullable()) {
             return Map.of(identifier.name(), symbol.withType(building.nonNullable()));
+        }
+        if (symbol.type() instanceof ObjectType object && object.nullable()) {
+            return Map.of(identifier.name(), symbol.withType(new ObjectType(object.className(), false)));
         }
         return Map.of();
     }
@@ -1414,9 +1694,17 @@ public final class SemanticAnalyzer {
                 .map(query -> analyzeBuildingQuery(query, "_"))
                 .orElse(null);
         }
-        HirExpression initializer = unitQuery != null ? unitQuery
-            : buildingQuery != null ? buildingQuery
-            : analyzeInitializer(declaration.initializer(), declaredType);
+        boolean previousAllowStaticNew = allowStaticNew;
+        boolean staticAllocationContext = analyzingTopLevel && currentFunction == null && scopes.size() == 1;
+        HirExpression initializer;
+        try {
+            allowStaticNew = staticAllocationContext;
+            initializer = unitQuery != null ? unitQuery
+                : buildingQuery != null ? buildingQuery
+                : analyzeInitializer(declaration.initializer(), declaredType);
+        } finally {
+            allowStaticNew = previousAllowStaticNew;
+        }
         if (initializer.type() == ValueType.BUILDING) {
             error("MPL3201", "硬件常量不能赋给普通变量；请直接读取字段或调用控制方法", declaration.initializer().span());
         }
@@ -1495,6 +1783,7 @@ public final class SemanticAnalyzer {
             return new HirConstant(bool.value() ? "1" : "0", ValueType.BOOL);
         }
         if (expression instanceof NullLiteral) return new HirConstant("null", ValueType.NULL);
+        if (expression instanceof NewExpression allocation) return analyzeNew(allocation);
         if (expression instanceof Identifier identifier) {
             HardwareContract.LinkDeclaration hardware = hardwareLinks.get(identifier.name());
             if (hardware != null) return new HirHardwareLink(hardware.mplName(), hardware.gameAlias(), hardware.mplType());
@@ -1550,6 +1839,9 @@ public final class SemanticAnalyzer {
             }
             ValueType type = binaryType(binary.operator(), left.type(), right.type(), binary.span());
             return new HirBinary(left, binary.operator(), right, type);
+        }
+        if (expression instanceof MemberAssignmentExpression assignment) {
+            return analyzeObjectFieldAssignment(assignment);
         }
         AssignmentExpression assignment = (AssignmentExpression) expression;
         Symbol target = lookup(assignment.target().name());
@@ -1634,6 +1926,22 @@ public final class SemanticAnalyzer {
             if (buildingQuery != null) return new HirBuildingQuerySize(buildingQuery);
         }
         HirExpression target = analyzeExpression(member.target());
+        if (target.type() instanceof ObjectType object) {
+            if (object.nullable()) {
+                error("MPL3706", "可空 " + object.displayName() + " 必须先通过 != null 检查", member.span());
+                return new HirObjectFieldRead(target, object.className(), member.member(), ValueType.ERROR);
+            }
+            ClassInfo type = classes.get(object.className());
+            FieldInfo field = type == null ? null : type.fields().get(member.member());
+            if (field == null) {
+                error("MPL3705", "类 " + object.className() + " 没有字段：" + member.member(), member.span());
+                return new HirObjectFieldRead(target, object.className(), member.member(), ValueType.ERROR);
+            }
+            if (!field.publicAccess() && !object.className().equals(currentClass)) {
+                error("MPL3707", "字段 " + object.className() + "." + member.member() + " 是 private", member.span());
+            }
+            return new HirObjectFieldRead(target, object.className(), member.member(), field.type());
+        }
         if ("size".equals(member.member()) && isAggregate(target.type())) {
             Integer size = aggregateSize(member.target(), target.type());
             if (size == null) {
@@ -1732,6 +2040,13 @@ public final class SemanticAnalyzer {
             && call.arguments().size() == 1) {
             return analyzeCollectionContains(member.target(), call.arguments().get(0), call.span());
         }
+        if (call.callee() instanceof MemberAccessExpression member
+            && isPotentialObjectReceiver(member.target())) {
+            HirExpression target = analyzeExpression(member.target());
+            if (target.type() instanceof ObjectType object) {
+                return analyzeObjectMethodCall(target, object, member.member(), call.arguments(), call.span());
+            }
+        }
         if (call.callee() instanceof Identifier functionName) {
             FunctionSignature signature = functions.get(functionName.name());
             if (signature == null) {
@@ -1779,6 +2094,123 @@ public final class SemanticAnalyzer {
         }
         error("MPL3201", "当前阶段不支持该调用表达式", call.span());
         return new HirConstant("0", ValueType.ERROR);
+    }
+
+    private boolean isPotentialObjectReceiver(Expression expression) {
+        if (!(expression instanceof Identifier identifier)) return true;
+        Symbol symbol = lookup(identifier.name());
+        return symbol != null && symbol.type() instanceof ObjectType;
+    }
+
+    private HirExpression analyzeNew(NewExpression allocation) {
+        ClassInfo type = classes.get(allocation.className());
+        if (type == null) {
+            error("MPL3701", "未声明的类：" + allocation.className(), allocation.span());
+            allocation.arguments().forEach(this::analyzeExpression);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        if (!allowStaticNew) {
+            error("MPL3708", "第一版 new 只能出现在顶层变量初始化中；动态对象池尚未接入", allocation.span());
+        }
+        MethodInfo constructor = type.constructor();
+        if (constructor == null) {
+            allocation.arguments().forEach(this::analyzeExpression);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        if (!constructor.publicAccess() && !type.name().equals(currentClass)) {
+            error("MPL3707", "构造器 " + type.name() + " 是 private", allocation.span());
+        }
+        List<HirExpression> arguments = analyzeArguments(type.name(), constructor.parameterTypes(),
+            allocation.arguments(), allocation.span());
+        recordCall(constructor.internalName(), allocation.span());
+        return new HirNewObject(nextObjectAllocationId++, type.name(), constructor.internalName(), arguments,
+            new ObjectType(type.name(), false));
+    }
+
+    private HirExpression analyzeObjectMethodCall(HirExpression target, ObjectType object, String methodName,
+                                                  List<Expression> sourceArguments, SourceSpan span) {
+        if (object.nullable()) {
+            error("MPL3706", "可空 " + object.displayName() + " 必须先通过 != null 检查", span);
+            sourceArguments.forEach(this::analyzeExpression);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        ClassInfo type = classes.get(object.className());
+        MethodInfo method = type == null ? null : type.methods().get(methodName);
+        if (method == null || method.constructor()) {
+            error("MPL3705", "类 " + object.className() + " 没有实例方法：" + methodName, span);
+            sourceArguments.forEach(this::analyzeExpression);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        if (!method.publicAccess() && !object.className().equals(currentClass)) {
+            error("MPL3707", "方法 " + object.className() + "." + methodName + " 是 private", span);
+        }
+        List<HirExpression> arguments = new ArrayList<>();
+        arguments.add(target);
+        arguments.addAll(analyzeArguments(object.className() + "." + methodName, method.parameterTypes(),
+            sourceArguments, span));
+        recordCall(method.internalName(), span);
+        return new HirFunctionCall(method.internalName(), arguments, method.returnType());
+    }
+
+    private List<HirExpression> analyzeArguments(String callable, List<MplType> parameterTypes,
+                                                 List<Expression> sourceArguments, SourceSpan span) {
+        if (sourceArguments.size() != parameterTypes.size()) {
+            error("MPL3503", callable + " 的参数数量不匹配", span);
+        }
+        List<HirExpression> arguments = new ArrayList<>();
+        for (int index = 0; index < sourceArguments.size(); index++) {
+            Expression source = sourceArguments.get(index);
+            HirExpression argument = analyzeExpression(source);
+            if (index < parameterTypes.size() && !parameterTypes.get(index).canAssignFrom(argument.type())) {
+                error("MPL3503", callable + " 的第 " + (index + 1) + " 个参数类型不匹配", source.span());
+            }
+            arguments.add(argument);
+        }
+        return List.copyOf(arguments);
+    }
+
+    private void recordCall(String function, SourceSpan span) {
+        if (currentFunction != null) callGraph.get(currentFunction).add(function);
+        if (analyzingTopLevel) {
+            topLevelCalls.add(new TopLevelCall(function, Set.copyOf(initializedGlobals), span));
+        }
+    }
+
+    private HirExpression analyzeObjectFieldAssignment(MemberAssignmentExpression assignment) {
+        HirExpression target = analyzeExpression(assignment.target());
+        HirExpression value = analyzeExpression(assignment.value());
+        if (!(target.type() instanceof ObjectType object)) {
+            error("MPL3705", "成员赋值目标必须是用户对象", assignment.target().span());
+            return new HirObjectFieldAssignment(target, "<error>", assignment.member(), assignment.operator(), value,
+                ValueType.ERROR);
+        }
+        if (object.nullable()) {
+            error("MPL3706", "可空 " + object.displayName() + " 必须先通过 != null 检查", assignment.span());
+        }
+        ClassInfo type = classes.get(object.className());
+        FieldInfo field = type == null ? null : type.fields().get(assignment.member());
+        if (field == null) {
+            error("MPL3705", "类 " + object.className() + " 没有字段：" + assignment.member(), assignment.span());
+            return new HirObjectFieldAssignment(target, object.className(), assignment.member(), assignment.operator(),
+                value, ValueType.ERROR);
+        }
+        if (!field.publicAccess() && !object.className().equals(currentClass)) {
+            error("MPL3707", "字段 " + object.className() + "." + assignment.member() + " 是 private", assignment.span());
+        }
+        if ("=".equals(assignment.operator())) {
+            if (!field.type().canAssignFrom(value.type())) {
+                error("MPL3103", "不能将 " + display(value.type()) + " 赋给 " + display(field.type()),
+                    assignment.value().span());
+            }
+        } else {
+            ValueType result = binaryType(assignment.operator().substring(0, 1), field.type(), value.type(),
+                assignment.span());
+            if (!field.type().canAssignFrom(result)) {
+                error("MPL3103", "复合赋值结果不能赋给 " + display(field.type()), assignment.span());
+            }
+        }
+        return new HirObjectFieldAssignment(target, object.className(), assignment.member(), assignment.operator(),
+            value, field.type());
     }
 
     private HirExpression mathIntrinsic(String name, List<Expression> sourceArguments, SourceSpan span) {
@@ -1914,6 +2346,20 @@ public final class SemanticAnalyzer {
             && leftBuilding.buildingType().equals(rightBuilding.buildingType())) {
             return true;
         }
+        if (left instanceof ObjectType object && right == ValueType.NULL) {
+            if (object.nullable()) return true;
+            error("MPL3103", "非空 " + object.displayName() + " 不需要与 null 比较", span);
+            return false;
+        }
+        if (right instanceof ObjectType object && left == ValueType.NULL) {
+            if (object.nullable()) return true;
+            error("MPL3103", "非空 " + object.displayName() + " 不需要与 null 比较", span);
+            return false;
+        }
+        if (left instanceof ObjectType leftObject && right instanceof ObjectType rightObject
+            && leftObject.className().equals(rightObject.className())) {
+            return true;
+        }
         error("MPL3103", "不能比较 " + display(left) + " 与 " + display(right), span);
         return false;
     }
@@ -1949,7 +2395,8 @@ public final class SemanticAnalyzer {
             }
             return new BuildingType(buildingType, nullable);
         }
-        if (nullable) return typeError("当前阶段只有 Unit<T> 与 Building<T> 对象引用支持可空类型", span);
+        if (classes.containsKey(nonNullableName)) return new ObjectType(nonNullableName, nullable);
+        if (nullable) return typeError("可空类型必须是 Unit<T>、Building<T> 或用户类", span);
         if (name.endsWith("[]")) {
             MplType element = parseType(name.substring(0, name.length() - 2), span);
             return collectionType(CollectionType.Kind.ARRAY, element, span);
@@ -2220,7 +2667,8 @@ public final class SemanticAnalyzer {
 
     private boolean declare(String name, Symbol symbol, SourceSpan span) {
         Map<String, Symbol> current = scopes.peek();
-        if (hardwareLinks.containsKey(name) || functions.containsKey(name) || current.containsKey(name) || lookup(name) != null) {
+        if (hardwareLinks.containsKey(name) || functions.containsKey(name) || classes.containsKey(name)
+            || current.containsKey(name) || lookup(name) != null) {
             error("MPL3101", "变量已声明：" + name, span);
             return false;
         }
@@ -2340,6 +2788,63 @@ public final class SemanticAnalyzer {
     private record BuildingQuery(String typeName, List<Expression> filters) {
         private BuildingQuery {
             filters = List.copyOf(filters);
+        }
+    }
+
+    private record FieldInfo(String name, MplType type, boolean publicAccess, SourceSpan span) {
+    }
+
+    private record MethodInfo(String sourceName, String internalName, FunctionDeclaration declaration,
+                              List<MplType> parameterTypes, MplType returnType, boolean publicAccess,
+                              boolean constructor) {
+        private MethodInfo {
+            parameterTypes = List.copyOf(parameterTypes);
+        }
+    }
+
+    private static final class ClassInfo {
+        private final String name;
+        private final ClassDeclaration declaration;
+        private final Map<String, FieldInfo> fields = new LinkedHashMap<>();
+        private final Map<String, MethodInfo> methods = new LinkedHashMap<>();
+        private MethodInfo constructor;
+
+        private ClassInfo(String name, ClassDeclaration declaration) {
+            this.name = name;
+            this.declaration = declaration;
+        }
+
+        private String name() {
+            return name;
+        }
+
+        private ClassDeclaration declaration() {
+            return declaration;
+        }
+
+        private Map<String, FieldInfo> fields() {
+            return fields;
+        }
+
+        private Map<String, MethodInfo> methods() {
+            return methods;
+        }
+
+        private MethodInfo constructor() {
+            return constructor;
+        }
+
+        private void constructor(MethodInfo value) {
+            constructor = value;
+        }
+
+        private HirClass toHir(boolean exported) {
+            List<HirClass.Field> hirFields = fields.values().stream()
+                .map(field -> new HirClass.Field(field.name(), field.type(), field.publicAccess())).toList();
+            List<HirClass.Method> hirMethods = methods.values().stream()
+                .map(method -> new HirClass.Method(method.sourceName(), method.internalName(), method.publicAccess(),
+                    method.constructor())).toList();
+            return new HirClass(name, exported, hirFields, hirMethods);
         }
     }
 }

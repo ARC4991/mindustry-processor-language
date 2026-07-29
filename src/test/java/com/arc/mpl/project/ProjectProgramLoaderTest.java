@@ -1,5 +1,6 @@
 package com.arc.mpl.project;
 
+import com.arc.mpl.ast.Program;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.semantic.SemanticAnalyzer;
@@ -48,6 +49,33 @@ class ProjectProgramLoaderTest {
         assertTrue(program.functions().stream().allMatch(function -> function.name().startsWith("__module_")));
         assertEquals(3, program.statements().size());
         assertTrue(new SemanticAnalyzer(profile).analyze(program, catalog.entryFile(), hardware).program().isPresent());
+    }
+
+    @Test
+    void linksExportedClassesAndRewritesObjectTypes(@TempDir Path project) throws Exception {
+        Path source = Files.createDirectories(project.resolve("src"));
+        Files.writeString(source.resolve("main.mpl"), """
+            import { Counter } from "./counter";
+            val counter: Counter = new Counter(4);
+            val result = counter.get();
+            """);
+        Files.writeString(source.resolve("counter.mpl"), """
+            export class Counter {
+                private value: Int;
+                public fun Counter(initial: Int) { this.value = initial; }
+                public fun get(): Int { return this.value; }
+            }
+            """);
+
+        ProjectSourceCatalog catalog = new ProjectSourceLoader().load(project);
+        ProjectProgramResult linked = new ProjectProgramLoader().load(catalog, profile, hardware);
+
+        assertTrue(linked.succeeded(), () -> linked.diagnostics().toString());
+        Program program = linked.program().orElseThrow();
+        assertEquals(1, program.classes().size());
+        assertTrue(program.classes().get(0).name().startsWith("__module_"));
+        var semantic = new SemanticAnalyzer(profile).analyze(program, catalog.entryFile(), hardware);
+        assertTrue(semantic.program().isPresent(), () -> semantic.diagnostics().toString());
     }
 
     @Test

@@ -6,6 +6,9 @@ import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.BlockStatement;
 import com.arc.mpl.ast.BreakStatement;
 import com.arc.mpl.ast.CallExpression;
+import com.arc.mpl.ast.ClassDeclaration;
+import com.arc.mpl.ast.ClassFieldDeclaration;
+import com.arc.mpl.ast.ClassMethodDeclaration;
 import com.arc.mpl.ast.ContinueStatement;
 import com.arc.mpl.ast.DoWhileStatement;
 import com.arc.mpl.ast.Expression;
@@ -18,7 +21,9 @@ import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.IndexExpression;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
+import com.arc.mpl.ast.MemberAssignmentExpression;
 import com.arc.mpl.ast.MethodCallExpression;
+import com.arc.mpl.ast.NewExpression;
 import com.arc.mpl.ast.MilDrawStatement;
 import com.arc.mpl.ast.MilGameSymbolExpression;
 import com.arc.mpl.ast.MilMacroBlockStatement;
@@ -50,17 +55,47 @@ final class ModuleSymbolRewriter {
     }
 
     Program rewrite(Program source) {
+        List<ClassDeclaration> classes = source.classes().stream().map(this::classDeclaration).toList();
         List<FunctionDeclaration> functions = source.functions().stream().map(this::function).toList();
         List<Statement> statements = source.statements().stream().map(value -> statement(value, true)).toList();
-        return new Program(functions, statements);
+        return new Program(List.of(), List.of(), classes, functions, statements);
+    }
+
+    private ClassDeclaration classDeclaration(ClassDeclaration source) {
+        String className = declarations.getOrDefault(source.name(), source.name());
+        List<ClassFieldDeclaration> fields = source.fields().stream()
+            .map(field -> new ClassFieldDeclaration(field.access(), field.name(), type(field.typeName()), field.span()))
+            .toList();
+        List<ClassMethodDeclaration> methods = source.methods().stream()
+            .map(method -> new ClassMethodDeclaration(method.access(), method(method.function(), source.name(), className)))
+            .toList();
+        return new ClassDeclaration(className, fields, methods, source.span());
+    }
+
+    private FunctionDeclaration method(FunctionDeclaration source, String sourceClassName, String linkedClassName) {
+        locals.push(new HashSet<>(Set.of("this")));
+        source.parameters().forEach(parameter -> locals.peek().add(parameter.name()));
+        try {
+            String name = source.name().equals(sourceClassName) ? linkedClassName : source.name();
+            var parameters = source.parameters().stream()
+                .map(parameter -> new com.arc.mpl.ast.FunctionParameter(parameter.name(), type(parameter.typeName()),
+                    parameter.span())).toList();
+            return new FunctionDeclaration(name, parameters, source.returnType().map(this::type), block(source.body()),
+                source.span());
+        } finally {
+            locals.pop();
+        }
     }
 
     private FunctionDeclaration function(FunctionDeclaration source) {
         locals.push(new HashSet<>());
         source.parameters().forEach(parameter -> locals.peek().add(parameter.name()));
         try {
-            return new FunctionDeclaration(declarations.getOrDefault(source.name(), source.name()), source.parameters(),
-                source.returnType(), block(source.body()), source.span());
+            var parameters = source.parameters().stream()
+                .map(parameter -> new com.arc.mpl.ast.FunctionParameter(parameter.name(), type(parameter.typeName()),
+                    parameter.span())).toList();
+            return new FunctionDeclaration(declarations.getOrDefault(source.name(), source.name()), parameters,
+                source.returnType().map(this::type), block(source.body()), source.span());
         } finally {
             locals.pop();
         }
@@ -81,8 +116,8 @@ final class ModuleSymbolRewriter {
             Expression initializer = expression(declaration.initializer());
             String name = topLevel ? declarations.getOrDefault(declaration.name(), declaration.name()) : declaration.name();
             if (!topLevel && !locals.isEmpty()) locals.peek().add(declaration.name());
-            return new VariableDeclaration(declaration.mutable(), name, declaration.declaredType(), initializer,
-                declaration.span());
+            return new VariableDeclaration(declaration.mutable(), name, declaration.declaredType().map(this::type),
+                initializer, declaration.span());
         }
         if (source instanceof ExpressionStatement value) {
             return new ExpressionStatement(expression(value.expression()), value.span());
@@ -144,6 +179,10 @@ final class ModuleSymbolRewriter {
             Identifier target = new Identifier(linked(assignment.target().name()), assignment.target().span());
             return new AssignmentExpression(target, assignment.operator(), expression(assignment.value()), assignment.span());
         }
+        if (source instanceof MemberAssignmentExpression assignment) {
+            return new MemberAssignmentExpression(expression(assignment.target()), assignment.member(),
+                assignment.operator(), expression(assignment.value()), assignment.span());
+        }
         if (source instanceof BinaryExpression binary) {
             return new BinaryExpression(expression(binary.left()), binary.operator(), expression(binary.right()), binary.span());
         }
@@ -174,6 +213,10 @@ final class ModuleSymbolRewriter {
         if (source instanceof TupleLiteral tuple) {
             return new TupleLiteral(tuple.elements().stream().map(this::expression).toList(), tuple.span());
         }
+        if (source instanceof NewExpression allocation) {
+            return new NewExpression(linked(allocation.className()), allocation.arguments().stream()
+                .map(this::expression).toList(), allocation.span());
+        }
         if (source instanceof MethodCallExpression call) {
             return new MethodCallExpression(linked(call.target()), call.method(), call.arguments().stream()
                 .map(this::expression).toList(), call.span());
@@ -189,5 +232,15 @@ final class ModuleSymbolRewriter {
     private String linked(String name) {
         if (locals.stream().anyMatch(scope -> scope.contains(name))) return name;
         return bindings.getOrDefault(name, name);
+    }
+
+    private String type(String source) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+            .compile("[_A-Za-z][_A-Za-z0-9]*").matcher(source);
+        StringBuilder result = new StringBuilder();
+        while (matcher.find()) matcher.appendReplacement(result,
+            java.util.regex.Matcher.quoteReplacement(bindings.getOrDefault(matcher.group(), matcher.group())));
+        matcher.appendTail(result);
+        return result.toString();
     }
 }
