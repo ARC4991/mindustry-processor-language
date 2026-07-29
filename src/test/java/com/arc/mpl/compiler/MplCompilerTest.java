@@ -177,6 +177,72 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesNonRecursiveFunctionWithStaticCounterAbi(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun add(left: Int, right: Int): Int {
+                return left + right;
+            }
+            var result: Int = add(2, 3);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            set __mpl_tmp0 2
+            set __mpl_tmp1 3
+            set __mpl_fn0_arg0 __mpl_tmp0
+            set __mpl_fn0_arg1 __mpl_tmp1
+            op add __mpl_fn0_return @counter 1
+            set @counter 9
+            set __mpl_tmp2 __mpl_fn0_result
+            set mpl_result __mpl_tmp2
+            stop
+            mpl_function_add_0:
+            op add __mpl_tmp3 __mpl_fn0_arg0 __mpl_fn0_arg1
+            set __mpl_fn0_result __mpl_tmp3
+            set @counter __mpl_fn0_return
+            """, result.mlog().orElseThrow());
+        assertEquals("""
+            // 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。
+            // 普通结构保留为 MIL；@unit.* 与 @io.* 是由 target profile 展开的受限宏。
+            fun add(left: Int, right: Int): Int {
+                return (left + right);
+            }
+            var result: Int = add(2, 3);
+            """, result.mil().orElseThrow());
+    }
+
+    @Test
+    void compilesNestedAndImplicitVoidFunctionReturnsWithCollisionFreeSlots(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun a(b_c: Int) {
+                var doubled: Int = b_c * 2;
+            }
+            fun a_b(c: Int): Int {
+                a(c);
+                return c + 1;
+            }
+            var result: Int = a_b(4);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("set __mpl_fn1_arg0 __mpl_tmp0"));
+        assertTrue(mlog.contains("set __mpl_fn0_arg0 __mpl_tmp"));
+        assertTrue(mlog.contains("set __mpl_fn0_local_doubled __mpl_tmp"));
+        assertTrue(mlog.contains("set @counter __mpl_fn0_return"));
+        assertTrue(mlog.contains("set __mpl_fn1_result __mpl_tmp"));
+        assertTrue(mlog.contains("set @counter __mpl_fn1_return"));
+        assertFalse(mlog.contains("__mpl_fn_a_param_b_c"));
+        assertFalse(mlog.contains("__mpl_fn_a_b_param_c"));
+    }
+
+    @Test
     void compilesMessagePrintUsingTheAutomaticFirstMessageLink(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), "const AlertBoard: Message = link(\"message1\");");

@@ -82,4 +82,20 @@ class MplSyntaxParserTest {
         assertTrue(loop.condition().isEmpty());
         assertTrue(loop.update().isEmpty());
     }
+
+    @Test
+    void parsesTypedFunctionsAndReturnsSeparatelyFromTopLevelStatements() {
+        ParseResult result = parser.parse("""
+            fun add(left: Int, right: Int): Int {
+                return left + right;
+            }
+            var result: Int = add(1, 2);
+            """, Path.of("main.mpl"));
+
+        assertTrue(result.succeeded());
+        assertEquals(1, result.program().orElseThrow().functions().size());
+        assertEquals("add", result.program().orElseThrow().functions().get(0).name());
+        assertEquals(2, result.program().orElseThrow().functions().get(0).parameters().size());
+        assertEquals(1, result.program().orElseThrow().statements().size());
+    }
 }

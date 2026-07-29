@@ -12,11 +12,14 @@ import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirFor;
+import com.arc.mpl.hir.HirFunction;
+import com.arc.mpl.hir.HirFunctionCall;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
+import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirStatement;
 import com.arc.mpl.hir.HirText;
 import com.arc.mpl.hir.HirUnary;
@@ -53,10 +56,24 @@ public final class MilCodeGenerator {
         Writer writer = new Writer();
         writer.line("// 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。");
         writer.line("// 普通结构保留为 MIL；@unit.* 与 @io.* 是由 target profile 展开的受限宏。");
+        for (HirFunction function : program.functions()) emitFunction(writer, function);
         for (HirStatement statement : program.statements()) {
             emitStatement(writer, statement);
         }
         return writer.render();
+    }
+
+    private void emitFunction(Writer writer, HirFunction function) {
+        writer.append("fun ").append(identifier(function.name(), "函数名")).append("(");
+        for (int index = 0; index < function.parameters().size(); index++) {
+            if (index > 0) writer.append(", ");
+            var parameter = function.parameters().get(index);
+            writer.append(identifier(parameter.name(), "参数名")).append(": ").append(displayType(parameter.type()));
+        }
+        writer.append(")");
+        if (function.returnType() != ValueType.VOID) writer.append(": ").append(displayType(function.returnType()));
+        writer.append(" ");
+        emitBlock(writer, function.body());
     }
 
     private void emitStatement(Writer writer, HirStatement statement) {
@@ -133,6 +150,10 @@ public final class MilCodeGenerator {
         }
         if (statement instanceof HirContinue) {
             writer.line("continue;");
+            return;
+        }
+        if (statement instanceof HirReturn returned) {
+            writer.line(returned.value().map(value -> "return " + expression(value) + ";").orElse("return;"));
             return;
         }
         throw new IllegalArgumentException("MIL 尚不能序列化 HIR 语句：" + statement.getClass().getSimpleName());
@@ -219,6 +240,11 @@ public final class MilCodeGenerator {
         }
         if (value instanceof HirMemberAccess member) return unitMember(member);
         if (value instanceof HirIntrinsicCall call) return intrinsic(call);
+        if (value instanceof HirFunctionCall call) {
+            StringBuilder result = new StringBuilder(identifier(call.function(), "函数名")).append('(');
+            appendExpressions(result, call.arguments());
+            return result.append(')').toString();
+        }
         throw new IllegalArgumentException("MIL 尚不能序列化 HIR 表达式：" + value.getClass().getSimpleName());
     }
 
@@ -285,6 +311,7 @@ public final class MilCodeGenerator {
             case STRING -> "String";
             case UNIT -> "Unit";
             case BUILDING -> "Building";
+            case VOID -> "Void";
             case ERROR -> throw new IllegalArgumentException("不能将含错误类型的 HIR 序列化为 MIL");
         };
     }

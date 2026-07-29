@@ -12,6 +12,8 @@ import com.arc.mpl.ast.Expression;
 import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.ForEachStatement;
 import com.arc.mpl.ast.ForStatement;
+import com.arc.mpl.ast.FunctionDeclaration;
+import com.arc.mpl.ast.FunctionParameter;
 import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.Identifier;
 import com.arc.mpl.ast.IfStatement;
@@ -19,6 +21,7 @@ import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
 import com.arc.mpl.ast.Program;
+import com.arc.mpl.ast.ReturnStatement;
 import com.arc.mpl.ast.Statement;
 import com.arc.mpl.ast.StringLiteral;
 import com.arc.mpl.ast.UnaryExpression;
@@ -89,11 +92,29 @@ public final class MplSyntaxParser {
     private static final class AstBuilder extends MplParserBaseVisitor<Object> {
         @Override
         public Program visitProgram(MplParser.ProgramContext context) {
+            List<FunctionDeclaration> functions = new ArrayList<>();
+            for (MplParser.FunctionDeclarationContext function : context.functionDeclaration()) {
+                functions.add((FunctionDeclaration) visit(function));
+            }
             List<Statement> statements = new ArrayList<>();
             for (MplParser.StatementContext statement : context.statement()) {
                 statements.add((Statement) visit(statement));
             }
-            return new Program(statements);
+            return new Program(functions, statements);
+        }
+
+        @Override
+        public FunctionDeclaration visitFunctionDeclaration(MplParser.FunctionDeclarationContext context) {
+            List<FunctionParameter> parameters = context.parameter().stream()
+                .map(value -> (FunctionParameter) visit(value)).toList();
+            return new FunctionDeclaration(context.name.getText(), parameters,
+                context.returnType == null ? Optional.empty() : Optional.of(context.returnType.getText()),
+                (BlockStatement) visit(context.body), span(context));
+        }
+
+        @Override
+        public FunctionParameter visitParameter(MplParser.ParameterContext context) {
+            return new FunctionParameter(context.name.getText(), context.typeName.getText(), span(context));
         }
 
         @Override
@@ -121,6 +142,10 @@ public final class MplSyntaxParser {
             }
             if (context.BREAK() != null) return new BreakStatement(span(context));
             if (context.CONTINUE() != null) return new ContinueStatement(span(context));
+            if (context.RETURN() != null) {
+                return new ReturnStatement(context.returnValue == null ? Optional.empty()
+                    : Optional.of((Expression) visit(context.returnValue)), span(context));
+            }
             Expression expression = (Expression) visit(context.expression());
             return new ExpressionStatement(expression, span(context));
         }
@@ -209,7 +234,7 @@ public final class MplSyntaxParser {
         @Override
         public LambdaExpression visitLambdaExpression(MplParser.LambdaExpressionContext context) {
             return new LambdaExpression(
-                context.parameter.getText(),
+                context.lambdaParameter.getText(),
                 (Expression) visit(context.body),
                 span(context));
         }

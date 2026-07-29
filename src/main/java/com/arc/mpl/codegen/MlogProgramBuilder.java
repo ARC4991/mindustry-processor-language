@@ -16,6 +16,7 @@ final class MlogProgramBuilder {
     private final MlogLabelStyle labelStyle;
     private final List<Instruction> instructions = new ArrayList<>();
     private int nextLabelIndex;
+    private int nextInstructionAddress;
 
     MlogProgramBuilder(MlogLabelStyle labelStyle) {
         this.labelStyle = Objects.requireNonNull(labelStyle, "labelStyle");
@@ -29,39 +30,44 @@ final class MlogProgramBuilder {
     }
 
     void label(Label label) {
+        label.bind(nextInstructionAddress);
         instructions.add(new LabelInstruction(label));
     }
 
     void set(String target, String value) {
-        instructions.add(new SetInstruction(target, value));
+        add(new SetInstruction(target, value));
+    }
+
+    void setCounter(Label target) {
+        add(new CounterJumpInstruction(target));
     }
 
     void print(String value) {
-        instructions.add(new PrintInstruction(value));
+        add(new PrintInstruction(value));
     }
 
     void printFlush(String target) {
-        instructions.add(new PrintFlushInstruction(target));
+        add(new PrintFlushInstruction(target));
     }
 
     void jump(Label target, JumpCondition condition, String value, String compare) {
-        instructions.add(new JumpInstruction(target, condition, value, compare));
+        add(new JumpInstruction(target, condition, value, compare));
     }
 
     void unitBind(String unit) {
-        instructions.add(new UnitBindInstruction(unit));
+        add(new UnitBindInstruction(unit));
     }
 
     void sensor(String result, String target, String property) {
-        instructions.add(new SensorInstruction(result, target, property));
+        add(new SensorInstruction(result, target, property));
     }
 
     void operation(Operation operation, String result, String left, String right) {
-        instructions.add(new OperationInstruction(operation, result, left, right));
+        add(new OperationInstruction(operation, result, left, right));
     }
 
     void unitControl(UnitControlCommand command, String first, String second, String third, String fourth, String fifth) {
-        instructions.add(new UnitControlInstruction(command, first, second, third, fourth, fifth));
+        add(new UnitControlInstruction(command, first, second, third, fourth, fifth));
     }
 
     /** Emits the fixed-width target control instruction for a statically declared building link. */
@@ -69,11 +75,16 @@ final class MlogProgramBuilder {
         if (arguments.size() > 5) throw new IllegalArgumentException("control 指令至多接受五个参数");
         List<String> operands = new ArrayList<>(arguments);
         while (operands.size() < 5) operands.add("0");
-        instructions.add(new BuildingControlInstruction(target, action, List.copyOf(operands)));
+        add(new BuildingControlInstruction(target, action, List.copyOf(operands)));
     }
 
     void stop() {
-        instructions.add(StopInstruction.INSTANCE);
+        add(StopInstruction.INSTANCE);
+    }
+
+    private void add(Instruction instruction) {
+        instructions.add(instruction);
+        nextInstructionAddress++;
     }
 
     String render() {
@@ -131,17 +142,34 @@ final class MlogProgramBuilder {
         }
     }
 
-    record Label(String value) {
-        Label {
+    static final class Label {
+        private final String value;
+        private int address = -1;
+
+        Label(String value) {
             if (value == null || !value.matches("[_A-Za-z][_A-Za-z0-9]*")) {
                 throw new IllegalArgumentException("invalid mlog label: " + value);
             }
+            this.value = value;
+        }
+
+        String value() { return value; }
+
+        void bind(int address) {
+            if (this.address >= 0) throw new IllegalStateException("mlog label already bound: " + value);
+            this.address = address;
+        }
+
+        int address() {
+            if (address < 0) throw new IllegalStateException("mlog label not bound: " + value);
+            return address;
         }
     }
 
     private sealed interface Instruction permits LabelInstruction, SetInstruction, PrintInstruction,
         PrintFlushInstruction, JumpInstruction, UnitBindInstruction, SensorInstruction,
-        OperationInstruction, UnitControlInstruction, BuildingControlInstruction, StopInstruction {
+        OperationInstruction, UnitControlInstruction, BuildingControlInstruction, CounterJumpInstruction,
+        StopInstruction {
         String render();
     }
 
@@ -154,6 +182,12 @@ final class MlogProgramBuilder {
     private record SetInstruction(String target, String value) implements Instruction {
         @Override public String render() {
             return "set " + target + " " + value;
+        }
+    }
+
+    private record CounterJumpInstruction(Label target) implements Instruction {
+        @Override public String render() {
+            return "set @counter " + target.address();
         }
     }
 

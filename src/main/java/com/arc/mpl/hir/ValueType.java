@@ -8,6 +8,7 @@ public enum ValueType {
     STRING,
     UNIT,
     BUILDING,
+    VOID,
     ERROR;
 
     public boolean canAssignFrom(ValueType value) {

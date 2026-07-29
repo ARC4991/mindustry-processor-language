@@ -4,7 +4,12 @@ options { tokenVocab = MplLexer; }
 
 @header { package com.arc.mpl.syntax; }
 
-program: statement* EOF;
+program: (functionDeclaration | statement)* EOF;
+
+functionDeclaration: FUN name=IDENTIFIER LPAREN (parameter (COMMA parameter)*)? RPAREN
+    (COLON returnType=IDENTIFIER)? body=block;
+
+parameter: name=IDENTIFIER COLON typeName=IDENTIFIER;
 
 statement
     : whileStatement
@@ -15,6 +20,7 @@ statement
     | block
     | BREAK SEMICOLON
     | CONTINUE SEMICOLON
+    | RETURN returnValue=expression? SEMICOLON
     | variableDeclaration SEMICOLON
     | expression SEMICOLON
     ;
@@ -43,7 +49,7 @@ expression
     | assignmentExpression
     ;
 
-lambdaExpression: parameter=IDENTIFIER ARROW body=expression;
+lambdaExpression: lambdaParameter=IDENTIFIER ARROW body=expression;
 
 assignmentExpression
     : IDENTIFIER operator=(ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) assignmentExpression

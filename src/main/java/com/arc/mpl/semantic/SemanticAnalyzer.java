@@ -13,6 +13,8 @@ import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.FloatLiteral;
 import com.arc.mpl.ast.ForEachStatement;
 import com.arc.mpl.ast.ForStatement;
+import com.arc.mpl.ast.FunctionDeclaration;
+import com.arc.mpl.ast.FunctionParameter;
 import com.arc.mpl.ast.Identifier;
 import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.IntegerLiteral;
@@ -20,6 +22,7 @@ import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
 import com.arc.mpl.ast.MethodCallExpression;
 import com.arc.mpl.ast.Program;
+import com.arc.mpl.ast.ReturnStatement;
 import com.arc.mpl.ast.Statement;
 import com.arc.mpl.ast.StringLiteral;
 import com.arc.mpl.ast.UnaryExpression;
@@ -39,12 +42,16 @@ import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirFor;
+import com.arc.mpl.hir.HirFunction;
+import com.arc.mpl.hir.HirFunctionCall;
+import com.arc.mpl.hir.HirFunctionParameter;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
+import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirStatement;
 import com.arc.mpl.hir.HirText;
 import com.arc.mpl.hir.HirUnary;
@@ -63,21 +70,32 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /** Name resolution and strict type checks for the currently implemented MPL subset. */
 public final class SemanticAnalyzer {
     private final TargetProfile profile;
     private final Deque<Map<String, Symbol>> scopes = new ArrayDeque<>();
     private final List<Diagnostic> diagnostics = new ArrayList<>();
+    private final Map<String, FunctionSignature> functions = new LinkedHashMap<>();
+    private final Map<String, Set<String>> callGraph = new HashMap<>();
+    private final Map<String, Set<String>> directGlobalDependencies = new HashMap<>();
+    private final List<TopLevelCall> topLevelCalls = new ArrayList<>();
+    private final Set<String> initializedGlobals = new HashSet<>();
     private Path file;
     private Map<String, String> messages = Map.of();
     private Map<String, HardwareContract.LinkDeclaration> hardwareLinks = Map.of();
     private int unitIterationDepth;
     private int loopDepth;
     private String activeUnitBinding;
+    private String currentFunction;
+    private ValueType currentReturnType;
+    private boolean analyzingTopLevel;
 
     /** Uses the v146 baseline when semantic analysis is invoked outside a compiler request. */
     public SemanticAnalyzer() {
@@ -112,15 +130,33 @@ public final class SemanticAnalyzer {
             }
         }
         hardwareLinks = Map.copyOf(links);
+        functions.clear();
+        callGraph.clear();
+        directGlobalDependencies.clear();
+        topLevelCalls.clear();
+        initializedGlobals.clear();
         unitIterationDepth = 0;
         loopDepth = 0;
         activeUnitBinding = null;
+        currentFunction = null;
+        currentReturnType = null;
+        analyzingTopLevel = true;
+
+        for (FunctionDeclaration function : program.functions()) registerFunction(function);
 
         List<HirStatement> statements = new ArrayList<>();
-        for (Statement statement : program.statements()) {
-            statements.add(analyzeStatement(statement));
+        try {
+            for (Statement statement : program.statements()) {
+                statements.add(analyzeStatement(statement));
+            }
+        } finally {
+            analyzingTopLevel = false;
         }
-        return new SemanticResult(diagnostics.isEmpty() ? Optional.of(new HirProgram(statements)) : Optional.empty(), diagnostics);
+        List<HirFunction> analyzedFunctions = program.functions().stream().map(this::analyzeFunction).toList();
+        rejectRecursiveFunctions();
+        validateTopLevelCalls();
+        return new SemanticResult(diagnostics.isEmpty()
+            ? Optional.of(new HirProgram(analyzedFunctions, statements)) : Optional.empty(), diagnostics);
     }
 
     private HirStatement analyzeStatement(Statement statement) {
@@ -153,8 +189,103 @@ public final class SemanticAnalyzer {
             if (loopDepth == 0) error("MPL3402", "continue 只能出现在循环内", jump.span());
             return new HirContinue();
         }
+        if (statement instanceof ReturnStatement returned) {
+            return analyzeReturn(returned);
+        }
         ExpressionStatement expressionStatement = (ExpressionStatement) statement;
         return analyzeExpressionStatement(expressionStatement.expression());
+    }
+
+    private void registerFunction(FunctionDeclaration function) {
+        List<ValueType> parameters = function.parameters().stream()
+            .map(parameter -> parseType(parameter.typeName(), parameter.span())).toList();
+        if (parameters.contains(ValueType.VOID)) {
+            error("MPL3503", "函数参数不能使用 Void 类型", function.span());
+        }
+        ValueType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.VOID);
+        FunctionSignature signature = new FunctionSignature(function, parameters, returnType);
+        if (hardwareLinks.containsKey(function.name()) || functions.putIfAbsent(function.name(), signature) != null) {
+            error("MPL3501", "函数已声明：" + function.name(), function.span());
+        }
+        callGraph.putIfAbsent(function.name(), new HashSet<>());
+        directGlobalDependencies.putIfAbsent(function.name(), new HashSet<>());
+    }
+
+    private HirFunction analyzeFunction(FunctionDeclaration function) {
+        FunctionSignature signature = functions.get(function.name());
+        if (signature == null || signature.declaration() != function) {
+            return new HirFunction(function.name(), List.of(), ValueType.ERROR, List.of());
+        }
+        String previousFunction = currentFunction;
+        ValueType previousReturnType = currentReturnType;
+        currentFunction = function.name();
+        currentReturnType = signature.returnType();
+        scopes.push(new HashMap<>());
+        try {
+            List<HirFunctionParameter> parameters = new ArrayList<>();
+            for (int index = 0; index < function.parameters().size(); index++) {
+                FunctionParameter parameter = function.parameters().get(index);
+                ValueType type = signature.parameterTypes().get(index);
+                declare(parameter.name(), new Symbol(type, false, null, false, parameter.span()), parameter.span());
+                parameters.add(new HirFunctionParameter(parameter.name(), type));
+            }
+            List<HirStatement> body = analyzeBlock(function.body());
+            if (signature.returnType() != ValueType.VOID && !guaranteesReturn(body)) {
+                error("MPL3504", "函数 " + function.name() + " 并非所有路径都返回 "
+                    + display(signature.returnType()), function.span());
+            }
+            return new HirFunction(function.name(), parameters, signature.returnType(), body);
+        } finally {
+            scopes.pop();
+            currentFunction = previousFunction;
+            currentReturnType = previousReturnType;
+        }
+    }
+
+    private HirStatement analyzeReturn(ReturnStatement returned) {
+        if (currentFunction == null) {
+            error("MPL3502", "return 只能出现在函数内", returned.span());
+            return new HirReturn(Optional.empty());
+        }
+        Optional<HirExpression> value = returned.value().map(this::analyzeExpression);
+        if (currentReturnType == ValueType.VOID && value.isPresent()) {
+            error("MPL3503", "无返回值函数不能 return 表达式", returned.span());
+        } else if (currentReturnType != ValueType.VOID && value.isEmpty()) {
+            error("MPL3503", "函数 " + currentFunction + " 必须返回 " + display(currentReturnType), returned.span());
+        } else if (value.isPresent() && !currentReturnType.canAssignFrom(value.orElseThrow().type())) {
+            error("MPL3503", "函数 " + currentFunction + " 不能返回 " + display(value.orElseThrow().type()), returned.span());
+        }
+        return new HirReturn(value);
+    }
+
+    private boolean guaranteesReturn(List<HirStatement> statements) {
+        for (HirStatement statement : statements) {
+            if (statement instanceof HirReturn) return true;
+            if (statement instanceof HirBlock block && guaranteesReturn(block.statements())) return true;
+            if (statement instanceof HirIf branch && branch.elseBody().isPresent()
+                && guaranteesReturn(branch.thenBody()) && guaranteesReturn(branch.elseBody().orElseThrow())) return true;
+        }
+        return false;
+    }
+
+    private void rejectRecursiveFunctions() {
+        Map<String, Integer> states = new HashMap<>();
+        for (String function : functions.keySet()) visitFunction(function, states, new ArrayDeque<>());
+    }
+
+    private void visitFunction(String function, Map<String, Integer> states, Deque<String> path) {
+        if (states.getOrDefault(function, 0) == 2) return;
+        if (states.getOrDefault(function, 0) == 1) {
+            FunctionSignature signature = functions.get(function);
+            error("MPL3505", "函数调用图存在递归环：" + String.join(" -> ", path) + " -> " + function,
+                signature.declaration().span());
+            return;
+        }
+        states.put(function, 1);
+        path.addLast(function);
+        for (String target : callGraph.getOrDefault(function, java.util.Set.of())) visitFunction(target, states, path);
+        path.removeLast();
+        states.put(function, 2);
     }
 
     private List<HirStatement> analyzeBlock(BlockStatement block) {
@@ -223,6 +354,9 @@ public final class SemanticAnalyzer {
     }
 
     private HirStatement analyzeForEach(ForEachStatement loop) {
+        if (currentFunction != null) {
+            error("MPL3508", "第一版函数不支持 UnitSet 遍历", loop.span());
+        }
         Optional<UnitQuery> query = parseUnitQuery(loop.iterable());
         if (query.isEmpty()) {
             error("MPL3301", "当前阶段 for 只支持 Unit.getAll类型() 查询", loop.iterable().span());
@@ -238,7 +372,7 @@ public final class SemanticAnalyzer {
         loopDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.UNIT, false, null), loop.span());
+            declare(loop.name(), new Symbol(ValueType.UNIT, false, null, false, loop.span()), loop.span());
             List<HirExpression> filters = new ArrayList<>();
             for (Expression filter : query.orElseThrow().filters()) {
                 filters.add(analyzeUnitFilter(filter, loop.name()));
@@ -343,7 +477,7 @@ public final class SemanticAnalyzer {
         scopes.push(new HashMap<>());
         try {
             // Lambda parameters deliberately shadow the enclosing loop binding.
-            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null));
+            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null, false, source.span()));
             HirExpression result = analyzeExpression(predicate);
             if (result.type() != ValueType.BOOL) {
                 error("MPL3303", "UnitSet.where(...) 的过滤条件必须是 Bool", predicate.span());
@@ -494,13 +628,21 @@ public final class SemanticAnalyzer {
             error("MPL3201", "硬件常量不能赋给普通变量；请直接读取字段或调用控制方法", declaration.initializer().span());
         }
         ValueType type = declaration.declaredType().map(value -> parseType(value, declaration.span())).orElse(initializer.type());
+        if (type == ValueType.VOID) error("MPL3103", "变量不能使用 Void 类型", declaration.span());
         if (!type.canAssignFrom(initializer.type())) {
             error("MPL3103", "不能将 " + display(initializer.type()) + " 赋给 " + display(type), declaration.initializer().span());
         }
         if (type == ValueType.STRING && declaration.mutable()) {
             error("MPL3103", "当前阶段 String 仅支持 val 静态值；动态 String runtime 尚未启用", declaration.span());
         }
-        declare(declaration.name(), new Symbol(type, declaration.mutable(), staticStringLength(initializer)), declaration.span());
+        boolean global = currentFunction == null && scopes.size() == 1;
+        if (declare(declaration.name(),
+            new Symbol(type, declaration.mutable(), staticStringLength(initializer), global, declaration.span()),
+            declaration.span()) && global) {
+            // The initializer has already been analyzed, so calls inside it
+            // deliberately do not observe this variable as initialized.
+            initializedGlobals.add(declaration.name());
+        }
         return new HirVariableDeclaration(declaration.name(), type, declaration.mutable(), initializer);
     }
 
@@ -523,6 +665,7 @@ public final class SemanticAnalyzer {
                 error("MPL3102", "未声明的变量：" + identifier.name(), identifier.span());
                 return new HirVariable(identifier.name(), ValueType.ERROR);
             }
+            recordGlobalAccess(identifier.name(), symbol, identifier.span());
             String name = symbol.type() == ValueType.UNIT && activeUnitBinding != null
                 ? activeUnitBinding
                 : identifier.name();
@@ -567,6 +710,7 @@ public final class SemanticAnalyzer {
             error("MPL3102", "未声明的变量：" + assignment.target().name(), assignment.target().span());
             return new HirAssignment(assignment.target().name(), assignment.operator(), value, ValueType.ERROR);
         }
+        recordGlobalAccess(assignment.target().name(), target, assignment.target().span());
         if (!target.mutable()) {
             error("MPL3104", "不能给 val 重新赋值：" + assignment.target().name(), assignment.target().span());
         }
@@ -619,6 +763,32 @@ public final class SemanticAnalyzer {
     }
 
     private HirExpression analyzeCallExpression(CallExpression call) {
+        if (call.callee() instanceof Identifier functionName) {
+            FunctionSignature signature = functions.get(functionName.name());
+            if (signature == null) {
+                error("MPL3501", "未声明的函数：" + functionName.name(), call.span());
+                return new HirConstant("0", ValueType.ERROR);
+            }
+            if (call.arguments().size() != signature.parameterTypes().size()) {
+                error("MPL3503", "函数 " + functionName.name() + " 的参数数量不匹配", call.span());
+            }
+            List<HirExpression> arguments = new ArrayList<>();
+            for (int index = 0; index < call.arguments().size(); index++) {
+                Expression source = call.arguments().get(index);
+                HirExpression argument = analyzeExpression(source);
+                if (index < signature.parameterTypes().size()
+                    && !signature.parameterTypes().get(index).canAssignFrom(argument.type())) {
+                    error("MPL3503", "函数 " + functionName.name() + " 的第 " + (index + 1) + " 个参数类型不匹配",
+                        source.span());
+                }
+                arguments.add(argument);
+            }
+            if (currentFunction != null) callGraph.get(currentFunction).add(functionName.name());
+            if (analyzingTopLevel) {
+                topLevelCalls.add(new TopLevelCall(functionName.name(), Set.copyOf(initializedGlobals), call.span()));
+            }
+            return new HirFunctionCall(functionName.name(), arguments, signature.returnType());
+        }
         if (call.callee() instanceof MemberAccessExpression member
             && member.target() instanceof Identifier namespace) {
             if ("Math".equals(namespace.name())) return mathIntrinsic(member.member(), call.arguments(), call.span());
@@ -735,6 +905,7 @@ public final class SemanticAnalyzer {
             case "Float" -> ValueType.FLOAT;
             case "Bool" -> ValueType.BOOL;
             case "String" -> ValueType.STRING;
+            case "Void" -> ValueType.VOID;
             default -> typeError("当前阶段不支持类型：" + name, span);
         };
     }
@@ -744,13 +915,58 @@ public final class SemanticAnalyzer {
         return ValueType.ERROR;
     }
 
-    private void declare(String name, Symbol symbol, SourceSpan span) {
+    private boolean declare(String name, Symbol symbol, SourceSpan span) {
         Map<String, Symbol> current = scopes.peek();
-        if (hardwareLinks.containsKey(name) || current.containsKey(name) || lookup(name) != null) {
+        if (hardwareLinks.containsKey(name) || functions.containsKey(name) || current.containsKey(name) || lookup(name) != null) {
             error("MPL3101", "变量已声明：" + name, span);
-            return;
+            return false;
         }
         current.put(name, symbol);
+        return true;
+    }
+
+    private void recordGlobalAccess(String name, Symbol symbol, SourceSpan accessSpan) {
+        if (currentFunction == null || !symbol.global()) return;
+        directGlobalDependencies.get(currentFunction).add(name);
+        SourceSpan functionSpan = functions.get(currentFunction).declaration().span();
+        if (!startsBefore(symbol.declarationSpan(), functionSpan)) {
+            error("MPL3506", "函数 " + currentFunction + " 不能访问在其声明后定义的顶层变量：" + name,
+                accessSpan);
+        }
+    }
+
+    private boolean startsBefore(SourceSpan left, SourceSpan right) {
+        return left.startLine() < right.startLine()
+            || left.startLine() == right.startLine() && left.startColumn() < right.startColumn();
+    }
+
+    private void validateTopLevelCalls() {
+        Map<String, Set<String>> dependencies = new HashMap<>();
+        for (String function : functions.keySet()) {
+            dependencies.put(function, new HashSet<>(directGlobalDependencies.getOrDefault(function, Set.of())));
+        }
+
+        boolean changed;
+        do {
+            changed = false;
+            for (String function : functions.keySet()) {
+                Set<String> reachable = dependencies.get(function);
+                for (String callee : callGraph.getOrDefault(function, Set.of())) {
+                    changed |= reachable.addAll(dependencies.getOrDefault(callee, Set.of()));
+                }
+            }
+        } while (changed);
+
+        for (TopLevelCall call : topLevelCalls) {
+            List<String> missing = dependencies.getOrDefault(call.function(), Set.of()).stream()
+                .filter(name -> !call.initializedGlobals().contains(name))
+                .sorted()
+                .toList();
+            if (!missing.isEmpty()) {
+                error("MPL3507", "调用函数 " + call.function() + " 前尚未初始化顶层变量："
+                    + String.join("、", missing), call.span());
+            }
+        }
     }
 
     private Symbol lookup(String name) {
@@ -773,6 +989,7 @@ public final class SemanticAnalyzer {
             case STRING -> "String";
             case UNIT -> "Unit";
             case BUILDING -> "Building";
+            case VOID -> "Void";
             case ERROR -> "错误类型";
         };
     }
@@ -787,7 +1004,21 @@ public final class SemanticAnalyzer {
         return 0;
     }
 
-    private record Symbol(ValueType type, boolean mutable, Integer staticStringCodeUnits) {
+    private record Symbol(ValueType type, boolean mutable, Integer staticStringCodeUnits, boolean global,
+                          SourceSpan declarationSpan) {
+    }
+
+    private record FunctionSignature(FunctionDeclaration declaration, List<ValueType> parameterTypes,
+                                     ValueType returnType) {
+        private FunctionSignature {
+            parameterTypes = List.copyOf(parameterTypes);
+        }
+    }
+
+    private record TopLevelCall(String function, Set<String> initializedGlobals, SourceSpan span) {
+        private TopLevelCall {
+            initializedGlobals = Set.copyOf(initializedGlobals);
+        }
     }
 
     private record UnitQuery(String typeName, TargetProfile.UnitType type, List<Expression> filters, int managedLimit) {

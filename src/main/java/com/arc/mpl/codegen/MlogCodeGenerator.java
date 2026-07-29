@@ -6,6 +6,8 @@ import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirFor;
+import com.arc.mpl.hir.HirFunction;
+import com.arc.mpl.hir.HirFunctionCall;
 import com.arc.mpl.hir.HirBlock;
 import com.arc.mpl.hir.HirBuildingControl;
 import com.arc.mpl.hir.HirBreak;
@@ -16,6 +18,7 @@ import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirProgram;
+import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirStatement;
 import com.arc.mpl.hir.HirUnary;
@@ -28,7 +31,11 @@ import com.arc.mpl.hir.HirWhile;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import com.arc.mpl.codegen.MlogProgramBuilder.JumpCondition;
 import com.arc.mpl.codegen.MlogProgramBuilder.Operation;
@@ -41,6 +48,11 @@ public final class MlogCodeGenerator {
     private int temporaryIndex;
     private int unitIterationIndex;
     private Deque<LoopTarget> loopTargets;
+    private Map<String, MlogProgramBuilder.Label> functionEntries;
+    private Map<String, HirFunction> functions;
+    private Map<String, Integer> functionIndexes;
+    private Set<String> globalVariables;
+    private String currentFunction;
 
     /** Creates a compact release emitter, suitable for deployment to a processor. */
     public MlogCodeGenerator() {
@@ -57,11 +69,27 @@ public final class MlogCodeGenerator {
         temporaryIndex = 0;
         unitIterationIndex = 0;
         loopTargets = new ArrayDeque<>();
+        functionEntries = new HashMap<>();
+        functions = program.functions().stream().collect(java.util.stream.Collectors.toMap(
+            HirFunction::name, value -> value, (left, right) -> left, java.util.LinkedHashMap::new));
+        functionIndexes = new HashMap<>();
+        for (int index = 0; index < program.functions().size(); index++) {
+            functionIndexes.put(program.functions().get(index).name(), index);
+        }
+        globalVariables = new HashSet<>();
+        for (HirStatement statement : program.statements()) {
+            if (statement instanceof HirVariableDeclaration declaration) globalVariables.add(declaration.name());
+        }
+        for (HirFunction function : program.functions()) {
+            functionEntries.put(function.name(), label("function_" + function.name()));
+        }
+        currentFunction = null;
         for (HirStatement statement : program.statements()) {
             emitStatement(statement);
         }
         // MPL 程序默认只执行一次；持续逻辑必须由用户显式写 while。
         output.stop();
+        for (HirFunction function : program.functions()) emitFunction(function);
         return output.render();
     }
 
@@ -115,7 +143,27 @@ public final class MlogCodeGenerator {
             emitLoopJump(false);
             return;
         }
+        if (statement instanceof HirReturn returned) {
+            emitReturn(returned);
+            return;
+        }
         emitExpression(((HirExpressionStatement) statement).expression());
+    }
+
+    private void emitFunction(HirFunction function) {
+        currentFunction = function.name();
+        emitLabel(functionEntries.get(function.name()));
+        for (HirStatement statement : function.body()) emitStatement(statement);
+        if (function.returnType() == com.arc.mpl.hir.ValueType.VOID) {
+            output.set("@counter", functionReturnSlot(function.name()));
+        }
+        currentFunction = null;
+    }
+
+    private void emitReturn(HirReturn returned) {
+        if (currentFunction == null) throw new IllegalStateException("return 缺少函数上下文");
+        returned.value().ifPresent(value -> output.set(functionResultSlot(currentFunction), emitExpression(value)));
+        output.set("@counter", functionReturnSlot(currentFunction));
     }
 
     private void emitWhile(HirWhile loop) {
@@ -436,7 +484,28 @@ public final class MlogCodeGenerator {
         if (expression instanceof HirBinary binary) return emitBinary(binary);
         if (expression instanceof HirMemberAccess member) return emitMemberAccess(member);
         if (expression instanceof HirIntrinsicCall call) return emitIntrinsicCall(call);
+        if (expression instanceof HirFunctionCall call) return emitFunctionCall(call);
         return emitAssignment((HirAssignment) expression);
+    }
+
+    private String emitFunctionCall(HirFunctionCall call) {
+        HirFunction function = functions.get(call.function());
+        if (function == null) throw new IllegalArgumentException("unknown HIR function: " + call.function());
+        List<String> savedArguments = new java.util.ArrayList<>();
+        for (HirExpression argument : call.arguments()) {
+            String saved = temporary();
+            output.set(saved, emitExpression(argument));
+            savedArguments.add(saved);
+        }
+        for (int index = 0; index < savedArguments.size() && index < function.parameters().size(); index++) {
+            output.set(functionParameterSlot(function.name(), function.parameters().get(index).name()), savedArguments.get(index));
+        }
+        output.operation(Operation.ADD, functionReturnSlot(function.name()), "@counter", "1");
+        output.setCounter(functionEntries.get(function.name()));
+        if (call.type() == com.arc.mpl.hir.ValueType.VOID) return "0";
+        String result = temporary();
+        output.set(result, functionResultSlot(function.name()));
+        return result;
     }
 
     private String emitMemberAccess(HirMemberAccess member) {
@@ -543,7 +612,32 @@ public final class MlogCodeGenerator {
     }
 
     private String variable(String name) {
-        return "mpl_" + name;
+        if (currentFunction == null || globalVariables.contains(name)) return "mpl_" + name;
+        HirFunction function = functions.get(currentFunction);
+        if (function != null && function.parameters().stream().anyMatch(parameter -> parameter.name().equals(name))) {
+            return functionParameterSlot(currentFunction, name);
+        }
+        return functionPrefix(currentFunction) + "_local_" + name;
+    }
+
+    private String functionParameterSlot(String function, String parameter) {
+        HirFunction declaration = functions.get(function);
+        if (declaration == null) throw new IllegalArgumentException("unknown HIR function: " + function);
+        for (int index = 0; index < declaration.parameters().size(); index++) {
+            if (declaration.parameters().get(index).name().equals(parameter)) {
+                return functionPrefix(function) + "_arg" + index;
+            }
+        }
+        throw new IllegalArgumentException("unknown HIR function parameter: " + function + "." + parameter);
+    }
+
+    private String functionReturnSlot(String function) { return functionPrefix(function) + "_return"; }
+    private String functionResultSlot(String function) { return functionPrefix(function) + "_result"; }
+
+    private String functionPrefix(String function) {
+        Integer index = functionIndexes.get(function);
+        if (index == null) throw new IllegalArgumentException("unknown HIR function: " + function);
+        return "__mpl_fn" + index;
     }
 
     private String temporary() {

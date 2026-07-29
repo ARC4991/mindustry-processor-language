@@ -4,6 +4,7 @@ lexer grammar MplLexer;
 
 VAR: 'var';
 VAL: 'val';
+FUN: 'fun';
 FOR: 'for';
 WHILE: 'while';
 DO: 'do';
@@ -11,6 +12,7 @@ IF: 'if';
 ELSE: 'else';
 BREAK: 'break';
 CONTINUE: 'continue';
+RETURN: 'return';
 TRUE: 'true';
 FALSE: 'false';
 

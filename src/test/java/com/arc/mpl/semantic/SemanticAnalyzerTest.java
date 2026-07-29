@@ -74,4 +74,137 @@ class SemanticAnalyzerTest {
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3102")
             && diagnostic.message().contains("i")));
     }
+
+    @Test
+    void rejectsRecursiveCallsAndMissingReturnPaths() {
+        Program program = parser.parse("""
+            fun first(value: Int): Int {
+                return second(value);
+            }
+            fun second(value: Int): Int {
+                if (value > 0) {
+                    return first(value - 1);
+                }
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3504")));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3505")));
+    }
+
+    @Test
+    void rejectsReturnAtTopLevel() {
+        Program program = parser.parse("return 1;", Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertEquals("MPL3502", result.diagnostics().get(0).code());
+    }
+
+    @Test
+    void allowsFunctionToReadAnEarlierInitializedGlobal() {
+        Program program = parser.parse("""
+            var scale: Int = 2;
+            fun multiply(value: Int): Int {
+                return value * scale;
+            }
+            var result: Int = multiply(3);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isPresent());
+        assertTrue(result.diagnostics().isEmpty());
+    }
+
+    @Test
+    void rejectsFunctionAccessToAGlobalDeclaredAfterIt() {
+        Program program = parser.parse("""
+            fun readScale(): Int {
+                return scale;
+            }
+            var scale: Int = 2;
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3506")
+            && diagnostic.message().contains("scale")));
+    }
+
+    @Test
+    void rejectsTopLevelCallBeforeAnIndirectGlobalDependencyIsInitialized() {
+        Program program = parser.parse("""
+            var result: Int = outer();
+            var source: Int = 7;
+            fun inner(): Int {
+                return source;
+            }
+            fun outer(): Int {
+                return inner();
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3507")
+            && diagnostic.message().contains("source")));
+    }
+
+    @Test
+    void allowsTopLevelCallAfterAnIndirectGlobalDependencyIsInitialized() {
+        Program program = parser.parse("""
+            var source: Int = 7;
+            var result: Int = outer();
+            fun inner(): Int {
+                return source;
+            }
+            fun outer(): Int {
+                return inner();
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isPresent());
+        assertTrue(result.diagnostics().isEmpty());
+    }
+
+    @Test
+    void rejectsReadingAGlobalFromItsOwnFunctionCallInitializer() {
+        Program program = parser.parse("""
+            var source: Int = readSource();
+            fun readSource(): Int {
+                return source;
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3507")
+            && diagnostic.message().contains("source")));
+    }
+
+    @Test
+    void rejectsUnitSetTraversalInsideAFunction() {
+        Program program = parser.parse("""
+            fun controlUnits() {
+                for (var unit : Unit.getAllDagger()) {
+                    unit.stop();
+                }
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3508")));
+    }
 }
