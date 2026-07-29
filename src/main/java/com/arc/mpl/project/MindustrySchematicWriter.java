@@ -1,40 +1,38 @@
 package com.arc.mpl.project;
 
-import com.arc.mpl.memory.PhysicalMemoryLayout;
-
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.DeflaterOutputStream;
 
 /** Writes the audited v146 .msch wire format for the compiler runtime topology. */
 public final class MindustrySchematicWriter {
-    private static final int PROCESSOR_X = 1;
-    private static final int PROCESSOR_Y = 1;
-
     /** Writes the current automatic single-shard topology. */
     public byte[] write(String mlog, RuntimePlan plan, String name, String buildHash) throws IOException {
-        List<Tile> tiles = new ArrayList<>();
-        List<Link> links = new ArrayList<>();
-        String processor = switch (plan.processor()) {
+        return write(mlog, plan, BlueprintLayout.singleShard(plan), name, buildHash);
+    }
+
+    byte[] write(String mlog, RuntimePlan plan, BlueprintLayout layout, String name, String buildHash) throws IOException {
+        BlueprintLayout.ShardPlacement main = layout.main();
+        List<Link> links = layout.memories().stream().map(memory -> new Link(memory.segment().alias(),
+            memory.x() - main.x(), memory.y() - main.y())).toList();
+        List<Tile> tiles = new java.util.ArrayList<>();
+        tiles.add(new Tile(processorBlock(plan), main.x(), main.y(), logicConfig(mlog, links)));
+        for (BlueprintLayout.MemoryPlacement memory : layout.memories()) {
+            boolean cell = memory.segment().kind() == RuntimePreferences.MemoryKind.CELL;
+            tiles.add(new Tile(cell ? "memory-cell" : "memory-bank", memory.x(), memory.y(), null));
+        }
+        return schematic(tiles, layout.width(), layout.height(), name, buildHash);
+    }
+
+    private String processorBlock(RuntimePlan plan) {
+        return switch (plan.processor()) {
             case MICRO -> "micro-processor";
             case LOGIC -> "logic-processor";
             case HYPER -> "hyper-processor";
         };
-        tiles.add(new Tile(processor, PROCESSOR_X, PROCESSOR_Y, null));
-        int x = 4;
-        for (PhysicalMemoryLayout.Segment segment : plan.physicalMemoryLayout().segments()) {
-            boolean cell = segment.kind() == RuntimePreferences.MemoryKind.CELL;
-            tiles.add(new Tile(cell ? "memory-cell" : "memory-bank", x, 1, null));
-            // LogicBlock.config() serializes links relative to the processor tile.
-            links.add(new Link(segment.alias(), x - PROCESSOR_X, 1 - PROCESSOR_Y));
-            x += cell ? 2 : 3;
-        }
-        tiles.set(0, new Tile(processor, PROCESSOR_X, PROCESSOR_Y, logicConfig(mlog, links)));
-        return schematic(tiles, Math.max(3, x), 3, name, buildHash);
     }
 
     private byte[] schematic(List<Tile> tiles, int width, int height, String name, String buildHash) throws IOException {

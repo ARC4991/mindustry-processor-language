@@ -35,13 +35,17 @@ public final class BuildArtifactWriter {
                       HardwareContract hardware, RuntimePlan plan, ProjectMetadata metadata,
                       OptimizationReport optimizationReport) throws IOException {
         Files.createDirectories(directory);
-        Files.writeString(directory.resolve("Main.mlog"), mlog);
-        Files.writeString(directory.resolve("Main.mil"), mil);
         String digest = digest(mlog + "\n" + mil + "\n" + profile.id() + "\n" + metadata.name() + "\n" + metadata.version());
         String blueprintName = "MPL-" + metadata.name() + "-" + metadata.version() + "-" + digest.substring(0, 12);
-        Files.write(directory.resolve("runtime.msch"), new MindustrySchematicWriter().write(mlog, plan, blueprintName, digest));
+        BlueprintLayout layout = BlueprintLayout.singleShard(plan);
+        String identifiedMlog = "# MPL shard: Main / build: " + digest.substring(0, 12) + "\n" + mlog;
+        Files.writeString(directory.resolve("Main.mlog"), identifiedMlog);
+        Files.writeString(directory.resolve("Main.mil"), mil);
+        Files.write(directory.resolve("runtime.msch"),
+            new MindustrySchematicWriter().write(identifiedMlog, plan, layout, blueprintName, digest));
         writeFormattedJson(directory.resolve("report.json"), report(profile, plan, digest, optimizationReport));
-        writeFormattedJson(directory.resolve("deployment.json"), deployment(profile, hardware, plan, digest));
+        writeFormattedJson(directory.resolve("deployment.json"), deployment(profile, hardware, plan, layout, digest));
+        Files.writeString(directory.resolve("连接说明.txt"), connectionGuide(hardware, layout, blueprintName, digest));
         log.info("构建产物已写入：{}（blueprint={}，processor={}，instructions={}）", directory, blueprintName, plan.processorId(), plan.instructions());
     }
 
@@ -68,16 +72,23 @@ public final class BuildArtifactWriter {
         return report;
     }
 
-    private ObjectNode deployment(TargetProfile profile, HardwareContract hardware, RuntimePlan plan, String digest) {
+    private ObjectNode deployment(TargetProfile profile, HardwareContract hardware, RuntimePlan plan,
+                                  BlueprintLayout layout, String digest) {
         ObjectNode topology = JSON.createObjectNode();
         ArrayNode blocks = topology.putObject("blueprint").put("file", "runtime.msch").putArray("blocks");
         blocks.add("processor");
         if (!plan.physicalMemoryLayout().segments().isEmpty()) blocks.add("memory");
 
-        ObjectNode shard = topology.putArray("shards").addObject();
-        shard.put("id", "Main");
-        shard.put("processor", plan.processorId());
-        shard.put("mlog", "Main.mlog");
+        ArrayNode shards = topology.putArray("shards");
+        for (BlueprintLayout.ShardPlacement placement : layout.shards()) {
+            ObjectNode shard = shards.addObject();
+            shard.put("id", placement.id());
+            shard.put("processor", placement.processor());
+            shard.put("mlog", placement.id() + ".mlog");
+            ArrayNode roles = shard.putArray("roles");
+            placement.roles().forEach(roles::add);
+            shard.putObject("blueprintPosition").put("x", placement.x()).put("y", placement.y());
+        }
 
         ArrayNode memorySegments = topology.putArray("memorySegments");
         plan.physicalMemoryLayout().segments().forEach(segment -> {
@@ -106,6 +117,29 @@ public final class BuildArtifactWriter {
         });
         deployment.putArray("prerequisites");
         return deployment;
+    }
+
+    private String connectionGuide(HardwareContract hardware, BlueprintLayout layout, String blueprintName, String digest) {
+        BlueprintLayout.ShardPlacement main = layout.main();
+        StringBuilder guide = new StringBuilder();
+        guide.append("MPL 外部硬件连接说明\n");
+        guide.append("蓝图：").append(blueprintName).append('\n');
+        guide.append("构建：").append(digest).append("\n\n");
+        guide.append("所有外部硬件只连接 Main。Main 是蓝图最左侧处理器，局部坐标为 (")
+            .append(main.x()).append(", ").append(main.y()).append(")。\n");
+        guide.append("打开处理器代码时，首行应为：# MPL shard: Main / build: ")
+            .append(digest, 0, 12).append("\n\n");
+        if (hardware.links().isEmpty()) {
+            guide.append("本项目不需要手动连接外部硬件。\n");
+            return guide.toString();
+        }
+        guide.append("按以下 alias 连接；多个同类建筑按数字从小到大连接：\n");
+        for (HardwareContract.LinkDeclaration link : hardware.links()) {
+            guide.append("- ").append(link.mplName()).append(" : ").append(link.mplType())
+                .append(" -> ").append(link.gameAlias()).append('\n');
+        }
+        guide.append("\n选中 Main 进入配置模式后，游戏会在已连接建筑上显示实际 alias；必须与上表一致。\n");
+        return guide.toString();
     }
 
     private ObjectNode artifactHeader(TargetProfile profile, String digest) {

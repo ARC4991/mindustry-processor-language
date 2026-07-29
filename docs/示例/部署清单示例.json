@@ -10,8 +10,8 @@
       "blocks": ["processor", "memory"]
     },
     "shards": [
-      { "id": "Main", "processor": "hyper", "mlog": "Main.mlog" },
-      { "id": "Worker-0", "processor": "logic", "mlog": "Worker-0.mlog" }
+      { "id": "Main", "processor": "hyper", "mlog": "Main.mlog", "roles": ["main"], "blueprintPosition": { "x": 1, "y": 1 } },
+      { "id": "Worker-0", "processor": "logic", "mlog": "Worker-0.mlog", "roles": ["worker"], "blueprintPosition": { "x": 5, "y": 1 } }
     ],
     "memorySegments": [
       {

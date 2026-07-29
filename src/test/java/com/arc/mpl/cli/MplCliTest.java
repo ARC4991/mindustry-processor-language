@@ -25,13 +25,15 @@ class MplCliTest {
             "build", "--debug", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
         });
 
-        assertEquals("""
+        String deployedMlog = Files.readString(mlog);
+        assertTrue(deployedMlog.startsWith("# MPL shard: Main / build: "));
+        assertTrue(deployedMlog.endsWith("""
             mpl_while_start_0:
             jump mpl_while_end_1 equal 1 0
             jump mpl_while_start_0 always 0 0
             mpl_while_end_1:
             stop
-            """, Files.readString(mlog));
+            """));
         assertEquals("""
             // 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。
             // 普通结构保留为 MIL；@unit.* 与 @io.* 是由 target profile 展开的受限宏。
@@ -43,6 +45,7 @@ class MplCliTest {
         assertTrue(Files.isRegularFile(outputDirectory.resolve("runtime.msch")));
         assertTrue(Files.isRegularFile(outputDirectory.resolve("report.json")));
         assertTrue(Files.isRegularFile(outputDirectory.resolve("deployment.json")));
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("连接说明.txt")));
         assertEquals("msch", new String(Files.readAllBytes(outputDirectory.resolve("runtime.msch")), 0, 4));
         assertTrue(Files.readString(outputDirectory.resolve("report.json")).contains("\"processor\""));
         assertTrue(Files.readString(outputDirectory.resolve("deployment.json")).contains("\"runtimeTopology\""));

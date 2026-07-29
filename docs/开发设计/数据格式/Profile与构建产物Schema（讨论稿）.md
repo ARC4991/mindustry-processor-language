@@ -55,6 +55,8 @@ profile 的 `macros` 是 MIL 白名单的唯一来源。每一个宏必须同时
 - `runtimeTopology`：处理器和真实 Memory Cell/Bank。可选 `runtime.msch` **只包含这一类**，并可包含处理器到 Memory 的内部连接。
 - `externalHardware`：Display、Message、Switch、炮塔及其它 `link(...)` 建筑。它们不进入蓝图，必须由玩家自行放置、连接；清单只记录 shard、alias、期望类型、读/写权限与组合屏关系。
 
+每个 shard 还必须记录 `roles` 与蓝图局部坐标 `blueprintPosition`。外部硬件第一版全部归 `Main`，构建器另行生成中文 `连接说明.txt`；它按处理器坐标列出 MPL 逻辑名到游戏 alias 的映射。坐标和说明用于人工部署，不把自由手动连接伪装成编译期已经验证的事实。
+
 `mpl hardware check` 读取清单并验证外部硬件；每个 shard 的共享 Memory 同一性还要由生成代码的启动握手确认。硬件检查不能自动改变地图、补线或把外部建筑写入蓝图。
 
 ## 产物示例

@@ -36,6 +36,8 @@ class BuildArtifactWriterTest {
         String hash = tags.get("mpl.buildHash");
         assertTrue(hash.matches("[0-9a-f]{64}"));
         assertEquals("MPL-circle-demo-1.2.3-" + hash.substring(0, 12), tags.get("name"));
+        assertTrue(readProcessorConfig(temporaryDirectory.resolve("runtime.msch")).code()
+            .startsWith("# MPL shard: Main / build: " + hash.substring(0, 12)));
     }
 
     @Test
@@ -52,6 +54,15 @@ class BuildArtifactWriterTest {
         assertEquals("v146", parsed.path("targetProfile").asText());
         assertTrue(report.contains("\n  \"compiler\" : {"));
         assertTrue(deployment.contains("\n  \"runtimeTopology\" : {"));
+        JsonNode deploymentJson = new ObjectMapper().readTree(deployment);
+        JsonNode main = deploymentJson.path("runtimeTopology").path("shards").get(0);
+        assertEquals("main", main.path("roles").get(0).asText());
+        assertEquals(1, main.path("blueprintPosition").path("x").asInt());
+        assertEquals(1, main.path("blueprintPosition").path("y").asInt());
+        assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("Main.mlog"))
+            .startsWith("# MPL shard: Main / build: "));
+        assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("连接说明.txt"))
+            .contains("Main 是蓝图最左侧处理器"));
     }
 
     @Test
@@ -114,7 +125,7 @@ class BuildArtifactWriterTest {
         assertEquals(3, segment.path("usedSlots").asInt());
         assertEquals("__mpl_mem0", segment.path("bindings").get(0).path("alias").asText());
         assertEquals(List.of(new LogicLink("__mpl_mem0", 3, 0)),
-            readProcessorLinks(temporaryDirectory.resolve("runtime.msch")));
+            readProcessorConfig(temporaryDirectory.resolve("runtime.msch")).links());
     }
 
     private Map<String, String> readTags(Path file) throws Exception {
@@ -129,7 +140,7 @@ class BuildArtifactWriterTest {
         }
     }
 
-    private List<LogicLink> readProcessorLinks(Path file) throws Exception {
+    private ProcessorConfig readProcessorConfig(Path file) throws Exception {
         byte[] bytes = java.nio.file.Files.readAllBytes(file);
         try (DataInputStream stream = new DataInputStream(
             new InflaterInputStream(new ByteArrayInputStream(bytes, 5, bytes.length - 5)))) {
@@ -150,25 +161,28 @@ class BuildArtifactWriterTest {
                 int configType = stream.readUnsignedByte();
                 byte[] config = configType == 14 ? stream.readNBytes(stream.readInt()) : null;
                 stream.readUnsignedByte();
-                if (block.endsWith("processor") && config != null) return readLogicLinks(config);
+                if (block.endsWith("processor") && config != null) return readLogicConfig(config);
             }
         }
         throw new IllegalStateException("蓝图中缺少处理器配置");
     }
 
-    private List<LogicLink> readLogicLinks(byte[] config) throws Exception {
+    private ProcessorConfig readLogicConfig(byte[] config) throws Exception {
         try (DataInputStream stream = new DataInputStream(new InflaterInputStream(new ByteArrayInputStream(config)))) {
             stream.readUnsignedByte();
-            stream.skipNBytes(stream.readInt());
+            String code = new String(stream.readNBytes(stream.readInt()), java.nio.charset.StandardCharsets.UTF_8);
             int linkCount = stream.readInt();
             List<LogicLink> links = new java.util.ArrayList<>();
             for (int index = 0; index < linkCount; index++) {
                 links.add(new LogicLink(stream.readUTF(), stream.readShort(), stream.readShort()));
             }
-            return List.copyOf(links);
+            return new ProcessorConfig(code, List.copyOf(links));
         }
     }
 
     private record LogicLink(String alias, int relativeX, int relativeY) {
+    }
+
+    private record ProcessorConfig(String code, List<LogicLink> links) {
     }
 }
