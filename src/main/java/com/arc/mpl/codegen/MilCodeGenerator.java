@@ -153,7 +153,12 @@ public final class MilCodeGenerator {
         }
         if (statement instanceof HirBuildingIteration iteration) {
             writer.append("for (var ").append(identifier(iteration.bindingName(), "遍历变量"))
-                .append(" : Building.getAll").append(identifier(iteration.buildingType(), "建筑类型")).append("()) ");
+                .append(" : Building.getAll").append(identifier(iteration.buildingType(), "建筑类型")).append("()");
+            for (HirExpression filter : iteration.filters()) {
+                writer.append(".where(").append(identifier(iteration.bindingName(), "遍历变量"))
+                    .append(" => ").append(expression(filter)).append(")");
+            }
+            writer.append(") ");
             emitBlock(writer, iteration.body());
             return;
         }

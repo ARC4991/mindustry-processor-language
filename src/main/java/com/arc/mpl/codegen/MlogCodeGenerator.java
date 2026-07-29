@@ -501,6 +501,7 @@ public final class MlogCodeGenerator {
             for (HirHardwareLink building : iteration.buildings()) {
                 MlogProgramBuilder.Label next = label("building_next");
                 activeBuildingBindings.put(iteration.bindingName(), building);
+                emitFilterRejectionJump(iteration.filters(), next);
                 emitLoopBody(iteration.body(), next, end);
                 emitLabel(next);
             }

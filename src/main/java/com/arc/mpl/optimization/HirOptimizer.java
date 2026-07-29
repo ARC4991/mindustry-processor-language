@@ -121,8 +121,14 @@ public final class HirOptimizer {
                 eliminatedStatements++;
                 return List.of();
             }
+            List<HirExpression> filters = optimizeExpressions(iteration.filters());
+            if (filters.stream().map(this::booleanConstant).anyMatch(value -> value.filter(flag -> !flag).isPresent())) {
+                eliminatedStatements++;
+                return List.of();
+            }
+            filters = filters.stream().filter(filter -> booleanConstant(filter).filter(flag -> flag).isEmpty()).toList();
             return List.of(new HirBuildingIteration(iteration.bindingName(), iteration.buildingType(), iteration.buildings(),
-                optimizeStatements(iteration.body())));
+                filters, optimizeStatements(iteration.body())));
         }
         if (statement instanceof HirAggregateIteration iteration) {
             return List.of(new HirAggregateIteration(iteration.bindingName(), iteration.source(), iteration.elementType(),

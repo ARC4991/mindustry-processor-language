@@ -407,6 +407,80 @@ class MplCompilerTest {
     }
 
     @Test
+    void filtersEachStaticallyLinkedBuildingBeforeExecutingTheTraversalBody(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
+            const NorthTurret: Duo = link("duo1");
+            const SouthTurret: Duo = link("duo2");
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val minimum: Float = 10.0;
+            var matched: Int = 0;
+            for (var turret : Building.getAllDuo(_ => _.enabled).where(candidate => candidate.health > minimum)) {
+                matched += 1;
+                turret.setEnabled(false);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("duo1 @enabled"));
+        assertTrue(mlog.contains("duo1 @health"));
+        assertTrue(mlog.contains("duo2 @enabled"));
+        assertTrue(mlog.contains("duo2 @health"));
+        assertTrue(mlog.contains("control duo1 enabled 0 0 0 0 0"));
+        assertTrue(mlog.contains("control duo2 enabled 0 0 0 0 0"));
+        assertTrue(mlog.indexOf("duo1 @enabled") < mlog.indexOf("control duo1 enabled"));
+        assertTrue(mlog.indexOf("duo2 @enabled") < mlog.indexOf("control duo2 enabled"));
+        assertTrue(result.mil().orElseThrow().contains(
+            "for (var turret : Building.getAllDuo().where(turret => turret.enabled).where(turret => (turret.health > minimum))) {"));
+    }
+
+    @Test
+    void rejectsImpureOrNonLambdaBuildingFilters(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Turret: Duo = link(\"duo1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var threshold: Float = 5.0;
+            for (var turret : Building.getAllDuo().where(_ => _.health > threshold)) {
+                turret.setEnabled(true);
+            }
+            for (var turret : Building.getAllDuo().where(true)) {
+                turret.setEnabled(true);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3201")
+            && diagnostic.message().contains("val 标量")));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3201")
+            && diagnostic.message().contains("必须是 lambda")));
+    }
+
+    @Test
+    void removesBuildingTraversalWithAConstantFalseFilter(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Turret: Duo = link(\"duo1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            for (var turret : Building.getAllDuo(_ => false).where(_ => true)) {
+                turret.setEnabled(true);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals("stop\n", result.mlog().orElseThrow());
+        assertEquals(1, result.optimizationReport().eliminatedStatements());
+    }
+
+    @Test
     void removesBuildingTraversalWhenNoMatchingLinkIsDeclared(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),

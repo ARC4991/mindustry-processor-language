@@ -430,7 +430,9 @@ public final class SemanticAnalyzer {
             List<HirHardwareLink> buildings = hardwareLinks.values().stream()
                 .filter(link -> query.typeName().equals(link.mplType()))
                 .map(link -> new HirHardwareLink(link.mplName(), link.gameAlias(), link.mplType())).toList();
-            return new HirBuildingIteration(loop.name(), query.typeName(), buildings, analyzeBlock(loop.body()));
+            List<HirExpression> filters = query.filters().stream()
+                .map(filter -> analyzeBuildingFilter(filter, loop.name(), query.typeName())).toList();
+            return new HirBuildingIteration(loop.name(), query.typeName(), buildings, filters, analyzeBlock(loop.body()));
         } finally {
             scopes.pop();
             loopDepth--;
@@ -535,8 +537,18 @@ public final class SemanticAnalyzer {
     }
 
     private Optional<BuildingQuery> parseBuildingQuery(Expression iterable) {
-        if (!(iterable instanceof CallExpression call)
-            || !(call.callee() instanceof MemberAccessExpression member)
+        List<Expression> filters = new ArrayList<>();
+        List<CallExpression> modifiers = new ArrayList<>();
+        Expression current = iterable;
+
+        while (current instanceof CallExpression call
+            && call.callee() instanceof MemberAccessExpression member
+            && "where".equals(member.member())) {
+            modifiers.add(call);
+            current = member.target();
+        }
+        if (!(current instanceof CallExpression queryCall)
+            || !(queryCall.callee() instanceof MemberAccessExpression member)
             || !(member.target() instanceof Identifier namespace)
             || !"Building".equals(namespace.name())) {
             return Optional.empty();
@@ -545,8 +557,8 @@ public final class SemanticAnalyzer {
             error("MPL3201", "Building 查询必须形如 Building.getAllDuo()", member.span());
             return Optional.empty();
         }
-        if (!call.arguments().isEmpty()) {
-            error("MPL3201", "第一版 Building.getAll类型() 不接受参数；筛选将在后续实现", call.span());
+        if (queryCall.arguments().size() > 1) {
+            error("MPL3201", "Building.getAll类型(...) 最多接受一个过滤 lambda", queryCall.span());
             return Optional.empty();
         }
         String typeName = member.member().substring("getAll".length());
@@ -554,7 +566,86 @@ public final class SemanticAnalyzer {
             error("MPL3201", "当前 target 不支持 Building.getAll" + typeName + "()", member.span());
             return Optional.empty();
         }
-        return Optional.of(new BuildingQuery(typeName));
+        if (queryCall.arguments().size() == 1) filters.add(queryCall.arguments().get(0));
+        for (int index = modifiers.size() - 1; index >= 0; index--) {
+            CallExpression modifier = modifiers.get(index);
+            if (modifier.arguments().size() != 1) {
+                error("MPL3201", "Building 查询的 .where(...) 需要恰好一个过滤 lambda", modifier.span());
+                return Optional.empty();
+            }
+            filters.add(modifier.arguments().get(0));
+        }
+        return Optional.of(new BuildingQuery(typeName, List.copyOf(filters)));
+    }
+
+    /** Validates a side-effect-free predicate over one statically expanded linked building. */
+    private HirExpression analyzeBuildingFilter(Expression source, String bindingName, String buildingType) {
+        if (!(source instanceof LambdaExpression lambda)) {
+            error("MPL3201", "Building 查询的 .where(...) 参数必须是 lambda", source.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        String previousBinding = activeBuildingBinding;
+        String previousType = activeBuildingType;
+        activeBuildingBinding = lambda.parameter();
+        activeBuildingType = buildingType;
+        scopes.push(new HashMap<>());
+        try {
+            declare(lambda.parameter(), new Symbol(ValueType.BUILDING, false, null, null, false, source.span()), source.span());
+            HirExpression result = analyzeExpression(lambda.body());
+            if (result.type() != ValueType.BOOL) {
+                error("MPL3201", "Building 查询的 .where(...) 过滤条件必须是 Bool", lambda.body().span());
+            }
+            if (!isPureBuildingFilter(result, lambda.parameter())) {
+                error("MPL3201", "Building 查询的 .where(...) 只能读取当前建筑字段与 val 标量", source.span());
+            }
+            return renameBuildingBinding(result, lambda.parameter(), bindingName);
+        } finally {
+            scopes.pop();
+            activeBuildingBinding = previousBinding;
+            activeBuildingType = previousType;
+        }
+    }
+
+    private boolean isPureBuildingFilter(HirExpression expression, String bindingName) {
+        if (expression instanceof HirConstant || expression instanceof HirText) return true;
+        if (expression instanceof HirVariable variable) {
+            if (variable.type() == ValueType.BUILDING) return bindingName.equals(variable.name());
+            Symbol symbol = lookup(variable.name());
+            return symbol != null && !symbol.mutable();
+        }
+        if (expression instanceof HirMemberAccess member) return isPureBuildingFilter(member.target(), bindingName);
+        if (expression instanceof HirIntrinsicCall call) {
+            return "Math".equals(call.namespace())
+                && call.arguments().stream().allMatch(argument -> isPureBuildingFilter(argument, bindingName));
+        }
+        if (expression instanceof HirUnary unary) return isPureBuildingFilter(unary.operand(), bindingName);
+        if (expression instanceof HirBinary binary) {
+            return isPureBuildingFilter(binary.left(), bindingName) && isPureBuildingFilter(binary.right(), bindingName);
+        }
+        return false;
+    }
+
+    /** Rebinds the lambda parameter to the iteration variable used by target lowering. */
+    private HirExpression renameBuildingBinding(HirExpression expression, String sourceName, String targetName) {
+        if (expression instanceof HirVariable variable) {
+            return variable.type() == ValueType.BUILDING && sourceName.equals(variable.name())
+                ? new HirVariable(targetName, ValueType.BUILDING) : variable;
+        }
+        if (expression instanceof HirMemberAccess member) {
+            return new HirMemberAccess(renameBuildingBinding(member.target(), sourceName, targetName), member.member(), member.type());
+        }
+        if (expression instanceof HirUnary unary) {
+            return new HirUnary(unary.operator(), renameBuildingBinding(unary.operand(), sourceName, targetName), unary.type());
+        }
+        if (expression instanceof HirBinary binary) {
+            return new HirBinary(renameBuildingBinding(binary.left(), sourceName, targetName), binary.operator(),
+                renameBuildingBinding(binary.right(), sourceName, targetName), binary.type());
+        }
+        if (expression instanceof HirIntrinsicCall call) {
+            return new HirIntrinsicCall(call.namespace(), call.name(), call.arguments().stream()
+                .map(argument -> renameBuildingBinding(argument, sourceName, targetName)).toList(), call.type());
+        }
+        return expression;
     }
 
     private HirExpression analyzeUnitFilter(Expression source, String bindingName) {
@@ -1431,6 +1522,9 @@ public final class SemanticAnalyzer {
     private record UnitQuery(String typeName, TargetProfile.UnitType type, List<Expression> filters, int managedLimit) {
     }
 
-    private record BuildingQuery(String typeName) {
+    private record BuildingQuery(String typeName, List<Expression> filters) {
+        private BuildingQuery {
+            filters = List.copyOf(filters);
+        }
     }
 }
