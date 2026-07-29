@@ -1,4 +1,4 @@
-const Screen0: Display = link("display1");
-const Screen1: Display = link("display2");
+const Screen0: Display = link("display1", width: 80, height: 80);
+const Screen1: Display = link("display2", width: 80, height: 80);
 export const MainScreen: Display = Display.combine([[Screen0, Screen1]]);
 export const AlertBoard: Message = link("message1");

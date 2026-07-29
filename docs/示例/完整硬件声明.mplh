@@ -1,9 +1,9 @@
 // 此文件由项目配置指定；其中导出的硬件常量对项目 MPL 代码全局可见。
 
-const Screen0: Display = link("display1");
-const Screen1: Display = link("display2");
-const Screen2: Display = link("display3");
-const Screen3: Display = link("display4");
+const Screen0: Display = link("display1", width: 176, height: 176);
+const Screen1: Display = link("display2", width: 176, height: 176);
+const Screen2: Display = link("display3", width: 176, height: 176);
+const Screen3: Display = link("display4", width: 176, height: 176);
 
 export const MainScreen: Display = Display.combine([
     [Screen0, Screen1],

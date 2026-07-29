@@ -19,7 +19,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 ./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/build'
 ```
 
-`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。入口可用 `import { name } from "./module";` 递归链接 `src` 内显式 `export fun` / `export val` 的 MPL 或 MIL 模块；依赖顶层初始化只执行一次，私有符号由链接器隔离。`workspace:` 依赖由 `mpl install` 递归锁定到格式化的 `mpl.lock`，`check/build` 会验证根清单、包源码、`.mplh` 摘要、单版本约束和 target 能力，绝不自动更新锁文件。包可在自己的 `.mplh` 中用 `require` 声明命名硬件，并由调用方通过 `with` 严格注入。registry 下载和组合 Display 的尺寸约束验证尚未实现。
+`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。入口可用 `import { name } from "./module";` 递归链接 `src` 内显式 `export fun` / `export val` 的 MPL 或 MIL 模块；依赖顶层初始化只执行一次，私有符号由链接器隔离。`workspace:` 依赖由 `mpl install` 递归锁定到格式化的 `mpl.lock`，`check/build` 会验证根清单、包源码、`.mplh` 摘要、单版本约束和 target 能力，绝不自动更新锁文件。包可在自己的 `.mplh` 中用 `require` 声明命名硬件，并由调用方通过 `with` 严格注入；组合 Display 的尺寸约束也会在链接期验证。registry 下载尚未实现。
 
 手写 MIL 使用独立 ANTLR 前端，只能调用 target profile 公开宏；它与 MPL 一样经过严格类型、硬件契约、优化、Runtime、内存规划和 mlog 限制校验。
 
@@ -71,7 +71,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - 明确 MPL 与 mlog 的映射边界；
 - 规划 Java 编译器的前端、IR 与代码生成阶段。
 
-动态长度/泛型可变容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。工作区包解析与基础硬件注入已实现；registry、组合屏幕尺寸匹配、String 动态序列和 class/new 仍在后续阶段。
+动态长度/泛型可变容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。工作区包解析、严格硬件注入、组合屏幕尺寸匹配与绘制分发已实现；registry、String 动态序列和 class/new 仍在后续阶段。
 
 ## 开发约定
 
