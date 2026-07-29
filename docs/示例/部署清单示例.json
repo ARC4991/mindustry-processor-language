@@ -18,6 +18,7 @@
         "id": "Shared",
         "kind": "bank",
         "capacity": 512,
+        "usedSlots": 128,
         "bindings": [
           { "shard": "Main", "alias": "memory1", "access": "readWrite" },
           { "shard": "Worker-0", "alias": "memory1", "access": "readWrite" }

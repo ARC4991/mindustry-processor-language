@@ -44,11 +44,12 @@
     },
     "memory": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "kind", "capacity", "bindings"],
+      "required": ["id", "kind", "capacity", "usedSlots", "bindings"],
       "properties": {
         "id": { "type": "string" },
         "kind": { "enum": ["cell", "bank"] },
         "capacity": { "type": "integer", "minimum": 1 },
+        "usedSlots": { "type": "integer", "minimum": 0 },
         "bindings": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["shard", "alias", "access"], "properties": { "shard": { "type": "string" }, "alias": { "type": "string" }, "access": { "enum": ["read", "write", "readWrite"] } } } }
       }
     },

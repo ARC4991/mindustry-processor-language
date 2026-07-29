@@ -1,5 +1,6 @@
 package com.arc.mpl.project;
 
+import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.optimization.OptimizationReport;
@@ -69,6 +70,33 @@ class BuildArtifactWriterTest {
         assertEquals(4, report.path("optimizations").get(3).path("applied").asInt());
     }
 
+    @Test
+    void writesTheExactCompilerMemoryLayoutToTheBlueprintAndDeploymentManifest() throws Exception {
+        TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
+        PhysicalMemoryLayout.StorageKey key = new PhysicalMemoryLayout.StorageKey(null, "values");
+        PhysicalMemoryLayout layout = new PhysicalMemoryLayout(
+            List.of(new PhysicalMemoryLayout.Segment("__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 3)),
+            Map.of(key, new PhysicalMemoryLayout.Allocation(key, 3,
+                List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 3)))), 3);
+        String mlog = "write 1 __mpl_mem0 0\nstop\n";
+        RuntimePlan plan = new RuntimePlanner().plan(mlog, profile, RuntimePreferences.defaults(), layout);
+
+        new BuildArtifactWriter().write(temporaryDirectory, mlog, "val values: Int[] = [1, 2, 3];\n", profile,
+            new HardwareContract(List.of(), Map.of()), plan, new ProjectMetadata("memory-demo", "1.0.0"));
+
+        JsonNode report = new ObjectMapper().readTree(java.nio.file.Files.readString(temporaryDirectory.resolve("report.json")));
+        JsonNode deployment = new ObjectMapper().readTree(
+            java.nio.file.Files.readString(temporaryDirectory.resolve("deployment.json")));
+        JsonNode segment = deployment.path("runtimeTopology").path("memorySegments").get(0);
+        assertEquals(3, report.path("totals").path("physicalSlots").asInt());
+        assertEquals("__mpl_mem0", segment.path("id").asText());
+        assertEquals("bank", segment.path("kind").asText());
+        assertEquals(512, segment.path("capacity").asInt());
+        assertEquals(3, segment.path("usedSlots").asInt());
+        assertEquals("__mpl_mem0", segment.path("bindings").get(0).path("alias").asText());
+        assertEquals(List.of("__mpl_mem0"), readProcessorLinks(temporaryDirectory.resolve("runtime.msch")));
+    }
+
     private Map<String, String> readTags(Path file) throws Exception {
         byte[] bytes = java.nio.file.Files.readAllBytes(file);
         try (DataInputStream stream = new DataInputStream(new InflaterInputStream(new ByteArrayInputStream(bytes, 5, bytes.length - 5)))) {
@@ -78,6 +106,48 @@ class BuildArtifactWriterTest {
             Map<String, String> tags = new HashMap<>();
             for (int index = 0; index < count; index++) tags.put(stream.readUTF(), stream.readUTF());
             return tags;
+        }
+    }
+
+    private List<String> readProcessorLinks(Path file) throws Exception {
+        byte[] bytes = java.nio.file.Files.readAllBytes(file);
+        try (DataInputStream stream = new DataInputStream(
+            new InflaterInputStream(new ByteArrayInputStream(bytes, 5, bytes.length - 5)))) {
+            stream.readShort();
+            stream.readShort();
+            int tagCount = stream.readUnsignedByte();
+            for (int index = 0; index < tagCount; index++) {
+                stream.readUTF();
+                stream.readUTF();
+            }
+            int blockCount = stream.readUnsignedByte();
+            List<String> blocks = new java.util.ArrayList<>();
+            for (int index = 0; index < blockCount; index++) blocks.add(stream.readUTF());
+            int tileCount = stream.readInt();
+            for (int index = 0; index < tileCount; index++) {
+                String block = blocks.get(stream.readUnsignedByte());
+                stream.readInt();
+                int configType = stream.readUnsignedByte();
+                byte[] config = configType == 14 ? stream.readNBytes(stream.readInt()) : null;
+                stream.readUnsignedByte();
+                if (block.endsWith("processor") && config != null) return readLogicLinks(config);
+            }
+        }
+        throw new IllegalStateException("蓝图中缺少处理器配置");
+    }
+
+    private List<String> readLogicLinks(byte[] config) throws Exception {
+        try (DataInputStream stream = new DataInputStream(new InflaterInputStream(new ByteArrayInputStream(config)))) {
+            stream.readUnsignedByte();
+            stream.skipNBytes(stream.readInt());
+            int linkCount = stream.readInt();
+            List<String> links = new java.util.ArrayList<>();
+            for (int index = 0; index < linkCount; index++) {
+                links.add(stream.readUTF());
+                stream.readShort();
+                stream.readShort();
+            }
+            return List.copyOf(links);
         }
     }
 }

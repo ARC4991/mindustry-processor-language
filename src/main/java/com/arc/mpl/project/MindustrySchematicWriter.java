@@ -1,5 +1,7 @@
 package com.arc.mpl.project;
 
+import com.arc.mpl.memory.PhysicalMemoryLayout;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -21,15 +23,11 @@ public final class MindustrySchematicWriter {
         };
         tiles.add(new Tile(processor, 1, 1, null));
         int x = 4;
-        for (int index = 0; index < plan.memoryCells(); index++) {
-            tiles.add(new Tile("memory-cell", x, 1, null));
-            links.add(new Link("__mpl_mem" + links.size(), x, 1));
-            x += 2;
-        }
-        for (int index = 0; index < plan.memoryBanks(); index++) {
-            tiles.add(new Tile("memory-bank", x, 1, null));
-            links.add(new Link("__mpl_mem" + links.size(), x, 1));
-            x += 3;
+        for (PhysicalMemoryLayout.Segment segment : plan.physicalMemoryLayout().segments()) {
+            boolean cell = segment.kind() == RuntimePreferences.MemoryKind.CELL;
+            tiles.add(new Tile(cell ? "memory-cell" : "memory-bank", x, 1, null));
+            links.add(new Link(segment.alias(), x, 1));
+            x += cell ? 2 : 3;
         }
         tiles.set(0, new Tile(processor, 1, 1, logicConfig(mlog, links)));
         return schematic(tiles, Math.max(3, x), 3, name, buildHash);

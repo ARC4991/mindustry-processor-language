@@ -1,5 +1,7 @@
 package com.arc.mpl.cli;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -44,5 +46,32 @@ class MplCliTest {
         assertEquals("msch", new String(Files.readAllBytes(outputDirectory.resolve("runtime.msch")), 0, 4));
         assertTrue(Files.readString(outputDirectory.resolve("report.json")).contains("\"processor\""));
         assertTrue(Files.readString(outputDirectory.resolve("deployment.json")).contains("\"runtimeTopology\""));
+    }
+
+    @Test
+    void buildCarriesDynamicArrayMemoryFromCompilationIntoEveryArtifact(@TempDir Path project) throws IOException {
+        Path sourceDirectory = Files.createDirectories(project.resolve("src"));
+        Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var values: Int[] = [1, 2, 3];
+            for (var i: Int = 0; i < values.size; i += 1) {
+                values.set(i, values[i] + 1);
+            }
+            """);
+        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+
+        MplCli.main(new String[]{
+            "build", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
+        });
+
+        String mlog = Files.readString(outputDirectory.resolve("Main.mlog"));
+        JsonNode report = new ObjectMapper().readTree(Files.readString(outputDirectory.resolve("report.json")));
+        JsonNode deployment = new ObjectMapper().readTree(Files.readString(outputDirectory.resolve("deployment.json")));
+        assertTrue(mlog.contains("read "));
+        assertTrue(mlog.contains("write "));
+        assertEquals(3, report.path("totals").path("physicalSlots").asInt());
+        assertEquals("__mpl_mem0",
+            deployment.path("runtimeTopology").path("memorySegments").get(0).path("id").asText());
+        assertEquals("bank",
+            deployment.path("runtimeTopology").path("memorySegments").get(0).path("kind").asText());
     }
 }

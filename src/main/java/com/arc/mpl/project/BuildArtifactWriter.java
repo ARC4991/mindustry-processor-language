@@ -55,8 +55,15 @@ public final class BuildArtifactWriter {
     private String deployment(TargetProfile profile, HardwareContract hardware, RuntimePlan plan, String digest) {
         String external = hardware.links().stream().map(link -> "{\"mplName\":\"%s\",\"ownerShard\":\"Main\",\"alias\":\"%s\",\"type\":\"%s\",\"access\":\"%s\"}"
             .formatted(escape(link.mplName()), escape(link.gameAlias()), escape(link.mplType()), access(link.mplType()))).collect(java.util.stream.Collectors.joining(","));
-        String blocks = plan.physicalSlots() == 0 ? "[\"processor\"]" : "[\"processor\",\"memory\"]";
-        String topology = "{\"blueprint\":{\"file\":\"runtime.msch\",\"blocks\":%s},\"shards\":[{\"id\":\"Main\",\"processor\":\"%s\",\"mlog\":\"Main.mlog\"}],\"memorySegments\":[]}".formatted(blocks, plan.processorId());
+        String blocks = plan.physicalMemoryLayout().segments().isEmpty()
+            ? "[\"processor\"]" : "[\"processor\",\"memory\"]";
+        String memorySegments = plan.physicalMemoryLayout().segments().stream().map(segment ->
+            "{\"id\":\"%s\",\"kind\":\"%s\",\"capacity\":%d,\"usedSlots\":%d,\"bindings\":[{\"shard\":\"Main\",\"alias\":\"%s\",\"access\":\"readWrite\"}]}"
+                .formatted(escape(segment.alias()), segment.kind().name().toLowerCase(java.util.Locale.ROOT),
+                    segment.capacity(), segment.usedSlots(), escape(segment.alias())))
+            .collect(java.util.stream.Collectors.joining(","));
+        String topology = "{\"blueprint\":{\"file\":\"runtime.msch\",\"blocks\":%s},\"shards\":[{\"id\":\"Main\",\"processor\":\"%s\",\"mlog\":\"Main.mlog\"}],\"memorySegments\":[%s]}"
+            .formatted(blocks, plan.processorId(), memorySegments);
         return "{\"schemaVersion\":1,\"compiler\":{\"version\":\"0.1.0-SNAPSHOT\"},\"inputDigest\":\"%s\",\"targetProfile\":\"%s\",\"layoutFingerprint\":\"%s\",\"runtimeTopology\":%s,\"externalHardware\":[%s],\"prerequisites\":[]}"
             .formatted(digest, profile.id(), digest(topology), topology, external);
     }
