@@ -4,5 +4,5 @@ import java.util.Objects;
 
 public record HirText(String value) implements HirExpression {
     public HirText { Objects.requireNonNull(value, "value"); }
-    @Override public ValueType type() { return ValueType.ERROR; }
+    @Override public ValueType type() { return ValueType.STRING; }
 }

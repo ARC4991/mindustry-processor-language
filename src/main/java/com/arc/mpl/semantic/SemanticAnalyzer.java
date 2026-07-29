@@ -162,7 +162,7 @@ public final class SemanticAnalyzer {
         unitIterationDepth++;
         scopes.push(new HashMap<>());
         try {
-            declare(loop.name(), new Symbol(ValueType.UNIT, false), loop.span());
+            declare(loop.name(), new Symbol(ValueType.UNIT, false, null), loop.span());
             List<HirExpression> filters = new ArrayList<>();
             for (Expression filter : query.orElseThrow().filters()) {
                 filters.add(analyzeUnitFilter(filter, loop.name()));
@@ -266,7 +266,7 @@ public final class SemanticAnalyzer {
         scopes.push(new HashMap<>());
         try {
             // Lambda parameters deliberately shadow the enclosing loop binding.
-            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false));
+            scopes.peek().put(parameter, new Symbol(ValueType.UNIT, false, null));
             HirExpression result = analyzeExpression(predicate);
             if (result.type() != ValueType.BOOL) {
                 error("MPL3303", "UnitSet.where(...) 的过滤条件必须是 Bool", predicate.span());
@@ -375,10 +375,16 @@ public final class SemanticAnalyzer {
         for (Expression argument : sourceArguments) {
             HirExpression value = analyzeExpression(argument);
             if (value.type() != ValueType.INT && value.type() != ValueType.FLOAT && value.type() != ValueType.BOOL
+                && value.type() != ValueType.STRING
                 && !(value instanceof HirText)) {
                 error("MPL3202", "print 参数必须是数值、Bool 或字符串字面量", argument.span());
             }
             arguments.add(value);
+        }
+        int staticLength = arguments.stream().mapToInt(this::staticStringLength).sum();
+        if (staticLength > profile.maxMessageUtf16CodeUnits()) {
+            error("MPL3202", "print 的静态文本上界为 " + staticLength + " 个 UTF-16 代码单元，超过 target "
+                + profile.id() + " 的 " + profile.maxMessageUtf16CodeUnits() + " 个上限", sourceArguments.get(0).span());
         }
         return new HirPrintStatement(linkName, arguments);
     }
@@ -414,7 +420,10 @@ public final class SemanticAnalyzer {
         if (!type.canAssignFrom(initializer.type())) {
             error("MPL3103", "不能将 " + display(initializer.type()) + " 赋给 " + display(type), declaration.initializer().span());
         }
-        declare(declaration.name(), new Symbol(type, declaration.mutable()), declaration.span());
+        if (type == ValueType.STRING && declaration.mutable()) {
+            error("MPL3103", "当前阶段 String 仅支持 val 静态值；动态 String runtime 尚未启用", declaration.span());
+        }
+        declare(declaration.name(), new Symbol(type, declaration.mutable(), staticStringLength(initializer)), declaration.span());
         return new HirVariableDeclaration(declaration.name(), type, declaration.mutable(), initializer);
     }
 
@@ -468,6 +477,9 @@ public final class SemanticAnalyzer {
         if (expression instanceof BinaryExpression binary) {
             HirExpression left = analyzeExpression(binary.left());
             HirExpression right = analyzeExpression(binary.right());
+            if ("+".equals(binary.operator()) && left instanceof HirText leftText && right instanceof HirText rightText) {
+                return new HirText(leftText.value() + rightText.value());
+            }
             ValueType type = binaryType(binary.operator(), left.type(), right.type(), binary.span());
             return new HirBinary(left, binary.operator(), right, type);
         }
@@ -588,7 +600,10 @@ public final class SemanticAnalyzer {
 
     private ValueType binaryType(String operator, ValueType left, ValueType right, SourceSpan span) {
         return switch (operator) {
-            case "+", "-", "*" -> numericResult(left, right, span, "运算符 " + operator);
+            case "+" -> left == ValueType.STRING || right == ValueType.STRING
+                ? typeError("String 拼接当前仅支持两个字符串字面量；动态拼接需要 String runtime", span)
+                : numericResult(left, right, span, "运算符 +");
+            case "-", "*" -> numericResult(left, right, span, "运算符 " + operator);
             case "/" -> {
                 requireNumeric(left, span, "运算符 /");
                 requireNumeric(right, span, "运算符 /");
@@ -642,6 +657,7 @@ public final class SemanticAnalyzer {
             case "Int" -> ValueType.INT;
             case "Float" -> ValueType.FLOAT;
             case "Bool" -> ValueType.BOOL;
+            case "String" -> ValueType.STRING;
             default -> typeError("当前阶段不支持类型：" + name, span);
         };
     }
@@ -677,13 +693,24 @@ public final class SemanticAnalyzer {
             case INT -> "Int";
             case FLOAT -> "Float";
             case BOOL -> "Bool";
+            case STRING -> "String";
             case UNIT -> "Unit";
             case BUILDING -> "Building";
             case ERROR -> "错误类型";
         };
     }
 
-    private record Symbol(ValueType type, boolean mutable) {
+    /** Static bound is known only for immutable literal-backed strings in the first String slice. */
+    private int staticStringLength(HirExpression expression) {
+        if (expression instanceof HirText text) return text.value().length();
+        if (expression instanceof HirVariable variable && variable.type() == ValueType.STRING) {
+            Symbol symbol = lookup(variable.name());
+            return symbol == null || symbol.staticStringCodeUnits() == null ? 0 : symbol.staticStringCodeUnits();
+        }
+        return 0;
+    }
+
+    private record Symbol(ValueType type, boolean mutable, Integer staticStringCodeUnits) {
     }
 
     private record UnitQuery(String typeName, TargetProfile.UnitType type, List<Expression> filters, int managedLimit) {

@@ -237,6 +237,7 @@ public final class MilCodeGenerator {
             case INT -> "Int";
             case FLOAT -> "Float";
             case BOOL -> "Bool";
+            case STRING -> "String";
             case UNIT -> "Unit";
             case BUILDING -> "Building";
             case ERROR -> throw new IllegalArgumentException("不能将含错误类型的 HIR 序列化为 MIL");
