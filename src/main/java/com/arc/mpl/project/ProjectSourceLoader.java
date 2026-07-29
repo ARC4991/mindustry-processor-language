@@ -1,8 +1,5 @@
 package com.arc.mpl.project;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -14,12 +11,15 @@ import java.util.stream.Stream;
 
 /** Loads the configured entry and discovers all future module sources under {@code src}. */
 public final class ProjectSourceLoader {
-    private static final ObjectMapper JSON = new ObjectMapper();
-
     public ProjectSourceCatalog load(Path projectDirectory) throws IOException {
         Path project = projectDirectory.toAbsolutePath().normalize();
+        return load(project, new ProjectManifestLoader().load(project));
+    }
+
+    public ProjectSourceCatalog load(Path projectDirectory, ProjectManifest manifest) throws IOException {
+        Path project = projectDirectory.toAbsolutePath().normalize();
         Path sourceRoot = project.resolve("src");
-        String entryText = readEntry(project.resolve("mpl.json"));
+        String entryText = manifest.entry();
         Path relativeEntry;
         try {
             relativeEntry = Path.of(entryText);
@@ -33,17 +33,6 @@ public final class ProjectSourceLoader {
         }
         ProjectSourceLanguage language = language(entry);
         return new ProjectSourceCatalog(sourceRoot, entry, language, discover(sourceRoot));
-    }
-
-    private String readEntry(Path metadataFile) throws IOException {
-        if (!Files.isRegularFile(metadataFile)) return "src/main.mpl";
-        JsonNode root = JSON.readTree(Files.readString(metadataFile));
-        JsonNode entry = root.get("entry");
-        if (entry == null) return "src/main.mpl";
-        if (!entry.isTextual() || entry.asText().isBlank()) {
-            throw new IllegalArgumentException("mpl.json 的 entry 必须是非空字符串");
-        }
-        return entry.asText();
     }
 
     private ProjectSourceLanguage language(Path entry) {

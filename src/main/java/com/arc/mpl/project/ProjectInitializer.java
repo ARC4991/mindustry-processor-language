@@ -24,6 +24,7 @@ public final class ProjectInitializer {
         String name = projectName(projectDirectory);
         Files.writeString(projectDirectory.resolve("mpl.json"), """
             {
+              "schemaVersion": 1,
               "name": "%s",
               "version": "0.1.0",
               "target": {

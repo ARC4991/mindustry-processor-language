@@ -17,7 +17,9 @@ import java.util.Map;
 /** Parses the restricted project hardware language into a deployment contract. */
 public final class HardwareLoader {
     public HardwareContract load(Path projectDirectory) throws IOException {
-        Path file = projectDirectory.resolve("src/hardware.mplh");
+        ProjectManifest manifest = new ProjectManifestLoader().load(projectDirectory);
+        Path project = projectDirectory.toAbsolutePath().normalize();
+        Path file = WorkspacePackageInstaller.resolveInside(project, manifest.hardware(), "hardware");
         if (!Files.isRegularFile(file)) return emptyContract();
 
         List<String> errors = new ArrayList<>();
