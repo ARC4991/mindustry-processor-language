@@ -38,7 +38,7 @@ class MplCompilerTest {
         assertTrue(result.succeeded());
         assertEquals("v146", result.profile().orElseThrow().id());
         assertTrue(result.diagnostics().isEmpty());
-        assertEquals("set mpl_total 3\nop add mpl_total mpl_total 3\nstop\n",
+        assertEquals("set mpl_total 3\nop add __mpl_tmp0 mpl_total 3\nop min __mpl_tmp0 __mpl_tmp0 2147483647\nop max __mpl_tmp0 __mpl_tmp0 -2147483648\nset mpl_total __mpl_tmp0\nstop\n",
             result.mlog().orElseThrow());
         assertEquals("""
             // 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。
@@ -69,6 +69,46 @@ class MplCompilerTest {
     }
 
     @Test
+    void lowersDynamicIntArithmeticWithSaturatingBounds(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var maximum: Int = 2147483647;
+            var minimum: Int = -2147483648;
+            var above: Int = maximum + 1;
+            var below: Int = minimum - 1;
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("op add __mpl_tmp0 mpl_maximum 1"));
+        assertTrue(mlog.contains("op min __mpl_tmp0 __mpl_tmp0 2147483647"));
+        assertTrue(mlog.contains("op max __mpl_tmp0 __mpl_tmp0 -2147483648"));
+        assertTrue(mlog.contains("op sub __mpl_tmp1 mpl_minimum 1"));
+        assertTrue(mlog.contains("set mpl_above __mpl_tmp0"));
+        assertTrue(mlog.contains("set mpl_below __mpl_tmp1"));
+    }
+
+    @Test
+    void lowersDynamicIntRemainderByZeroToZero(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var divisor: Int = 0;
+            var remainder: Int = 7 % divisor;
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("jump mpl_int_mod_non_zero_0 notEqual mpl_divisor 0"));
+        assertTrue(mlog.contains("set __mpl_tmp0 0"));
+        assertTrue(mlog.contains("op mod __mpl_tmp0 7 mpl_divisor"));
+        assertTrue(mlog.contains("set mpl_remainder __mpl_tmp0"));
+    }
+
+    @Test
     void optimizesConstantExpressionsAndConstantBranchesBeforeMlogLowering(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
@@ -86,7 +126,7 @@ class MplCompilerTest {
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
         assertTrue(result.succeeded());
-        assertEquals("set mpl_value 7\nop add mpl_value mpl_value 1\nstop\n", result.mlog().orElseThrow());
+        assertEquals("set mpl_value 7\nop add __mpl_tmp0 mpl_value 1\nop min __mpl_tmp0 __mpl_tmp0 2147483647\nop max __mpl_tmp0 __mpl_tmp0 -2147483648\nset mpl_value __mpl_tmp0\nstop\n", result.mlog().orElseThrow());
         assertEquals(2, result.optimizationReport().constantFolds());
         assertEquals(1, result.optimizationReport().eliminatedBranches());
         assertEquals(1, result.optimizationReport().eliminatedLoops());
@@ -159,18 +199,21 @@ class MplCompilerTest {
         assertEquals("""
             set mpl_count 0
             mpl_do_start_0:
-            op add mpl_count mpl_count 1
-            op lessThan __mpl_tmp0 mpl_count 2
-            jump mpl_if_end_3 equal __mpl_tmp0 0
+            op add __mpl_tmp0 mpl_count 1
+            op min __mpl_tmp0 __mpl_tmp0 2147483647
+            op max __mpl_tmp0 __mpl_tmp0 -2147483648
+            set mpl_count __mpl_tmp0
+            op lessThan __mpl_tmp1 mpl_count 2
+            jump mpl_if_end_3 equal __mpl_tmp1 0
             jump mpl_do_condition_1 always 0 0
             mpl_if_end_3:
-            op greaterThan __mpl_tmp1 mpl_count 4
-            jump mpl_if_end_4 equal __mpl_tmp1 0
+            op greaterThan __mpl_tmp2 mpl_count 4
+            jump mpl_if_end_4 equal __mpl_tmp2 0
             jump mpl_do_end_2 always 0 0
             mpl_if_end_4:
             mpl_do_condition_1:
-            op lessThan __mpl_tmp2 mpl_count 10
-            jump mpl_do_start_0 notEqual __mpl_tmp2 0
+            op lessThan __mpl_tmp3 mpl_count 10
+            jump mpl_do_start_0 notEqual __mpl_tmp3 0
             mpl_do_end_2:
             stop
             """, result.mlog().orElseThrow());
@@ -254,9 +297,15 @@ class MplCompilerTest {
             jump mpl_if_end_3 equal __mpl_tmp1 0
             jump mpl_for_update_1 always 0 0
             mpl_if_end_3:
-            op add mpl_total mpl_total mpl_i
+            op add __mpl_tmp2 mpl_total mpl_i
+            op min __mpl_tmp2 __mpl_tmp2 2147483647
+            op max __mpl_tmp2 __mpl_tmp2 -2147483648
+            set mpl_total __mpl_tmp2
             mpl_for_update_1:
-            op add mpl_i mpl_i 1
+            op add __mpl_tmp3 mpl_i 1
+            op min __mpl_tmp3 __mpl_tmp3 2147483647
+            op max __mpl_tmp3 __mpl_tmp3 -2147483648
+            set mpl_i __mpl_tmp3
             jump mpl_for_condition_0 always 0 0
             mpl_for_end_2:
             stop
@@ -290,6 +339,8 @@ class MplCompilerTest {
             stop
             mpl_function_add_0:
             op add __mpl_tmp3 __mpl_fn0_arg0 __mpl_fn0_arg1
+            op min __mpl_tmp3 __mpl_tmp3 2147483647
+            op max __mpl_tmp3 __mpl_tmp3 -2147483648
             set __mpl_fn0_result __mpl_tmp3
             set @counter __mpl_fn0_return
             """, result.mlog().orElseThrow());
@@ -354,6 +405,8 @@ class MplCompilerTest {
             set mpl_array_e3 4
             set mpl_array_e4 5
             op add __mpl_tmp0 mpl_test_e1 mpl_array_e3
+            op min __mpl_tmp0 __mpl_tmp0 2147483647
+            op max __mpl_tmp0 __mpl_tmp0 -2147483648
             set mpl_selected __mpl_tmp0
             set mpl_count 5
             stop
@@ -395,7 +448,7 @@ class MplCompilerTest {
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
         assertTrue(result.succeeded());
-        assertEquals("set mpl_frog 21\nprint \"frog=\"\nop mul __mpl_tmp0 mpl_frog 2\nprint __mpl_tmp0\nprintflush message1\nstop\n",
+        assertEquals("set mpl_frog 21\nprint \"frog=\"\nop mul __mpl_tmp0 mpl_frog 2\nop min __mpl_tmp0 __mpl_tmp0 2147483647\nop max __mpl_tmp0 __mpl_tmp0 -2147483648\nprint __mpl_tmp0\nprintflush message1\nstop\n",
             result.mlog().orElseThrow());
     }
 
@@ -784,7 +837,7 @@ class MplCompilerTest {
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
         assertTrue(result.succeeded());
-        assertEquals("set mpl_tmp0 7\nop add __mpl_tmp0 mpl_tmp0 1\nset mpl_total __mpl_tmp0\nstop\n",
+        assertEquals("set mpl_tmp0 7\nop add __mpl_tmp0 mpl_tmp0 1\nop min __mpl_tmp0 __mpl_tmp0 2147483647\nop max __mpl_tmp0 __mpl_tmp0 -2147483648\nset mpl_total __mpl_tmp0\nstop\n",
             result.mlog().orElseThrow());
     }
 

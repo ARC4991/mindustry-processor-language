@@ -107,6 +107,8 @@ final class MlogProgramBuilder {
         MUL("mul"),
         DIV("div"),
         MOD("mod"),
+        MIN("min"),
+        MAX("max"),
         EQUAL("equal"),
         NOT_EQUAL("notEqual"),
         LESS_THAN("lessThan"),

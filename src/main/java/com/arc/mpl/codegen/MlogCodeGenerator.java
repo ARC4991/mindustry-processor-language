@@ -755,6 +755,9 @@ public final class MlogCodeGenerator {
     private String emitUnary(HirUnary unary) {
         String operand = emitExpression(unary.operand());
         if ("+".equals(unary.operator())) return operand;
+        if ("-".equals(unary.operator()) && unary.type() == com.arc.mpl.hir.ValueType.INT) {
+            return emitIntBinary("-", "0", operand);
+        }
         String temporary = temporary();
         Operation operation = switch (unary.operator()) {
             case "-" -> Operation.SUB;
@@ -771,6 +774,9 @@ public final class MlogCodeGenerator {
         }
         String left = emitExpression(binary.left());
         String right = emitExpression(binary.right());
+        if (binary.type() == com.arc.mpl.hir.ValueType.INT) {
+            return emitIntBinary(binary.operator(), left, right);
+        }
         String temporary = temporary();
         output.operation(operation(binary.operator()), temporary, left, right);
         return temporary;
@@ -795,9 +801,38 @@ public final class MlogCodeGenerator {
         if ("=".equals(assignment.operator())) {
             output.set(target, value);
         } else {
-            output.operation(operation(assignment.operator().substring(0, 1)), target, target, value);
+            String operator = assignment.operator().substring(0, 1);
+            if (assignment.type() == com.arc.mpl.hir.ValueType.INT) {
+                output.set(target, emitIntBinary(operator, target, value));
+            } else {
+                output.operation(operation(operator), target, target, value);
+            }
         }
         return target;
+    }
+
+    /** Lowers MPL's 32-bit total Int operations without relying on target long overflow. */
+    private String emitIntBinary(String operator, String left, String right) {
+        if ("%".equals(operator)) return emitIntRemainder(left, right);
+        String result = temporary();
+        output.operation(operation(operator), result, left, right);
+        output.operation(Operation.MIN, result, result, "2147483647");
+        output.operation(Operation.MAX, result, result, "-2147483648");
+        return result;
+    }
+
+    /** v146 would otherwise turn modulo by zero into NaN and then silently into zero. */
+    private String emitIntRemainder(String left, String right) {
+        String result = temporary();
+        MlogProgramBuilder.Label nonZero = label("int_mod_non_zero");
+        MlogProgramBuilder.Label end = label("int_mod_end");
+        emitJump(nonZero, JumpCondition.NOT_EQUAL, right, "0");
+        output.set(result, "0");
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(nonZero);
+        output.operation(Operation.MOD, result, left, right);
+        emitLabel(end);
+        return result;
     }
 
     private Operation operation(String operator) {
