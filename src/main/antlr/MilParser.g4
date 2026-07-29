@@ -29,24 +29,27 @@ statement
     | block
     | BREAK SEMICOLON
     | CONTINUE SEMICOLON
-    | RETURN expression? SEMICOLON
+    | RETURN returnValue=expression? SEMICOLON
     | variableDeclaration SEMICOLON
     | expression SEMICOLON
     ;
 
 macroBlockStatement: macroInvocation block;
 block: LBRACE statement* RBRACE;
-whileStatement: WHILE LPAREN expression RPAREN block;
-doWhileStatement: DO block WHILE LPAREN expression RPAREN SEMICOLON;
-ifStatement: IF LPAREN expression RPAREN block (ELSE (block | ifStatement))?;
-forStatement: FOR LPAREN (variableDeclaration | expression)? SEMICOLON expression? SEMICOLON expression? RPAREN block;
-forEachStatement: FOR LPAREN VAR IDENTIFIER COLON expression RPAREN block;
-variableDeclaration: (VAR | VAL) IDENTIFIER (COLON typeReference)? ASSIGN expression;
+whileStatement: WHILE LPAREN condition=expression RPAREN body=block;
+doWhileStatement: DO body=block WHILE LPAREN condition=expression RPAREN SEMICOLON;
+ifStatement: IF LPAREN condition=expression RPAREN thenBlock=block
+    (ELSE (elseBlock=block | elseIf=ifStatement))?;
+forStatement: FOR LPAREN
+    (initializerDeclaration=variableDeclaration | initializerExpression=expression)? SEMICOLON
+    condition=expression? SEMICOLON update=expression? RPAREN body=block;
+forEachStatement: FOR LPAREN VAR name=IDENTIFIER COLON iterable=expression RPAREN body=block;
+variableDeclaration: kind=(VAR | VAL) name=IDENTIFIER (COLON typeName=typeReference)? ASSIGN expression;
 
 expression: lambdaExpression | assignmentExpression;
-lambdaExpression: IDENTIFIER ARROW expression;
+lambdaExpression: lambdaParameter=IDENTIFIER ARROW body=expression;
 assignmentExpression
-    : IDENTIFIER (ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) assignmentExpression
+    : IDENTIFIER operator=(ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) assignmentExpression
     | logicalOrExpression
     ;
 logicalOrExpression: logicalAndExpression (OR_OR logicalAndExpression)*;
@@ -55,12 +58,12 @@ equalityExpression: comparisonExpression ((EQUAL_EQUAL | BANG_EQUAL) comparisonE
 comparisonExpression: additiveExpression ((LESS | LESS_EQUAL | GREATER | GREATER_EQUAL) additiveExpression)*;
 additiveExpression: multiplicativeExpression ((PLUS | MINUS) multiplicativeExpression)*;
 multiplicativeExpression: unaryExpression ((STAR | SLASH | PERCENT) unaryExpression)*;
-unaryExpression: (PLUS | MINUS | BANG) unaryExpression | postfixExpression;
+unaryExpression: operator=(PLUS | MINUS | BANG) unaryExpression | postfixExpression;
 postfixExpression: primaryExpression postfixSuffix*;
 postfixSuffix
-    : DOT IDENTIFIER
+    : DOT member=IDENTIFIER
     | LPAREN (expression (COMMA expression)*)? RPAREN
-    | LBRACK expression RBRACK
+    | LBRACK index=expression RBRACK
     ;
 
 primaryExpression
@@ -70,12 +73,12 @@ primaryExpression
     | TRUE
     | FALSE
     | NULL
-    | IDENTIFIER
+    | name=IDENTIFIER
     | macroInvocation
     | gameSymbol
     | LBRACK (expression (COMMA expression)*)? RBRACK
-    | LPAREN expression (COMMA expression)+ RPAREN
-    | LPAREN expression RPAREN
+    | LPAREN tupleElement+=expression (COMMA tupleElement+=expression)+ RPAREN
+    | LPAREN grouped=expression RPAREN
     ;
 
 gameSymbol: AT IDENTIFIER;

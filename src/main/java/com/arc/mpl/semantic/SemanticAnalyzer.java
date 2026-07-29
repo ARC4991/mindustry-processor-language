@@ -23,6 +23,7 @@ import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
 import com.arc.mpl.ast.MethodCallExpression;
+import com.arc.mpl.ast.MilDrawStatement;
 import com.arc.mpl.ast.NullLiteral;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.ReturnStatement;
@@ -196,6 +197,9 @@ public final class SemanticAnalyzer {
     }
 
     private HirStatement analyzeStatement(Statement statement) {
+        if (statement instanceof MilDrawStatement draw) {
+            return analyzeMilDraw(draw);
+        }
         if (statement instanceof VariableDeclaration declaration) {
             return analyzeDeclaration(declaration);
         }
@@ -864,7 +868,9 @@ public final class SemanticAnalyzer {
         activeBuildingType = buildingType;
         scopes.push(new HashMap<>());
         try {
-            declare(parameter, new Symbol(ValueType.BUILDING, false, null, null, null, null, false, source.span()), source.span());
+            // Query parameters shadow an enclosing iteration binding just like Unit filter parameters.
+            scopes.peek().put(parameter,
+                new Symbol(ValueType.BUILDING, false, null, null, null, null, false, source.span()));
             HirExpression result = analyzeExpression(predicate);
             if (result.type() != ValueType.BOOL) {
                 error("MPL3201", "Building 查询的 .where(...) 过滤条件必须是 Bool", predicate.span());
@@ -1154,6 +1160,39 @@ public final class SemanticAnalyzer {
         for (Expression source : sourceArguments) {
             HirExpression argument = analyzeExpression(source);
             requireNumeric(argument.type(), source.span(), "Display." + method + " 参数");
+            arguments.add(argument);
+        }
+        while (arguments.size() < command.argumentCount()) arguments.add(new HirConstant("0", ValueType.ERROR));
+        return new HirDraw(display.gameAlias(), command, arguments.subList(0, command.argumentCount()));
+    }
+
+    /** Type-checks the public MIL draw macro without exposing raw draw commands in MPL. */
+    private HirStatement analyzeMilDraw(MilDrawStatement draw) {
+        HardwareContract.LinkDeclaration display = hardwareLinks.get(draw.hardwareName());
+        if (display == null || !"Display".equals(display.mplType())) {
+            error("MIL3201", "@io.draw 的目标必须是硬件声明中的 Display", draw.span());
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        HirDraw.Command command = switch (draw.command()) {
+            case "clear" -> HirDraw.Command.CLEAR;
+            case "color" -> HirDraw.Command.COLOR;
+            case "rect" -> HirDraw.Command.RECT;
+            case "lineRect" -> HirDraw.Command.LINE_RECT;
+            case "line" -> HirDraw.Command.LINE;
+            default -> null;
+        };
+        if (command == null) {
+            error("MIL3201", "target 不支持绘制命令：" + draw.command(), draw.span());
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (draw.arguments().size() != command.argumentCount()) {
+            error("MIL3201", "绘制命令 " + draw.command() + " 需要 " + command.argumentCount()
+                + " 个参数，实际为 " + draw.arguments().size(), draw.span());
+        }
+        List<HirExpression> arguments = new ArrayList<>();
+        for (Expression source : draw.arguments()) {
+            HirExpression argument = analyzeExpression(source);
+            requireNumeric(argument.type(), source.span(), "@io.draw 参数");
             arguments.add(argument);
         }
         while (arguments.size() < command.argumentCount()) arguments.add(new HirConstant("0", ValueType.ERROR));

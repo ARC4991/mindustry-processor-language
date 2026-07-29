@@ -32,6 +32,9 @@ class MilSyntaxParserTest {
         assertTrue(result.document().orElseThrow().macroCalls().get(0).hasBody());
         assertEquals(java.util.List.of("dagger", "message1"), result.document().orElseThrow().gameSymbols().stream()
             .map(MilDocument.GameSymbol::name).toList());
+        assertEquals(2, result.document().orElseThrow().program().statements().size());
+        assertTrue(result.document().orElseThrow().program().statements().get(1)
+            instanceof com.arc.mpl.ast.WhileStatement);
     }
 
     @Test

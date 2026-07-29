@@ -3,6 +3,7 @@ package com.arc.mpl.profile;
 import com.arc.mpl.hir.ValueType;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -40,6 +41,8 @@ public interface TargetProfile {
     int maxDrawCoordinateMagnitude();
 
     /** Target content exposed by {@code Unit.getAll类型()} in this profile. */
+    Map<String, UnitType> unitTypes();
+
     Optional<UnitType> unitType(String mplType);
 
     /** Read-only Unit field available to MPL in this profile. */
@@ -49,6 +52,8 @@ public interface TargetProfile {
     Optional<UnitAction> unitAction(String action);
 
     /** Linked building interface that may appear in a project hardware contract. */
+    Map<String, BuildingType> buildingTypes();
+
     Optional<BuildingType> buildingType(String mplType);
 
     /** Raw target instructions declared by this profile. */

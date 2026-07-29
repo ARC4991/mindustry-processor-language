@@ -114,7 +114,7 @@ public final class MilCodeGenerator {
         }
         if (statement instanceof HirDraw draw) {
             writer.append("@io.draw(@").append(identifier(draw.displayName(), "显示链接"))
-                .append(", ").append(draw.command().name().toLowerCase());
+                .append(", ").append(drawCommand(draw.command()));
             for (HirExpression argument : draw.arguments()) writer.append(", ").append(expression(argument));
             writer.line(");");
             return;
@@ -215,6 +215,16 @@ public final class MilCodeGenerator {
             return;
         }
         throw new IllegalArgumentException("MIL 尚不能序列化 HIR 语句：" + statement.getClass().getSimpleName());
+    }
+
+    private String drawCommand(HirDraw.Command command) {
+        return switch (command) {
+            case CLEAR -> "clear";
+            case COLOR -> "color";
+            case RECT -> "rect";
+            case LINE_RECT -> "lineRect";
+            case LINE -> "line";
+        };
     }
 
     private void emitBlock(Writer writer, List<HirStatement> statements) {
