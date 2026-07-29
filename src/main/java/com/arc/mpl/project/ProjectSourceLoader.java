@@ -32,7 +32,7 @@ public final class ProjectSourceLoader {
             throw new IllegalArgumentException("项目入口必须位于 src 目录：" + entryText);
         }
         ProjectSourceLanguage language = language(entry);
-        return new ProjectSourceCatalog(entry, language, discover(sourceRoot));
+        return new ProjectSourceCatalog(sourceRoot, entry, language, discover(sourceRoot));
     }
 
     private String readEntry(Path metadataFile) throws IOException {

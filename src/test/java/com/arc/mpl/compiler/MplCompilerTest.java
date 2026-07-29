@@ -128,6 +128,38 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesMixedMplAndMilModulesWithExportedFunctionsAndValues(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Status: Message = link(\"message1\");\n");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("math.mpl"), """
+            export val factor: Int = 2;
+            export fun scale(value: Int): Int { return value * factor; }
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("output.mil"), """
+            export fun announce(value: Int): Void {
+                @io.print(@message1, "value=", value);
+            }
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            import { factor, scale } from "./math";
+            import { announce } from "./output.mil";
+            val result: Int = scale(21) + factor;
+            announce(result);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("fun __module_math_mpl_scale"));
+        assertTrue(mil.contains("fun __module_output_mil_announce"));
+        assertTrue(mil.contains("val __module_math_mpl_factor: Int = 2;"));
+        assertTrue(result.mlog().orElseThrow().contains("print \"value=\""));
+        assertTrue(result.mlog().orElseThrow().contains("printflush message1"));
+    }
+
+    @Test
     void saturatesOutOfRangeIntLiteralsAndConstantArithmetic(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

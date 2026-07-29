@@ -11,11 +11,6 @@ import com.arc.mpl.diagnostic.Severity;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.memory.PhysicalMemoryPlanner;
-import com.arc.mpl.mil.semantic.MilLowerer;
-import com.arc.mpl.mil.semantic.MilLoweringResult;
-import com.arc.mpl.mil.syntax.MilParseResult;
-import com.arc.mpl.mil.syntax.MilSourceKind;
-import com.arc.mpl.mil.syntax.MilSyntaxParser;
 import com.arc.mpl.optimization.HirOptimizationResult;
 import com.arc.mpl.optimization.HirOptimizer;
 import com.arc.mpl.profile.KnownProfiles;
@@ -23,15 +18,14 @@ import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.project.HardwareContract;
 import com.arc.mpl.project.HardwareLoader;
 import com.arc.mpl.project.ProjectSourceCatalog;
-import com.arc.mpl.project.ProjectSourceLanguage;
 import com.arc.mpl.project.ProjectSourceLoader;
+import com.arc.mpl.project.ProjectProgramLoader;
+import com.arc.mpl.project.ProjectProgramResult;
 import com.arc.mpl.project.RuntimePreferences;
 import com.arc.mpl.project.RuntimePreferencesLoader;
 import com.arc.mpl.runtime.DisplayRuntimeLowerer;
 import com.arc.mpl.semantic.SemanticAnalyzer;
 import com.arc.mpl.semantic.SemanticResult;
-import com.arc.mpl.syntax.MplSyntaxParser;
-import com.arc.mpl.syntax.ParseResult;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -69,15 +63,6 @@ public final class MplCompiler {
                 Severity.ERROR, "MPL1101", "compiler.entry.missing", List.of(sourceFile),
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
-        String source;
-        try {
-            source = Files.readString(sourceFile);
-        } catch (IOException exception) {
-            return new CompilationResult(profile, List.of(Diagnostic.localized(
-                Severity.ERROR, "MPL1102", "compiler.entry.read", List.of(exceptionMessage(exception)),
-                Optional.of(sourceFile), Optional.empty())), Optional.empty());
-        }
-
         RuntimePreferences runtimePreferences;
         try {
             runtimePreferences = new RuntimePreferencesLoader().load(request.projectDirectory());
@@ -96,19 +81,11 @@ public final class MplCompiler {
                 Severity.ERROR, "MPL1103", "compiler.hardware.read", List.of(exceptionMessage(exception)),
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
-        Program syntaxProgram;
-        if (sources.entryLanguage() == ProjectSourceLanguage.MPL) {
-            ParseResult parsed = new MplSyntaxParser().parse(source, sourceFile);
-            if (!parsed.succeeded()) return new CompilationResult(profile, parsed.diagnostics(), Optional.empty());
-            syntaxProgram = parsed.program().orElseThrow();
-        } else {
-            MilParseResult parsed = new MilSyntaxParser().parse(source, sourceFile, profile.orElseThrow(), MilSourceKind.USER);
-            if (!parsed.succeeded()) return new CompilationResult(profile, parsed.diagnostics(), Optional.empty());
-            MilLoweringResult lowered = new MilLowerer().lower(parsed.document().orElseThrow(), sourceFile,
-                profile.orElseThrow(), hardware);
-            if (!lowered.succeeded()) return new CompilationResult(profile, lowered.diagnostics(), Optional.empty());
-            syntaxProgram = lowered.program().orElseThrow();
+        ProjectProgramResult projectProgram = new ProjectProgramLoader().load(sources, profile.orElseThrow(), hardware);
+        if (!projectProgram.succeeded()) {
+            return new CompilationResult(profile, projectProgram.diagnostics(), Optional.empty());
         }
+        Program syntaxProgram = projectProgram.program().orElseThrow();
         SemanticResult analyzed = new SemanticAnalyzer(profile.orElseThrow()).analyze(syntaxProgram, sourceFile, hardware);
         if (analyzed.program().isEmpty()) return new CompilationResult(profile, analyzed.diagnostics(), Optional.empty());
         HirOptimizationResult optimized = new HirOptimizer().optimize(analyzed.program().orElseThrow());
