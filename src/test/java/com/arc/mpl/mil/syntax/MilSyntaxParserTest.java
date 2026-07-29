@@ -80,4 +80,19 @@ class MilSyntaxParserTest {
         assertTrue(result.succeeded());
         assertEquals("@unit.count", result.document().orElseThrow().macroCalls().get(0).name());
     }
+
+    @Test
+    void acceptsNullableUnitRefsAndTheirPublicMacros() {
+        MilParseResult result = parser.parse("""
+            val leader: Unit<Dagger>? = @unit.get(@dagger, unit, 0, @unit.alive(unit));
+            if (leader != null) {
+                val health: Float = @unit.refRead(leader, health);
+                @unit.refMove(leader, 1.0, 2.0);
+            }
+            """, Path.of("main.mil"), profile, MilSourceKind.USER);
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertEquals(java.util.List.of("@unit.get", "@unit.alive", "@unit.refRead", "@unit.refMove"),
+            result.document().orElseThrow().macroCalls().stream().map(MilDocument.MacroCall::name).toList());
+    }
 }

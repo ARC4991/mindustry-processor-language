@@ -38,10 +38,12 @@ import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQueryGet;
 import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
+import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 
 import java.util.ArrayDeque;
@@ -550,8 +552,18 @@ public final class MlogCodeGenerator {
         }
         String x = emitExpression(control.arguments().get(0));
         String y = emitExpression(control.arguments().get(1));
+        MlogProgramBuilder.Label end = null;
+        if (control.storedReference()) {
+            end = label("unit_ref_control_end");
+            output.unitBind(variable(control.bindingName()));
+            emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
+            String dead = temporary();
+            output.sensor(dead, "@unit", "@dead");
+            emitJump(end, JumpCondition.EQUAL, dead, "1");
+        }
         // v146 serializes all five ucontrol parameter slots even though move consumes x/y.
         output.unitControl(UnitControlCommand.MOVE, x, y, "0", "0", "0");
+        if (end != null) emitLabel(end);
     }
 
     private void emitBuildingControl(HirBuildingControl control) {
@@ -673,6 +685,7 @@ public final class MlogCodeGenerator {
         if (expression instanceof HirDynamicIndexAccess access) return emitDynamicIndexAccess(access);
         if (expression instanceof HirCollectionContains contains) return emitCollectionContains(contains);
         if (expression instanceof HirUnitQuerySize size) return emitUnitQuerySize(size.query());
+        if (expression instanceof HirUnitQueryGet get) return emitUnitQueryGet(get);
         if (expression instanceof HirUnitQuery) {
             throw new IllegalArgumentException("Set<Unit<T>> 描述符只能保存、读取 size 或作为 for 遍历目标");
         }
@@ -705,6 +718,39 @@ public final class MlogCodeGenerator {
         emitLabel(scan);
         emitFilterRejectionJump(query.filters(), next);
         output.operation(Operation.ADD, result, result, "1");
+        emitLabel(next);
+        emitUnitScanAdvance(sentinel, query.mlogType(), scan, end);
+        emitLabel(end);
+        return result;
+    }
+
+    private String emitUnitQueryGet(HirUnitQueryGet get) {
+        HirUnitQuery query = get.query();
+        int queryId = unitIterationIndex++;
+        MlogProgramBuilder.Label scan = label("unit_get_scan");
+        MlogProgramBuilder.Label found = label("unit_get_found");
+        MlogProgramBuilder.Label next = label("unit_get_next");
+        MlogProgramBuilder.Label end = label("unit_get_end");
+        String result = temporary();
+        String index = temporary();
+        String position = temporary();
+        String sentinel = "__mpl_unit_get_sentinel" + queryId;
+
+        output.set(result, "null");
+        output.set(index, emitExpression(get.index()));
+        emitJump(end, JumpCondition.LESS_THAN, index, "0");
+        output.unitBind("@" + query.mlogType());
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
+        output.set(sentinel, "@unit");
+        output.set(position, "0");
+        emitLabel(scan);
+        emitFilterRejectionJump(query.filters(), next);
+        emitJump(found, JumpCondition.EQUAL, position, index);
+        output.operation(Operation.ADD, position, position, "1");
+        emitJump(next, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(found);
+        output.set(result, "@unit");
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
         emitLabel(next);
         emitUnitScanAdvance(sentinel, query.mlogType(), scan, end);
         emitLabel(end);
@@ -872,6 +918,9 @@ public final class MlogCodeGenerator {
             output.sensor(result, building.gameAlias(), "@" + member.member());
             return result;
         }
+        if (member.target() instanceof HirVariable variable && variable.type() instanceof UnitType) {
+            return emitStoredUnitMember(variable, member.member());
+        }
         if (!(member.target() instanceof HirVariable variable) || variable.type() != com.arc.mpl.hir.ValueType.UNIT) {
             throw new IllegalArgumentException("unsupported member access target: " + member.target());
         }
@@ -884,6 +933,19 @@ public final class MlogCodeGenerator {
             output.operation(Operation.EQUAL, alive, result, "0");
             return alive;
         }
+        return result;
+    }
+
+    private String emitStoredUnitMember(HirVariable reference, String member) {
+        MlogProgramBuilder.Label end = label("unit_ref_read_end");
+        String result = temporary();
+        output.set(result, "dead".equals(member) ? "1" : "0");
+        output.unitBind(variable(reference.name()));
+        emitJump(end, JumpCondition.STRICT_EQUAL, "@unit", "null");
+        String sensor = "alive".equals(member) ? "dead" : member;
+        output.sensor(result, "@unit", "@" + sensor);
+        if ("alive".equals(member)) output.operation(Operation.EQUAL, result, result, "0");
+        emitLabel(end);
         return result;
     }
 

@@ -23,6 +23,7 @@ import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
 import com.arc.mpl.ast.MethodCallExpression;
+import com.arc.mpl.ast.NullLiteral;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.ReturnStatement;
 import com.arc.mpl.ast.Statement;
@@ -72,6 +73,7 @@ import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQueryGet;
 import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
@@ -80,6 +82,7 @@ import com.arc.mpl.hir.MplType;
 import com.arc.mpl.hir.CollectionType;
 import com.arc.mpl.hir.TupleType;
 import com.arc.mpl.hir.UnitSetType;
+import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.hir.ValueType;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
@@ -229,9 +232,9 @@ public final class SemanticAnalyzer {
             error("MPL3503", "函数参数不能使用 Void 类型", function.span());
         }
         MplType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.VOID);
-        if (parameters.stream().anyMatch(type -> isAggregate(type) || type instanceof UnitSetType)
-            || isAggregate(returnType) || returnType instanceof UnitSetType) {
-            error("MPL3602", "第一版函数 ABI 尚不支持聚合或 Set<Unit<T>> 参数及返回值", function.span());
+        if (parameters.stream().anyMatch(type -> isAggregate(type) || type instanceof UnitSetType || type instanceof UnitType)
+            || isAggregate(returnType) || returnType instanceof UnitSetType || returnType instanceof UnitType) {
+            error("MPL3602", "第一版函数 ABI 尚不支持聚合、Set<Unit<T>> 或 UnitRef 参数及返回值", function.span());
         }
         FunctionSignature signature = new FunctionSignature(function, parameters, returnType);
         if (hardwareLinks.containsKey(function.name()) || functions.putIfAbsent(function.name(), signature) != null) {
@@ -347,9 +350,43 @@ public final class SemanticAnalyzer {
     private HirStatement analyzeIf(IfStatement branch) {
         HirExpression condition = analyzeExpression(branch.condition());
         requireBool(condition.type(), branch.condition().span(), "if 条件");
-        List<HirStatement> consequence = analyzeBlock(branch.thenBlock());
-        Optional<List<HirStatement>> alternative = branch.elseBranch().map(this::analyzeAlternative);
+        List<HirStatement> consequence = analyzeWithNarrowing(
+            nonNullNarrowing(branch.condition(), true), () -> analyzeBlock(branch.thenBlock()));
+        Optional<List<HirStatement>> alternative = branch.elseBranch().map(value -> analyzeWithNarrowing(
+            nonNullNarrowing(branch.condition(), false), () -> analyzeAlternative(value)));
         return new HirIf(condition, consequence, alternative);
+    }
+
+    private Map<String, Symbol> nonNullNarrowing(Expression condition, boolean conditionResult) {
+        if (!(condition instanceof BinaryExpression binary)
+            || (!"==".equals(binary.operator()) && !"!=".equals(binary.operator()))) {
+            return Map.of();
+        }
+        Identifier identifier;
+        if (binary.left() instanceof Identifier left && binary.right() instanceof NullLiteral) {
+            identifier = left;
+        } else if (binary.right() instanceof Identifier right && binary.left() instanceof NullLiteral) {
+            identifier = right;
+        } else {
+            return Map.of();
+        }
+        boolean nonNullBranch = "!=".equals(binary.operator()) == conditionResult;
+        if (!nonNullBranch) return Map.of();
+        Symbol symbol = lookup(identifier.name());
+        if (symbol == null || symbol.mutable() || !(symbol.type() instanceof UnitType unit) || !unit.nullable()) {
+            return Map.of();
+        }
+        return Map.of(identifier.name(), symbol.withType(unit.nonNullable()));
+    }
+
+    private <T> T analyzeWithNarrowing(Map<String, Symbol> narrowing, java.util.function.Supplier<T> analysis) {
+        if (narrowing.isEmpty()) return analysis.get();
+        scopes.push(new HashMap<>(narrowing));
+        try {
+            return analysis.get();
+        } finally {
+            scopes.pop();
+        }
     }
 
     private List<HirStatement> analyzeAlternative(Statement alternative) {
@@ -794,10 +831,10 @@ public final class SemanticAnalyzer {
             if (result.type() != ValueType.BOOL) {
                 error("MPL3303", "Set<Unit<T>>.where(...) 的过滤条件必须是 Bool", predicate.span());
             }
-            if (!isPureUnitFilter(result, bindingName)) {
+            if (!isPureUnitFilter(result, parameter)) {
                 error("MPL3303", "Set<Unit<T>>.where(...) 只能读取当前单位属性与 val 标量", predicate.span());
             }
-            return result;
+            return renameUnitBinding(result, parameter, bindingName);
         } finally {
             scopes.pop();
         }
@@ -813,6 +850,29 @@ public final class SemanticAnalyzer {
         } finally {
             activeUnitBinding = previousBinding;
         }
+    }
+
+    private HirUnitQuery resolveUnitQuery(Expression expression, String bindingName) {
+        HirUnitQuery saved = resolveSavedUnitQuery(expression, bindingName);
+        if (saved != null) return saved;
+        return parseUnitQuery(expression).map(query -> analyzeUnitQuery(query, bindingName)).orElse(null);
+    }
+
+    private HirExpression analyzeUnitQueryGet(HirUnitQuery query, Expression sourceIndex, SourceSpan span) {
+        HirExpression index = analyzeExpression(sourceIndex);
+        if (index.type() != ValueType.INT && index.type() != ValueType.ERROR) {
+            error("MPL3309", "Set<Unit<T>>.get(index) 的 index 必须是 Int", sourceIndex.span());
+        }
+        if (currentFunction != null) {
+            error("MPL3508", "第一版函数不能扫描 Set<Unit<T>>.get(index)", span);
+        }
+        if (unitIterationDepth > 0) {
+            error("MPL3306", "Set<Unit<T>>.get(index) 不能嵌套在 Unit 遍历中", span);
+        }
+        if (query.hasManagedLimit()) {
+            error("MPL3307", "带 take(n) 的 Set<Unit<T>>.get(index) 需要稳定所有权索引 Runtime，当前尚未启用", span);
+        }
+        return new HirUnitQueryGet(query, index);
     }
 
     private HirExpression renameUnitBinding(HirExpression expression, String sourceName, String targetName) {
@@ -903,7 +963,17 @@ public final class SemanticAnalyzer {
                 target.name(), member.member(), call.arguments(), call.span());
         }
         if (targetSymbol != null && targetSymbol.type() == ValueType.UNIT) {
-            return analyzeUnitControl(target.name(), member.member(), call.arguments(), call.span());
+            return analyzeUnitControl(target.name(), false, member.member(), call.arguments(), call.span());
+        }
+        if (targetSymbol != null && targetSymbol.type() instanceof UnitType unit) {
+            if (unit.nullable()) {
+                error("MPL3308", "可空 " + unit.displayName() + " 必须先通过 != null 检查", call.span());
+                return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+            }
+            if (currentFunction != null || unitIterationDepth > 0) {
+                error("MPL3306", "第一版不能在函数或 Unit 遍历体中重绑已保存的 UnitRef", call.span());
+            }
+            return analyzeUnitControl(target.name(), true, member.member(), call.arguments(), call.span());
         }
         return null;
     }
@@ -1104,7 +1174,8 @@ public final class SemanticAnalyzer {
         return analyzeExpression(source);
     }
 
-    private HirStatement analyzeUnitControl(String sourceBinding, String command, List<Expression> sourceArguments, SourceSpan span) {
+    private HirStatement analyzeUnitControl(String sourceBinding, boolean storedReference, String command,
+                                            List<Expression> sourceArguments, SourceSpan span) {
         Optional<TargetProfile.UnitAction> action = profile.unitAction(command);
         if (action.isEmpty()) {
             error("MPL3305", "当前 target 的 Unit 不支持控制动作：" + command, span);
@@ -1123,7 +1194,8 @@ public final class SemanticAnalyzer {
             }
             arguments.add(value);
         }
-        return new HirUnitControl(activeUnitBinding == null ? sourceBinding : activeUnitBinding, command, arguments);
+        String binding = storedReference || activeUnitBinding == null ? sourceBinding : activeUnitBinding;
+        return new HirUnitControl(binding, storedReference, command, arguments);
     }
 
     private HirStatement analyzeDeclaration(VariableDeclaration declaration) {
@@ -1141,6 +1213,10 @@ public final class SemanticAnalyzer {
             error("MPL3201", "硬件常量不能赋给普通变量；请直接读取字段或调用控制方法", declaration.initializer().span());
         }
         MplType type = declaredType == null ? initializer.type() : declaredType;
+        if (declaredType == null && initializer.type() == ValueType.NULL) {
+            error("MPL3103", "不能仅从 null 推导变量类型；请显式声明可空对象类型", declaration.span());
+            type = ValueType.ERROR;
+        }
         if (type == ValueType.VOID) error("MPL3103", "变量不能使用 Void 类型", declaration.span());
         if (!type.canAssignFrom(initializer.type())) {
             error("MPL3103", "不能将 " + display(initializer.type()) + " 赋给 " + display(type), declaration.initializer().span());
@@ -1203,6 +1279,7 @@ public final class SemanticAnalyzer {
         if (expression instanceof BooleanLiteral bool) {
             return new HirConstant(bool.value() ? "1" : "0", ValueType.BOOL);
         }
+        if (expression instanceof NullLiteral) return new HirConstant("null", ValueType.NULL);
         if (expression instanceof Identifier identifier) {
             HardwareContract.LinkDeclaration hardware = hardwareLinks.get(identifier.name());
             if (hardware != null) return new HirHardwareLink(hardware.mplName(), hardware.gameAlias(), hardware.mplType());
@@ -1211,11 +1288,11 @@ public final class SemanticAnalyzer {
                 error("MPL3102", "未声明的变量：" + identifier.name(), identifier.span());
                 return new HirVariable(identifier.name(), ValueType.ERROR);
             }
+            if (currentFunction != null && symbol.type() instanceof UnitType) {
+                error("MPL3508", "第一版函数不能访问已保存的 UnitRef", identifier.span());
+            }
             recordGlobalAccess(identifier.name(), symbol, identifier.span());
-            String name = symbol.type() == ValueType.UNIT && activeUnitBinding != null
-                ? activeUnitBinding
-                : identifier.name();
-            return new HirVariable(name, symbol.type());
+            return new HirVariable(identifier.name(), symbol.type());
         }
         if (expression instanceof IndexExpression access) {
             return analyzeIndexAccess(access);
@@ -1347,6 +1424,25 @@ public final class SemanticAnalyzer {
             }
             return new HirMemberAccess(target, member.member(), type.orElseThrow());
         }
+        if (target.type() instanceof UnitType unit) {
+            if (unit.nullable()) {
+                error("MPL3308", "可空 " + unit.displayName() + " 必须先通过 != null 检查", member.span());
+                return new HirMemberAccess(target, member.member(), ValueType.ERROR);
+            }
+            if (currentFunction != null || unitIterationDepth > 0) {
+                error("MPL3306", "第一版不能在函数或 Unit 遍历体中重绑已保存的 UnitRef", member.span());
+            }
+            if ("flag".equals(member.member())) {
+                error("MPL3304", "Unit.flag 是编译器私有运行时属性，MPL 不允许访问", member.span());
+                return new HirMemberAccess(target, member.member(), ValueType.ERROR);
+            }
+            Optional<ValueType> type = profile.unitPropertyType(member.member());
+            if (type.isEmpty()) {
+                error("MPL3304", "当前 target 的 Unit 不支持只读属性：" + member.member(), member.span());
+                return new HirMemberAccess(target, member.member(), ValueType.ERROR);
+            }
+            return new HirMemberAccess(target, member.member(), type.orElseThrow());
+        }
         if (target.type() == ValueType.BUILDING && target instanceof HirVariable variable
             && variable.name().equals(activeBuildingBinding) && activeBuildingType != null) {
             TargetProfile.BuildingType building = profile.buildingType(activeBuildingType).orElseThrow();
@@ -1366,7 +1462,16 @@ public final class SemanticAnalyzer {
         if (factory.isPresent()) return analyzeCollectionFactory(factory.orElseThrow(), call.arguments(), call.span());
         if (call.callee() instanceof MemberAccessExpression member && "get".equals(member.member())
             && call.arguments().size() == 1) {
+            HirUnitQuery query = resolveUnitQuery(member.target(), "_");
+            if (query != null) return analyzeUnitQueryGet(query, call.arguments().get(0), call.span());
             return analyzeIndexAccess(member.target(), call.arguments().get(0), call.span());
+        }
+        if (call.callee() instanceof MemberAccessExpression member && "get".equals(member.member())) {
+            HirUnitQuery query = resolveUnitQuery(member.target(), "_");
+            if (query != null) {
+                error("MPL3309", "Set<Unit<T>>.get(index) 需要恰好一个 Int 参数", call.span());
+                return new HirConstant("null", ValueType.ERROR);
+            }
         }
         if (call.callee() instanceof MemberAccessExpression member && "contains".equals(member.member())
             && call.arguments().size() == 1) {
@@ -1526,6 +1631,20 @@ public final class SemanticAnalyzer {
             || left == ValueType.INT && right == ValueType.FLOAT || left == ValueType.FLOAT && right == ValueType.INT) {
             return true;
         }
+        if (left instanceof UnitType unit && right == ValueType.NULL) {
+            if (unit.nullable()) return true;
+            error("MPL3103", "非空 " + unit.displayName() + " 不需要与 null 比较", span);
+            return false;
+        }
+        if (right instanceof UnitType unit && left == ValueType.NULL) {
+            if (unit.nullable()) return true;
+            error("MPL3103", "非空 " + unit.displayName() + " 不需要与 null 比较", span);
+            return false;
+        }
+        if (left instanceof UnitType leftUnit && right instanceof UnitType rightUnit
+            && leftUnit.unitType().equals(rightUnit.unitType())) {
+            return true;
+        }
         error("MPL3103", "不能比较 " + display(left) + " 与 " + display(right), span);
         return false;
     }
@@ -1538,6 +1657,16 @@ public final class SemanticAnalyzer {
             }
             return new UnitSetType(unitType);
         }
+        boolean nullable = name.endsWith("?");
+        String nonNullableName = nullable ? name.substring(0, name.length() - 1) : name;
+        if (nonNullableName.startsWith("Unit<") && nonNullableName.endsWith(">")) {
+            String unitType = nonNullableName.substring("Unit<".length(), nonNullableName.length() - 1);
+            if (profile.unitType(unitType).filter(TargetProfile.UnitType::logicControllable).isEmpty()) {
+                return typeError("当前 target 不支持 Unit 类型：" + unitType, span);
+            }
+            return new UnitType(unitType, nullable);
+        }
+        if (nullable) return typeError("当前阶段只有 Unit<T> 对象引用支持可空类型", span);
         if (name.endsWith("[]")) {
             MplType element = parseType(name.substring(0, name.length() - 2), span);
             return collectionType(CollectionType.Kind.ARRAY, element, span);
@@ -1580,6 +1709,9 @@ public final class SemanticAnalyzer {
 
     private MplType collectionType(CollectionType.Kind kind, MplType element, SourceSpan span) {
         if (element == ValueType.ERROR || element == ValueType.VOID) return ValueType.ERROR;
+        if (element == ValueType.NULL || element instanceof UnitType || element instanceof UnitSetType) {
+            return typeError("当前阶段聚合类型不能存储可空值、Unit 引用或 Unit 查询", span);
+        }
         if (isAggregate(element)) return typeError("当前阶段不支持嵌套聚合类型；需要 Memory runtime", span);
         return new CollectionType(kind, element);
     }
@@ -1894,6 +2026,10 @@ public final class SemanticAnalyzer {
 
     private record Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
                           HirUnitQuery unitQuery, boolean global, SourceSpan declarationSpan) {
+        private Symbol withType(MplType narrowedType) {
+            return new Symbol(narrowedType, mutable, staticStringCodeUnits, staticAggregateSize, unitQuery, global,
+                declarationSpan);
+        }
     }
 
     private record FunctionSignature(FunctionDeclaration declaration, List<MplType> parameterTypes,

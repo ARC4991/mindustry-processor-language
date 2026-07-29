@@ -15,6 +15,7 @@ CONTINUE: 'continue';
 RETURN: 'return';
 TRUE: 'true';
 FALSE: 'false';
+NULL: 'null';
 
 ARROW: '=>';
 PLUS_ASSIGN: '+=';
@@ -48,6 +49,7 @@ COLON: ':';
 COMMA: ',';
 DOT: '.';
 SEMICOLON: ';';
+QUESTION: '?';
 
 STRING_LITERAL: '"' (ESCAPE_SEQUENCE | ~["\\\r\n])* '"';
 FLOAT_LITERAL: (DIGITS '.' DIGITS? | '.' DIGITS) EXPONENT?;

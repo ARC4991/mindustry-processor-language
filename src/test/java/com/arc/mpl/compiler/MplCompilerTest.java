@@ -1136,6 +1136,36 @@ class MplCompilerTest {
     }
 
     @Test
+    void getsAndRebindsAPersistentNullableUnitReference(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val active = Unit.getAllDagger().where(_.alive);
+            val leader: Unit<Dagger>? = active.get(0);
+            if (leader != null) {
+                val health = leader.health;
+                leader.move(4.0, 8.0);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("val leader: Unit<Dagger>? = @unit.get(@dagger, _, 0, @unit.alive(_));"));
+        assertTrue(mil.contains("val health: Float = @unit.refRead(leader, health);"));
+        assertTrue(mil.contains("@unit.refMove(leader, 4.0, 8.0);"));
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("set __mpl_tmp0 null"));
+        assertTrue(mlog.contains("mpl_unit_get_scan_0:"));
+        assertTrue(mlog.contains("set mpl_leader __mpl_tmp0"));
+        assertTrue(mlog.contains("ubind mpl_leader"));
+        assertTrue(mlog.lines().filter(line -> line.contains("@unit @dead")).count() >= 2);
+        assertTrue(mlog.contains("sensor __mpl_tmp"));
+        assertTrue(mlog.contains("ucontrol move 4.0 8.0 0 0 0"));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("jump mpl_[A-Za-z0-9_]+ strictEqual @unit null")));
+    }
+
+    @Test
     void compilesProvenDynamicArraysThroughOnePhysicalMemoryLayout(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

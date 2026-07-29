@@ -11,7 +11,7 @@ functionDeclaration: FUN name=IDENTIFIER LPAREN (parameter (COMMA parameter)*)? 
 
 parameter: name=IDENTIFIER COLON typeName=typeReference;
 
-typeReference: typeAtom (LBRACK RBRACK)*;
+typeReference: typeAtom (LBRACK RBRACK)* QUESTION?;
 
 typeAtom
     : IDENTIFIER LESS typeReference GREATER
@@ -69,6 +69,7 @@ primaryExpression
     | STRING_LITERAL
     | TRUE
     | FALSE
+    | NULL
     | IDENTIFIER
     | macroInvocation
     | gameSymbol

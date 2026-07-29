@@ -36,6 +36,7 @@ import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQueryGet;
 import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
@@ -146,7 +147,8 @@ public final class HirOptimizer {
                 iteration.size(), optimizeStatements(iteration.body())));
         }
         if (statement instanceof HirUnitControl control) {
-            return List.of(new HirUnitControl(control.bindingName(), control.command(), optimizeExpressions(control.arguments())));
+            return List.of(new HirUnitControl(control.bindingName(), control.storedReference(), control.command(),
+                optimizeExpressions(control.arguments())));
         }
         if (statement instanceof HirBuildingControl control) {
             return List.of(new HirBuildingControl(optimizeExpression(control.target()), control.action(),
@@ -235,6 +237,9 @@ public final class HirOptimizer {
         }
         if (expression instanceof HirUnitQuery query) return optimizeUnitQuery(query);
         if (expression instanceof HirUnitQuerySize size) return new HirUnitQuerySize(optimizeUnitQuery(size.query()));
+        if (expression instanceof HirUnitQueryGet get) {
+            return new HirUnitQueryGet(optimizeUnitQuery(get.query()), optimizeExpression(get.index()));
+        }
         return expression;
     }
 

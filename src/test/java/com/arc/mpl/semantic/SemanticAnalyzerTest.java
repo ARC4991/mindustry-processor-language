@@ -6,10 +6,15 @@ import com.arc.mpl.hir.CollectionType;
 import com.arc.mpl.hir.HirDynamicCollectionSet;
 import com.arc.mpl.hir.HirDynamicIndexAccess;
 import com.arc.mpl.hir.HirFor;
+import com.arc.mpl.hir.HirIf;
+import com.arc.mpl.hir.HirMemberAccess;
+import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQueryGet;
 import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.UnitSetType;
+import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.syntax.MplSyntaxParser;
 import org.junit.jupiter.api.Test;
 
@@ -412,5 +417,82 @@ class SemanticAnalyzerTest {
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3307")
             && diagnostic.message().contains("take(n)")));
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3508")));
+    }
+
+    @Test
+    void getsAndSmartCastsANullablePersistentUnitReference() {
+        Program program = parser.parse("""
+            val active = Unit.getAllDagger().where(_.alive);
+            val leader = active.get(0);
+            if (leader != null) {
+                val health: Float = leader.health;
+                leader.move(4.0, 8.0);
+            }
+            val fallback: Unit<Dagger>? = null;
+            if (fallback == null) {
+                val absent: Bool = true;
+            } else {
+                val alive: Bool = fallback.alive;
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty());
+        HirVariableDeclaration leader = assertInstanceOf(HirVariableDeclaration.class,
+            result.program().orElseThrow().statements().get(1));
+        assertEquals(new UnitType("Dagger", true), leader.type());
+        assertInstanceOf(HirUnitQueryGet.class, leader.initializer());
+        HirIf branch = assertInstanceOf(HirIf.class, result.program().orElseThrow().statements().get(2));
+        HirVariableDeclaration health = assertInstanceOf(HirVariableDeclaration.class, branch.thenBody().get(0));
+        HirMemberAccess read = assertInstanceOf(HirMemberAccess.class, health.initializer());
+        assertEquals(new UnitType("Dagger", false), read.target().type());
+        HirUnitControl move = assertInstanceOf(HirUnitControl.class, branch.thenBody().get(1));
+        assertTrue(move.storedReference());
+    }
+
+    @Test
+    void rejectsUnsafeNullableUnitReferenceUses() {
+        Program program = parser.parse("""
+            val leader = Unit.getAllDagger().get(0);
+            leader.move(1.0, 2.0);
+            var mutable = leader;
+            if (mutable != null) {
+                val health = mutable.health;
+            }
+            val unknown = null;
+            val wrong: Unit<Alpha>? = leader;
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3308".equals(diagnostic.code())));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3103".equals(diagnostic.code())
+            && diagnostic.message().contains("仅从 null")));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3103".equals(diagnostic.code())
+            && diagnostic.message().contains("Unit<Alpha>?")));
+    }
+
+    @Test
+    void rejectsManagedNestedAndFunctionUnitGets() {
+        Program program = parser.parse("""
+            val managed = Unit.getAllDagger().take(3);
+            val selected = managed.get(0);
+            fun forbidden(): Unit<Dagger>? {
+                return Unit.getAllDagger().get(0);
+            }
+            for (var unit : Unit.getAllDagger()) {
+                val nested = Unit.getAllDagger().get(0);
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3307".equals(diagnostic.code())));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3306".equals(diagnostic.code())));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3508".equals(diagnostic.code())));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3602".equals(diagnostic.code())));
     }
 }

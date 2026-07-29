@@ -12,7 +12,7 @@ functionDeclaration: FUN name=IDENTIFIER LPAREN (parameter (COMMA parameter)*)? 
 parameter: name=IDENTIFIER COLON typeName=typeReference;
 
 typeReference
-    : typeAtom (LBRACK RBRACK)*
+    : typeAtom (LBRACK RBRACK)* QUESTION?
     ;
 
 typeAtom
@@ -92,6 +92,7 @@ primaryExpression
     | STRING_LITERAL
     | TRUE
     | FALSE
+    | NULL
     | name=IDENTIFIER
     | LBRACK (expression (COMMA expression)*)? RBRACK
     | LPAREN tupleElement+=expression (COMMA tupleElement+=expression)+ RPAREN

@@ -8,6 +8,7 @@ public enum ValueType implements MplType {
     STRING,
     UNIT,
     BUILDING,
+    NULL,
     VOID,
     ERROR;
 
@@ -25,6 +26,7 @@ public enum ValueType implements MplType {
             case STRING -> "String";
             case UNIT -> "Unit";
             case BUILDING -> "Building";
+            case NULL -> "Null";
             case VOID -> "Void";
             case ERROR -> "错误类型";
         };

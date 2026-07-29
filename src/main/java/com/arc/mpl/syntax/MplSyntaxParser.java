@@ -22,6 +22,7 @@ import com.arc.mpl.ast.IfStatement;
 import com.arc.mpl.ast.IntegerLiteral;
 import com.arc.mpl.ast.LambdaExpression;
 import com.arc.mpl.ast.MemberAccessExpression;
+import com.arc.mpl.ast.NullLiteral;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.ast.ReturnStatement;
 import com.arc.mpl.ast.Statement;
@@ -327,6 +328,7 @@ public final class MplSyntaxParser {
             if (context.TRUE() != null || context.FALSE() != null) {
                 return new BooleanLiteral(context.TRUE() != null, span(context));
             }
+            if (context.NULL() != null) return new NullLiteral(span(context));
             if (context.name != null) {
                 return new Identifier(context.name.getText(), span(context));
             }

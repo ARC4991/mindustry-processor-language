@@ -25,6 +25,7 @@ import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQueryGet;
 import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirWhile;
 
@@ -146,6 +147,10 @@ public final class DisplayRuntimeLowerer {
         if (expression instanceof HirUnitQuery query) return query.filters().stream().anyMatch(this::containsFunctionCall);
         if (expression instanceof HirUnitQuerySize size) {
             return size.query().filters().stream().anyMatch(this::containsFunctionCall);
+        }
+        if (expression instanceof HirUnitQueryGet get) {
+            return containsFunctionCall(get.index())
+                || get.query().filters().stream().anyMatch(this::containsFunctionCall);
         }
         if (expression instanceof HirArrayLiteral array) return array.elements().stream().anyMatch(this::containsFunctionCall);
         if (expression instanceof HirTupleLiteral tuple) return tuple.elements().stream().anyMatch(this::containsFunctionCall);

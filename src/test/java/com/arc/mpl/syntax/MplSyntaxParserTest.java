@@ -6,6 +6,7 @@ import com.arc.mpl.ast.BinaryExpression;
 import com.arc.mpl.ast.ExpressionStatement;
 import com.arc.mpl.ast.ForStatement;
 import com.arc.mpl.ast.IfStatement;
+import com.arc.mpl.ast.NullLiteral;
 import com.arc.mpl.ast.TupleLiteral;
 import com.arc.mpl.ast.VariableDeclaration;
 import org.junit.jupiter.api.Test;
@@ -117,5 +118,16 @@ class MplSyntaxParserTest {
         assertInstanceOf(TupleLiteral.class, tuple.initializer());
         assertEquals("Int[]", array.declaredType().orElseThrow());
         assertInstanceOf(ArrayLiteral.class, array.initializer());
+    }
+
+    @Test
+    void parsesNullableUnitTypesAndNullLiterals() {
+        ParseResult result = parser.parse("val leader: Unit<Dagger>? = null;", Path.of("main.mpl"));
+
+        assertTrue(result.succeeded());
+        VariableDeclaration declaration = assertInstanceOf(VariableDeclaration.class,
+            result.program().orElseThrow().statements().get(0));
+        assertEquals("Unit<Dagger>?", declaration.declaredType().orElseThrow());
+        assertInstanceOf(NullLiteral.class, declaration.initializer());
     }
 }

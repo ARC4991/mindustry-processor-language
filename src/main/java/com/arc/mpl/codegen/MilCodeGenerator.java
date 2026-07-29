@@ -38,11 +38,13 @@ import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirUnitQuery;
+import com.arc.mpl.hir.HirUnitQueryGet;
 import com.arc.mpl.hir.HirUnitQuerySize;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.MplType;
+import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.hir.ValueType;
 
 import java.util.List;
@@ -260,7 +262,7 @@ public final class MilCodeGenerator {
         if (!"move".equals(control.command()) || control.arguments().size() != 2) {
             throw new IllegalArgumentException("MIL 尚不能序列化 Unit 操作：" + control.command());
         }
-        writer.append("@unit.move(")
+        writer.append(control.storedReference() ? "@unit.refMove(" : "@unit.move(")
             .append(identifier(control.bindingName(), "单位绑定变量"));
         for (HirExpression argument : control.arguments()) {
             writer.append(", ").append(expression(argument));
@@ -301,6 +303,15 @@ public final class MilCodeGenerator {
             return expression(contains.target()) + ".contains(" + expression(contains.candidate()) + ")";
         }
         if (value instanceof HirUnitQuery query) return unitQuery(query);
+        if (value instanceof HirUnitQueryGet get) {
+            HirUnitQuery query = get.query();
+            StringBuilder result = new StringBuilder("@unit.get(@")
+                .append(identifier(query.mlogType(), "单位内容名"))
+                .append(", ").append(identifier(query.bindingName(), "单位绑定变量"))
+                .append(", ").append(expression(get.index()));
+            for (HirExpression filter : query.filters()) result.append(", ").append(expression(filter));
+            return result.append(')').toString();
+        }
         if (value instanceof HirUnitQuerySize size) {
             HirUnitQuery query = size.query();
             StringBuilder result = new StringBuilder("@unit.count(@")
@@ -357,20 +368,23 @@ public final class MilCodeGenerator {
             return "@building.read(" + targetLink(hardware.gameAlias()) + ", "
                 + identifier(member.member(), "建筑属性") + ")";
         }
-        if (member.target().type() != ValueType.UNIT) {
+        if (member.target().type() != ValueType.UNIT && !(member.target().type() instanceof UnitType)) {
             return expression(member.target()) + "." + identifier(member.member(), "成员名");
         }
         if ("flag".equals(member.member())) {
             throw new IllegalArgumentException("Unit.flag 是编译器私有运行时属性，不能出现在 MIL");
         }
         String unit = expression(member.target());
+        boolean storedReference = member.target().type() instanceof UnitType;
+        String aliveMacro = storedReference ? "@unit.refAlive" : "@unit.alive";
+        String readMacro = storedReference ? "@unit.refRead" : "@unit.read";
         if ("alive".equals(member.member())) {
-            return "@unit.alive(" + unit + ")";
+            return aliveMacro + "(" + unit + ")";
         }
         if ("dead".equals(member.member())) {
-            return "(!@unit.alive(" + unit + "))";
+            return "(!" + aliveMacro + "(" + unit + "))";
         }
-        return "@unit.read(" + unit + ", " + identifier(member.member(), "Unit 属性") + ")";
+        return readMacro + "(" + unit + ", " + identifier(member.member(), "Unit 属性") + ")";
     }
 
     private String intrinsic(HirIntrinsicCall call) {

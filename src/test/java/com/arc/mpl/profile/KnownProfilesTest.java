@@ -32,7 +32,8 @@ class KnownProfilesTest {
         assertEquals("duo", profile.buildingType("Duo").orElseThrow().mlogName());
         assertTrue(profile.instructions().stream().anyMatch(instruction -> instruction.opcode().equals("ubind")));
         assertEquals(java.util.Set.of(
-                "@unit.each", "@unit.eachManaged", "@unit.count", "@unit.read", "@unit.alive", "@unit.move",
+                "@unit.each", "@unit.eachManaged", "@unit.count", "@unit.get",
+                "@unit.read", "@unit.alive", "@unit.move", "@unit.refRead", "@unit.refAlive", "@unit.refMove",
                 "@building.read", "@building.control", "@io.print", "@io.draw", "@io.drawFlush"),
             profile.macros().stream().map(TargetProfile.Macro::name).collect(java.util.stream.Collectors.toSet()));
         assertEquals(TargetProfile.MacroVisibility.RUNTIME_PRIVATE,
