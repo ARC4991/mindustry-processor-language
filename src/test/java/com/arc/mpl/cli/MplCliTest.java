@@ -14,6 +14,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MplCliTest {
     @Test
+    void buildAcceptsAMilEntryAndWritesTheNormalBlueprintBundle(@TempDir Path project) throws IOException {
+        Path sourceDirectory = Files.createDirectories(project.resolve("src"));
+        Files.writeString(project.resolve("mpl.json"), """
+            { "name": "mil-demo", "version": "0.1.0", "entry": "src/main.mil" }
+            """);
+        Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Status: Message = link(\"message1\");\n");
+        Files.writeString(sourceDirectory.resolve("main.mil"),
+            "@io.print(@message1, \"MIL ready\");\n");
+        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+
+        MplCli.main(new String[]{
+            "build", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
+        });
+
+        assertTrue(Files.readString(outputDirectory.resolve("Main.mlog")).contains("print \"MIL ready\""));
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("Main.mil")));
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("runtime.msch")));
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("report.json")));
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("deployment.json")));
+    }
+
+    @Test
     void buildWritesADeployableBlueprintBundleAndAppliesTheDebugLabelStyle(@TempDir Path project) throws IOException {
         Path sourceDirectory = Files.createDirectories(project.resolve("src"));
         Files.writeString(sourceDirectory.resolve("main.mpl"), "while (true) { }");

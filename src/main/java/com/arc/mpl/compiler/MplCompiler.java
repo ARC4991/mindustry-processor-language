@@ -1,5 +1,6 @@
 package com.arc.mpl.compiler;
 
+import com.arc.mpl.ast.Program;
 import com.arc.mpl.codegen.MlogCodeGenerator;
 import com.arc.mpl.codegen.MlogCodeGenerator.HardwareRequirement;
 import com.arc.mpl.codegen.MlogLabelStyle;
@@ -7,28 +8,36 @@ import com.arc.mpl.codegen.MlogOutputValidator;
 import com.arc.mpl.codegen.MilCodeGenerator;
 import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.Severity;
-import com.arc.mpl.profile.KnownProfiles;
+import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.memory.PhysicalMemoryPlanner;
-import com.arc.mpl.project.HardwareLoader;
+import com.arc.mpl.mil.semantic.MilLowerer;
+import com.arc.mpl.mil.semantic.MilLoweringResult;
+import com.arc.mpl.mil.syntax.MilParseResult;
+import com.arc.mpl.mil.syntax.MilSourceKind;
+import com.arc.mpl.mil.syntax.MilSyntaxParser;
+import com.arc.mpl.optimization.HirOptimizationResult;
+import com.arc.mpl.optimization.HirOptimizer;
+import com.arc.mpl.profile.KnownProfiles;
+import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.project.HardwareContract;
+import com.arc.mpl.project.HardwareLoader;
+import com.arc.mpl.project.ProjectSourceCatalog;
+import com.arc.mpl.project.ProjectSourceLanguage;
+import com.arc.mpl.project.ProjectSourceLoader;
 import com.arc.mpl.project.RuntimePreferences;
 import com.arc.mpl.project.RuntimePreferencesLoader;
-import com.arc.mpl.profile.TargetProfile;
+import com.arc.mpl.runtime.DisplayRuntimeLowerer;
 import com.arc.mpl.semantic.SemanticAnalyzer;
 import com.arc.mpl.semantic.SemanticResult;
 import com.arc.mpl.syntax.MplSyntaxParser;
 import com.arc.mpl.syntax.ParseResult;
-import com.arc.mpl.hir.HirProgram;
-import com.arc.mpl.optimization.HirOptimizationResult;
-import com.arc.mpl.optimization.HirOptimizer;
-import com.arc.mpl.runtime.DisplayRuntimeLowerer;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -45,7 +54,16 @@ public final class MplCompiler {
                 Optional.empty());
         }
 
-        Path sourceFile = request.projectDirectory().resolve("src/main.mpl");
+        ProjectSourceCatalog sources;
+        try {
+            sources = new ProjectSourceLoader().load(request.projectDirectory());
+        } catch (IOException | IllegalArgumentException exception) {
+            Path metadata = request.projectDirectory().resolve("mpl.json");
+            return new CompilationResult(profile, List.of(Diagnostic.localized(
+                Severity.ERROR, "MPL1105", "compiler.source.config", List.of(exceptionMessage(exception)),
+                Optional.of(metadata), Optional.empty())), Optional.empty());
+        }
+        Path sourceFile = sources.entryFile();
         if (!Files.isRegularFile(sourceFile)) {
             return new CompilationResult(profile, List.of(Diagnostic.localized(
                 Severity.ERROR, "MPL1101", "compiler.entry.missing", List.of(sourceFile),
@@ -60,8 +78,6 @@ public final class MplCompiler {
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
 
-        ParseResult parsed = new MplSyntaxParser().parse(source, sourceFile);
-        if (!parsed.succeeded()) return new CompilationResult(profile, parsed.diagnostics(), Optional.empty());
         RuntimePreferences runtimePreferences;
         try {
             runtimePreferences = new RuntimePreferencesLoader().load(request.projectDirectory());
@@ -70,18 +86,30 @@ public final class MplCompiler {
                 Severity.ERROR, "MPL1104", "compiler.runtime.read", List.of(exceptionMessage(exception)),
                 Optional.of(request.projectDirectory().resolve("mpl.json")), Optional.empty())), Optional.empty());
         }
-        SemanticResult analyzed;
         HardwareContract hardware;
         try {
             hardware = new HardwareLoader().load(request.projectDirectory());
             List<Diagnostic> hardwareDiagnostics = validateHardware(hardware, profile.orElseThrow(), sourceFile);
             if (!hardwareDiagnostics.isEmpty()) return new CompilationResult(profile, hardwareDiagnostics, Optional.empty());
-            analyzed = new SemanticAnalyzer(profile.orElseThrow()).analyze(parsed.program().orElseThrow(), sourceFile, hardware);
         } catch (IOException exception) {
             return new CompilationResult(profile, List.of(Diagnostic.localized(
                 Severity.ERROR, "MPL1103", "compiler.hardware.read", List.of(exceptionMessage(exception)),
                 Optional.of(sourceFile), Optional.empty())), Optional.empty());
         }
+        Program syntaxProgram;
+        if (sources.entryLanguage() == ProjectSourceLanguage.MPL) {
+            ParseResult parsed = new MplSyntaxParser().parse(source, sourceFile);
+            if (!parsed.succeeded()) return new CompilationResult(profile, parsed.diagnostics(), Optional.empty());
+            syntaxProgram = parsed.program().orElseThrow();
+        } else {
+            MilParseResult parsed = new MilSyntaxParser().parse(source, sourceFile, profile.orElseThrow(), MilSourceKind.USER);
+            if (!parsed.succeeded()) return new CompilationResult(profile, parsed.diagnostics(), Optional.empty());
+            MilLoweringResult lowered = new MilLowerer().lower(parsed.document().orElseThrow(), sourceFile,
+                profile.orElseThrow(), hardware);
+            if (!lowered.succeeded()) return new CompilationResult(profile, lowered.diagnostics(), Optional.empty());
+            syntaxProgram = lowered.program().orElseThrow();
+        }
+        SemanticResult analyzed = new SemanticAnalyzer(profile.orElseThrow()).analyze(syntaxProgram, sourceFile, hardware);
         if (analyzed.program().isEmpty()) return new CompilationResult(profile, analyzed.diagnostics(), Optional.empty());
         HirOptimizationResult optimized = new HirOptimizer().optimize(analyzed.program().orElseThrow());
         HirProgram program = new DisplayRuntimeLowerer(profile.orElseThrow().maxGraphicsBufferCommands())

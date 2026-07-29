@@ -49,6 +49,85 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesAConfiguredMilEntryThroughRuntimeAndTargetLowering(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), """
+            {
+              "entry": "src/main.mil",
+              "runtime": { "processors": { "logic": 1 }, "memory": { "cell": 2 } }
+            }
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
+            const Status: Message = link("message1");
+            const Canvas: Display = link("display1");
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mil"), """
+            var phase: Float = 0.0;
+            @unit.eachManaged(@dagger, unit, 3, @unit.alive(unit)) {
+                @unit.move(unit, phase, 20.0);
+            }
+            @io.print(@message1, "phase=", phase);
+            @io.draw(@display1, clear, 0, 0, 0);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("ubind @dagger"));
+        assertTrue(mlog.contains("ucontrol move mpl_phase 20.0"));
+        assertTrue(mlog.contains("print \"phase=\""));
+        assertTrue(mlog.contains("printflush message1"));
+        assertTrue(mlog.contains("draw clear 0 0 0"));
+        assertTrue(mlog.contains("drawflush display1"));
+        assertTrue(result.mil().orElseThrow().contains("@unit.eachManaged(@dagger, unit, 3"));
+    }
+
+    @Test
+    void compilesPublicBuildingMacrosFromMil(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/main.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const FrontTurret: Duo = link(\"duo1\");\n");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mil"), """
+            @building.each(@duo, turret, @building.read(turret, enabled)) {
+                @building.control(turret, enabled, false);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("control duo1 enabled 0 0 0 0 0"), mlog);
+        assertTrue(result.mil().orElseThrow().contains("@building.each(@duo, turret"));
+    }
+
+    @Test
+    void reportsInvalidMilGameLinksBeforeSemanticAnalysis(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/main.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mil"), "@io.print(@message9, \"missing\");\n");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MIL3105")));
+    }
+
+    @Test
+    void reportsInvalidEntryConfigurationWithAStableLocalizedDiagnostic(@TempDir Path project) throws IOException {
+        java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"../outside.mil\" }");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertEquals("MPL1105", result.diagnostics().get(0).code());
+        assertEquals("compiler.source.config", result.diagnostics().get(0).messageKey().orElseThrow());
+    }
+
+    @Test
     void saturatesOutOfRangeIntLiteralsAndConstantArithmetic(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
