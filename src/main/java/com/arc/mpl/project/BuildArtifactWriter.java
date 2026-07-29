@@ -1,6 +1,8 @@
 package com.arc.mpl.project;
 
 import com.arc.mpl.profile.TargetProfile;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -13,6 +15,8 @@ import java.security.NoSuchAlgorithmException;
 /** Writes a self-contained deployable build directory. */
 @Slf4j
 public final class BuildArtifactWriter {
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     public void write(Path directory, String mlog, String mil, TargetProfile profile,
                       HardwareContract hardware, RuntimePlan plan) throws IOException {
         write(directory, mlog, mil, profile, hardware, plan, new ProjectMetadata("mpl-project", "0.0.0"));
@@ -26,8 +30,8 @@ public final class BuildArtifactWriter {
         String digest = digest(mlog + "\n" + mil + "\n" + profile.id() + "\n" + metadata.name() + "\n" + metadata.version());
         String blueprintName = "MPL-" + metadata.name() + "-" + metadata.version() + "-" + digest.substring(0, 12);
         Files.write(directory.resolve("runtime.msch"), new MindustrySchematicWriter().write(mlog, plan, blueprintName, digest));
-        Files.writeString(directory.resolve("report.json"), report(profile, plan, digest));
-        Files.writeString(directory.resolve("deployment.json"), deployment(profile, hardware, plan, digest));
+        writeFormattedJson(directory.resolve("report.json"), report(profile, plan, digest));
+        writeFormattedJson(directory.resolve("deployment.json"), deployment(profile, hardware, plan, digest));
         log.info("构建产物已写入：{}（blueprint={}，processor={}，instructions={}）", directory, blueprintName, plan.processorId(), plan.instructions());
     }
 
@@ -49,6 +53,16 @@ public final class BuildArtifactWriter {
 
     private String access(String type) { return ("Message".equals(type) || "Display".equals(type)) ? "write" : "readWrite"; }
     private String escape(String text) { return text.replace("\\", "\\\\").replace("\"", "\\\""); }
+
+    /** Writes stable human-readable JSON so build artifacts remain suitable for review and tooling. */
+    private void writeFormattedJson(Path file, String source) throws IOException {
+        try {
+            Files.writeString(file, JSON.writerWithDefaultPrettyPrinter().writeValueAsString(JSON.readTree(source)) + "\n");
+        } catch (JsonProcessingException exception) {
+            throw new IOException("无法格式化编译产物 JSON：" + file.getFileName(), exception);
+        }
+    }
+
     private String digest(String text) {
         try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8))); }
         catch (NoSuchAlgorithmException exception) { throw new IllegalStateException(exception); }

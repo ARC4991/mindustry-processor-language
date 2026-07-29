@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MlogOutputValidatorTest {
@@ -31,6 +32,18 @@ class MlogOutputValidatorTest {
         List<Diagnostic> diagnostics = validator.validate(mlog.toString(), v146);
 
         assertEquals(List.of("MPL5001"), diagnostics.stream().map(Diagnostic::code).toList());
+    }
+
+    @Test
+    void excludesLabelsFromTheInstructionLimit() {
+        StringBuilder mlog = new StringBuilder("entry:\n");
+        for (int index = 0; index < v146.maxInstructions(); index++) {
+            mlog.append("set value 0\n");
+        }
+
+        List<Diagnostic> diagnostics = validator.validate(mlog.toString(), v146);
+
+        assertFalse(diagnostics.stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL5001")));
     }
 
     @Test
