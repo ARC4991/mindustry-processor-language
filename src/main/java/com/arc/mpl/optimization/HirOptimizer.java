@@ -37,6 +37,7 @@ import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.MplType;
 import com.arc.mpl.hir.ValueType;
+import com.arc.mpl.numeric.NumericBounds;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -180,6 +181,15 @@ public final class HirOptimizer {
     }
 
     private HirExpression optimizeExpression(HirExpression expression) {
+        if (expression instanceof HirConstant constant && constant.type() == ValueType.INT) {
+            try {
+                long parsed = Long.parseLong(constant.mlogLiteral());
+                long normalized = NumericBounds.saturatingInt(parsed);
+                return normalized == parsed ? constant : new HirConstant(Long.toString(normalized), ValueType.INT);
+            } catch (NumberFormatException ignored) {
+                return constant;
+            }
+        }
         if (expression instanceof HirUnary unary) {
             HirExpression operand = optimizeExpression(unary.operand());
             return foldUnary(unary.operator(), operand, unary.type()).orElse(new HirUnary(unary.operator(), operand, unary.type()));
@@ -275,7 +285,7 @@ public final class HirOptimizer {
                     case "+" -> leftValue + rightValue;
                     case "-" -> leftValue - rightValue;
                     case "*" -> leftValue * rightValue;
-                    case "%" -> rightValue == 0 ? null : leftValue % rightValue;
+                    case "%" -> rightValue == 0 ? 0L : leftValue % rightValue;
                     default -> null;
                 };
                 return result == null ? Optional.empty() : Optional.of(foldedInt(result));
@@ -318,7 +328,7 @@ public final class HirOptimizer {
 
     private HirConstant foldedInt(long value) {
         constantFolds++;
-        return new HirConstant(Long.toString(value), ValueType.INT);
+        return new HirConstant(Long.toString(NumericBounds.saturatingInt(value)), ValueType.INT);
     }
 
     private HirConstant foldedFloat(double value) {

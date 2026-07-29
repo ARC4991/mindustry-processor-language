@@ -1031,6 +1031,11 @@ public final class SemanticAnalyzer {
             return new HirConstant("0", ValueType.ERROR);
         }
         if (expression instanceof UnaryExpression unary) {
+            if ("-".equals(unary.operator()) && unary.operand() instanceof IntegerLiteral literal) {
+                // Preserve a signed literal until the optimizer applies Int saturation.
+                // Normalizing its positive half would make Int.min unrepresentable.
+                return new HirConstant(Long.toString(-literal.value()), ValueType.INT);
+            }
             HirExpression operand = analyzeExpression(unary.operand());
             ValueType type = switch (unary.operator()) {
                 case "+", "-" -> requireNumeric(operand.type(), unary.span(), "一元运算符 " + unary.operator());

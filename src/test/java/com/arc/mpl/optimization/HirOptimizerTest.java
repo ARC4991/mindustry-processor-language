@@ -58,4 +58,29 @@ class HirOptimizerTest {
         assertEquals("0", value.mlogLiteral());
         assertTrue(result.report().constantFolds() > 0);
     }
+
+    @Test
+    void saturatesConstantIntArithmeticAndZeroRemainders() {
+        HirProgram input = new HirProgram(List.of(
+            new HirVariableDeclaration("positive", ValueType.INT, true,
+                new HirBinary(new HirConstant("2147483647", ValueType.INT), "+",
+                    new HirConstant("1", ValueType.INT), ValueType.INT)),
+            new HirVariableDeclaration("negative", ValueType.INT, true,
+                new HirBinary(new HirConstant("-2147483648", ValueType.INT), "-",
+                    new HirConstant("1", ValueType.INT), ValueType.INT)),
+            new HirVariableDeclaration("remainder", ValueType.INT, true,
+                new HirBinary(new HirConstant("7", ValueType.INT), "%",
+                    new HirConstant("0", ValueType.INT), ValueType.INT))));
+
+        HirOptimizationResult result = new HirOptimizer().optimize(input);
+
+        assertEquals("2147483647", constantAt(result, 0));
+        assertEquals("-2147483648", constantAt(result, 1));
+        assertEquals("0", constantAt(result, 2));
+    }
+
+    private String constantAt(HirOptimizationResult result, int index) {
+        HirVariableDeclaration declaration = assertInstanceOf(HirVariableDeclaration.class, result.program().statements().get(index));
+        return assertInstanceOf(HirConstant.class, declaration.initializer()).mlogLiteral();
+    }
 }

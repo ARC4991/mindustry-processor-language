@@ -49,6 +49,26 @@ class MplCompilerTest {
     }
 
     @Test
+    void saturatesOutOfRangeIntLiteralsAndConstantArithmetic(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            val maximum: Int = 2147483647 + 1;
+            val minimum: Int = -2147483648 - 1;
+            val literal: Int = 2147483648;
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        assertEquals("""
+            set mpl_maximum 2147483647
+            set mpl_minimum -2147483648
+            set mpl_literal 2147483647
+            stop
+            """, result.mlog().orElseThrow());
+    }
+
+    @Test
     void optimizesConstantExpressionsAndConstantBranchesBeforeMlogLowering(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
