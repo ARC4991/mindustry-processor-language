@@ -16,6 +16,8 @@ import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirDraw;
 import com.arc.mpl.hir.HirDrawFlush;
+import com.arc.mpl.hir.HirDynamicCollectionSet;
+import com.arc.mpl.hir.HirDynamicIndexAccess;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirFor;
@@ -151,6 +153,10 @@ public final class HirOptimizer {
         if (statement instanceof HirCollectionSet update) {
             return List.of(new HirCollectionSet(update.target(), update.index(), optimizeExpression(update.value())));
         }
+        if (statement instanceof HirDynamicCollectionSet update) {
+            return List.of(new HirDynamicCollectionSet(update.target(), optimizeExpression(update.index()),
+                optimizeExpression(update.value())));
+        }
         if (statement instanceof HirReturn returned) {
             return List.of(new HirReturn(returned.value().map(this::optimizeExpression)));
         }
@@ -218,6 +224,9 @@ public final class HirOptimizer {
         }
         if (expression instanceof HirIndexAccess access) {
             return new HirIndexAccess(optimizeExpression(access.target()), optimizeExpression(access.index()), access.type());
+        }
+        if (expression instanceof HirDynamicIndexAccess access) {
+            return new HirDynamicIndexAccess(optimizeExpression(access.target()), optimizeExpression(access.index()), access.type());
         }
         if (expression instanceof HirCollectionContains contains) {
             return new HirCollectionContains(optimizeExpression(contains.target()), optimizeExpression(contains.candidate()), contains.size());

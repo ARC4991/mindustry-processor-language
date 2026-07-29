@@ -48,6 +48,8 @@ import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirDraw;
+import com.arc.mpl.hir.HirDynamicCollectionSet;
+import com.arc.mpl.hir.HirDynamicIndexAccess;
 import com.arc.mpl.hir.HirExpression;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirFor;
@@ -102,6 +104,7 @@ public final class SemanticAnalyzer {
     private final Map<String, Set<String>> directGlobalDependencies = new HashMap<>();
     private final List<TopLevelCall> topLevelCalls = new ArrayList<>();
     private final Set<String> initializedGlobals = new HashSet<>();
+    private final Deque<ArrayBoundsProof> arrayBoundsProofs = new ArrayDeque<>();
     private Path file;
     private Map<String, String> messages = Map.of();
     private Map<String, HardwareContract.LinkDeclaration> hardwareLinks = Map.of();
@@ -152,6 +155,7 @@ public final class SemanticAnalyzer {
         directGlobalDependencies.clear();
         topLevelCalls.clear();
         initializedGlobals.clear();
+        arrayBoundsProofs.clear();
         unitIterationDepth = 0;
         loopDepth = 0;
         activeUnitBinding = null;
@@ -364,15 +368,56 @@ public final class SemanticAnalyzer {
             Optional<HirVariableDeclaration> declarationInitializer = loop.declarationInitializer()
                 .map(value -> (HirVariableDeclaration) analyzeDeclaration(value));
             Optional<HirExpression> expressionInitializer = loop.expressionInitializer().map(this::analyzeExpression);
+            Optional<ArrayBoundsProof> boundsProof = countingArrayBoundsProof(loop);
             HirExpression condition = loop.condition().map(this::analyzeExpression)
                 .orElseGet(() -> new HirConstant("1", ValueType.BOOL));
             loop.condition().ifPresent(value -> requireBool(condition.type(), value.span(), "for 条件"));
             Optional<HirExpression> update = loop.update().map(this::analyzeExpression);
-            List<HirStatement> body = analyzeLoopBlock(loop.body());
+            boundsProof.ifPresent(arrayBoundsProofs::push);
+            List<HirStatement> body;
+            try {
+                body = analyzeLoopBlock(loop.body());
+            } finally {
+                boundsProof.ifPresent(ignored -> arrayBoundsProofs.pop());
+            }
             return new HirFor(declarationInitializer, expressionInitializer, condition, update, body);
         } finally {
             scopes.pop();
         }
+    }
+
+    /** Recognizes the first statically safe dynamic-index form: {@code for (var i = 0; i < array.size; i += 1)}. */
+    private Optional<ArrayBoundsProof> countingArrayBoundsProof(ForStatement loop) {
+        if (loop.declarationInitializer().isEmpty() || loop.condition().isEmpty() || loop.update().isEmpty()) {
+            return Optional.empty();
+        }
+        VariableDeclaration declaration = loop.declarationInitializer().orElseThrow();
+        if (!declaration.mutable() || !(declaration.initializer() instanceof IntegerLiteral start) || start.value() != 0) {
+            return Optional.empty();
+        }
+        Symbol indexSymbol = lookup(declaration.name());
+        if (indexSymbol == null || indexSymbol.type() != ValueType.INT) return Optional.empty();
+        if (!(loop.condition().orElseThrow() instanceof BinaryExpression condition)
+            || !"<".equals(condition.operator())
+            || !(condition.left() instanceof Identifier index)
+            || !declaration.name().equals(index.name())
+            || !(condition.right() instanceof MemberAccessExpression size)
+            || !"size".equals(size.member())
+            || !(size.target() instanceof Identifier array)) {
+            return Optional.empty();
+        }
+        Symbol arraySymbol = lookup(array.name());
+        if (arraySymbol == null || !(arraySymbol.type() instanceof CollectionType collection)
+            || collection.kind() != CollectionType.Kind.ARRAY || arraySymbol.staticAggregateSize() == null) {
+            return Optional.empty();
+        }
+        if (!(loop.update().orElseThrow() instanceof AssignmentExpression update)
+            || !declaration.name().equals(update.target().name())
+            || !"+=".equals(update.operator())
+            || !(update.value() instanceof IntegerLiteral step) || step.value() != 1) {
+            return Optional.empty();
+        }
+        return Optional.of(new ArrayBoundsProof(declaration.name(), array.name()));
     }
 
     private HirStatement analyzeForEach(ForEachStatement loop) {
@@ -873,13 +918,30 @@ public final class SemanticAnalyzer {
             error("MPL3601", "Array.set(index, value) 需要两个参数", span);
             return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
         }
-        Optional<Integer> index = staticAggregateIndex(arguments.get(0), symbol.staticAggregateSize());
         HirExpression value = analyzeExpression(arguments.get(1));
         if (!type.elementType().canAssignFrom(value.type())) {
             error("MPL3103", "不能将 " + display(value.type()) + " 写入 " + type.displayName(), arguments.get(1).span());
         }
-        return index.<HirStatement>map(valueAt -> new HirCollectionSet(target, valueAt, value))
-            .orElseGet(() -> new HirExpressionStatement(new HirConstant("0", ValueType.ERROR)));
+        Expression sourceIndex = arguments.get(0);
+        if (sourceIndex instanceof IntegerLiteral) {
+            return staticAggregateIndex(sourceIndex, symbol.staticAggregateSize())
+                .<HirStatement>map(valueAt -> new HirCollectionSet(target, valueAt, value))
+                .orElseGet(() -> new HirExpressionStatement(new HirConstant("0", ValueType.ERROR)));
+        }
+        HirExpression index = analyzeExpression(sourceIndex);
+        if (index.type() != ValueType.INT) {
+            error("MPL3601", "Array.set(...) 下标必须是 Int", sourceIndex.span());
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (!supportsDynamicArrayElement(type.elementType())) {
+            error("MPL3601", "动态 Array 下标当前只支持 Int、Float 或 Bool 元素", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (!hasArrayBoundsProof(target, sourceIndex)) {
+            error("MPL3601", "无法证明动态 Array 下标在范围内；请使用从 0 到 array.size 的标准计数 for 循环", sourceIndex.span());
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        return new HirDynamicCollectionSet(target, index, value);
     }
 
     private HirStatement analyzePrintCall(String linkName, List<Expression> sourceArguments) {
@@ -1067,6 +1129,9 @@ public final class SemanticAnalyzer {
         recordGlobalAccess(assignment.target().name(), target, assignment.target().span());
         if (!target.mutable()) {
             error("MPL3104", "不能给 val 重新赋值：" + assignment.target().name(), assignment.target().span());
+        }
+        if (arrayBoundsProofs.stream().anyMatch(proof -> proof.index().equals(assignment.target().name()))) {
+            error("MPL3601", "不能在已证明边界的 for 循环体内修改下标变量：" + assignment.target().name(), assignment.span());
         }
         if ("=".equals(assignment.operator())) {
             if (isAggregate(target.type())) {
@@ -1488,22 +1553,45 @@ public final class SemanticAnalyzer {
             error("MPL3601", "聚合下标必须是 Int", sourceIndex.span());
             return new HirConstant("0", ValueType.ERROR);
         }
-        if (!(index instanceof HirConstant constant)) {
-            error("MPL3601", "当前阶段只支持可在编译期确定的聚合下标；动态下标需要 Memory runtime", span);
-            return new HirConstant("0", ValueType.ERROR);
-        }
-        Integer size = aggregateSize(sourceTarget, target.type());
-        Optional<Integer> staticIndex = staticAggregateIndex(sourceIndex, size);
-        if (staticIndex.isEmpty()) return new HirConstant("0", ValueType.ERROR);
-        int position = staticIndex.orElseThrow();
-        MplType elementType = null;
-        if (target.type() instanceof TupleType tuple) elementType = tuple.elementTypes().get(position);
-        if (target.type() instanceof CollectionType collection) elementType = collection.elementType();
-        if (elementType == null) {
+        if (!(target.type() instanceof TupleType) && !(target.type() instanceof CollectionType)) {
             error("MPL3601", "下标访问仅支持元组、数组、List 或 Set", sourceTarget.span());
             return new HirConstant("0", ValueType.ERROR);
         }
-        return new HirIndexAccess(target, index, elementType);
+        if (sourceIndex instanceof IntegerLiteral) {
+            Integer size = aggregateSize(sourceTarget, target.type());
+            Optional<Integer> staticIndex = staticAggregateIndex(sourceIndex, size);
+            if (staticIndex.isEmpty()) return new HirConstant("0", ValueType.ERROR);
+            MplType elementType = target.type() instanceof TupleType tuple
+                ? tuple.elementTypes().get(staticIndex.orElseThrow())
+                : ((CollectionType) target.type()).elementType();
+            return new HirIndexAccess(target, index, elementType);
+        }
+        if (!(target.type() instanceof CollectionType collection)
+            || collection.kind() != CollectionType.Kind.ARRAY
+            || !(sourceTarget instanceof Identifier array)
+            || !(target instanceof HirVariable)) {
+            error("MPL3601", "动态下标当前只支持具名 Array", span);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        MplType elementType = collection.elementType();
+        if (!supportsDynamicArrayElement(elementType)) {
+            error("MPL3601", "动态 Array 下标当前只支持 Int、Float 或 Bool 元素", span);
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        if (!hasArrayBoundsProof(array.name(), sourceIndex)) {
+            error("MPL3601", "无法证明动态 Array 下标在范围内；请使用从 0 到 array.size 的标准计数 for 循环", sourceIndex.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
+        return new HirDynamicIndexAccess(target, index, elementType);
+    }
+
+    private boolean supportsDynamicArrayElement(MplType type) {
+        return type == ValueType.INT || type == ValueType.FLOAT || type == ValueType.BOOL;
+    }
+
+    private boolean hasArrayBoundsProof(String array, Expression sourceIndex) {
+        if (!(sourceIndex instanceof Identifier index)) return false;
+        return arrayBoundsProofs.stream().anyMatch(proof -> proof.array().equals(array) && proof.index().equals(index.name()));
     }
 
     private boolean isAggregate(MplType type) {
@@ -1653,6 +1741,9 @@ public final class SemanticAnalyzer {
         private TopLevelCall {
             initializedGlobals = Set.copyOf(initializedGlobals);
         }
+    }
+
+    private record ArrayBoundsProof(String index, String array) {
     }
 
     private record UnitQuery(String typeName, TargetProfile.UnitType type, List<Expression> filters, int managedLimit) {

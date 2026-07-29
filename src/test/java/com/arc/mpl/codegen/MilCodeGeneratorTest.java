@@ -4,6 +4,8 @@ import com.arc.mpl.hir.HirAssignment;
 import com.arc.mpl.hir.HirBinary;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpressionStatement;
+import com.arc.mpl.hir.HirDynamicCollectionSet;
+import com.arc.mpl.hir.HirDynamicIndexAccess;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirPrintStatement;
@@ -14,6 +16,7 @@ import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
+import com.arc.mpl.hir.CollectionType;
 import com.arc.mpl.hir.ValueType;
 import org.junit.jupiter.api.Test;
 
@@ -110,5 +113,23 @@ class MilCodeGeneratorTest {
                 new HirMemberAccess(unit, "flag", ValueType.FLOAT))))));
 
         assertEquals("Unit.flag 是编译器私有运行时属性，不能出现在 MIL", exception.getMessage());
+    }
+
+    @Test
+    void preservesDynamicArraySyntaxForTheMilMemoryLoweringStage() {
+        CollectionType arrayType = new CollectionType(CollectionType.Kind.ARRAY, ValueType.INT);
+        HirVariable values = new HirVariable("values", arrayType);
+        HirVariable index = new HirVariable("index", ValueType.INT);
+
+        String mil = generator.generate(new HirProgram(List.of(
+            new HirVariableDeclaration("current", ValueType.INT, true,
+                new HirDynamicIndexAccess(values, index, ValueType.INT)),
+            new HirDynamicCollectionSet("values", index, new HirConstant("7", ValueType.INT))
+        )));
+
+        assertTrue(mil.contains("var current: Int = values[index];"));
+        assertTrue(mil.contains("values.set(index, 7);"));
+        assertFalse(mil.contains("read "));
+        assertFalse(mil.contains("write "));
     }
 }

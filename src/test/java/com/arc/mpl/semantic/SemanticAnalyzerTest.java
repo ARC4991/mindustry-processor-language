@@ -3,6 +3,9 @@ package com.arc.mpl.semantic;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.CollectionType;
+import com.arc.mpl.hir.HirDynamicCollectionSet;
+import com.arc.mpl.hir.HirDynamicIndexAccess;
+import com.arc.mpl.hir.HirFor;
 import com.arc.mpl.syntax.MplSyntaxParser;
 import org.junit.jupiter.api.Test;
 
@@ -238,6 +241,62 @@ class SemanticAnalyzerTest {
 
         assertTrue(result.program().isEmpty());
         assertEquals(2, result.diagnostics().stream().filter(diagnostic -> diagnostic.code().equals("MPL3601")).count());
+    }
+
+    @Test
+    void provesDynamicArrayReadsAndWritesInAStandardCountingLoop() {
+        Program program = parser.parse("""
+            var values: Int[] = [1, 2, 3];
+            for (var i: Int = 0; i < values.size; i += 1) {
+                var current: Int = values[i];
+                values.set(i, current + 1);
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty());
+        HirFor loop = assertInstanceOf(HirFor.class, result.program().orElseThrow().statements().get(1));
+        HirVariableDeclaration current = assertInstanceOf(HirVariableDeclaration.class, loop.body().get(0));
+        assertInstanceOf(HirDynamicIndexAccess.class, current.initializer());
+        assertInstanceOf(HirDynamicCollectionSet.class, loop.body().get(1));
+    }
+
+    @Test
+    void rejectsDynamicArrayIndexesWithoutTheExactBoundsProof() {
+        Program program = parser.parse("""
+            var values: Int[] = [1, 2, 3];
+            var index: Int = 1;
+            var outside: Int = values[index];
+            for (var i: Int = 0; i <= values.size; i += 1) {
+                values.set(i, 0);
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertEquals(2, result.diagnostics().stream()
+            .filter(diagnostic -> diagnostic.code().equals("MPL3601")
+                && diagnostic.message().contains("无法证明动态 Array 下标"))
+            .count());
+    }
+
+    @Test
+    void rejectsMutatingAProvenLoopIndexInsideItsBody() {
+        Program program = parser.parse("""
+            var values: Int[] = [1, 2, 3];
+            for (var i: Int = 0; i < values.size; i += 1) {
+                i = 2;
+                var current: Int = values[i];
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3601")
+            && diagnostic.message().contains("修改下标变量")));
     }
 
     @Test

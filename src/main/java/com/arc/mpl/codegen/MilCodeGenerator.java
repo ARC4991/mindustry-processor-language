@@ -15,6 +15,8 @@ import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirDraw;
 import com.arc.mpl.hir.HirDrawFlush;
+import com.arc.mpl.hir.HirDynamicCollectionSet;
+import com.arc.mpl.hir.HirDynamicIndexAccess;
 import com.arc.mpl.hir.HirHardwareLink;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirExpression;
@@ -188,6 +190,11 @@ public final class MilCodeGenerator {
                 + expression(update.value()) + ");");
             return;
         }
+        if (statement instanceof HirDynamicCollectionSet update) {
+            writer.line(identifier(update.target(), "Array") + ".set(" + expression(update.index()) + ", "
+                + expression(update.value()) + ");");
+            return;
+        }
         if (statement instanceof HirBreak) {
             writer.line("break;");
             return;
@@ -285,6 +292,9 @@ public final class MilCodeGenerator {
             return aggregateLiteral(factory + "(", ")", collection.elements());
         }
         if (value instanceof HirIndexAccess access) return expression(access.target()) + "[" + expression(access.index()) + "]";
+        if (value instanceof HirDynamicIndexAccess access) {
+            return expression(access.target()) + "[" + expression(access.index()) + "]";
+        }
         if (value instanceof HirCollectionContains contains) {
             return expression(contains.target()) + ".contains(" + expression(contains.candidate()) + ")";
         }
