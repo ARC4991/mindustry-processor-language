@@ -24,6 +24,26 @@ class RuntimePlannerTest {
     }
 
     @Test
+    void doesNotUpgradeProcessorMerelyBecauseTheProgramSpansMultipleTicks() {
+        String program = String.join("\n", java.util.Collections.nCopies(100, "set value 1")) + "\n";
+
+        RuntimePlan plan = new RuntimePlanner().plan(program, profile, RuntimePreferences.defaults());
+
+        assertEquals(100, plan.instructions());
+        assertEquals(TargetProfile.ProcessorKind.MICRO, plan.processor());
+    }
+
+    @Test
+    void rejectsProgramsBeyondTheTargetInstructionLimit() {
+        String program = String.join("\n", java.util.Collections.nCopies(profile.maxInstructions() + 1, "set value 1")) + "\n";
+
+        IllegalArgumentException error = org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+            () -> new RuntimePlanner().plan(program, profile, RuntimePreferences.defaults()));
+
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("超过 target v146"));
+    }
+
+    @Test
     void plansMemoryFromTheSameUserConstraints() {
         RuntimePreferences preferences = new RuntimePreferences(RuntimePreferences.Goal.MIN_RESOURCES,
             RuntimePreferences.defaults().processors(), java.util.Map.of(RuntimePreferences.MemoryKind.CELL, 2));

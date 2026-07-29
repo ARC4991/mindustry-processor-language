@@ -7,7 +7,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Selects the smallest processor that can finish the current generated program in one IPT burst. */
+/** Selects a permitted processor by resource/performance preference, never confusing IPT with program capacity. */
 @Slf4j
 public final class RuntimePlanner {
     public RuntimePlan plan(String mlog, TargetProfile profile) {
@@ -34,6 +34,10 @@ public final class RuntimePlanner {
             for (String token : tokens) {
                 if (token.startsWith("mpl_") || token.startsWith("__mpl_")) variables.add(token);
             }
+        }
+        if (instructions > profile.maxInstructions()) {
+            throw new IllegalArgumentException("生成程序含 " + instructions + " 条指令，超过 target " + profile.id()
+                + " 的 " + profile.maxInstructions() + " 条上限");
         }
         TargetProfile.ProcessorKind processor = chooseProcessor(instructions, profile, preferences);
         MemoryLayout memory = memoryLayout(physicalSlots, profile, preferences);
@@ -63,9 +67,9 @@ public final class RuntimePlanner {
         if (preferences.goal() == RuntimePreferences.Goal.MAX_PERFORMANCE) {
             return candidates.stream().max(java.util.Comparator.comparingInt(profile::instructionsPerTick)).orElseThrow();
         }
-        return candidates.stream().filter(kind -> instructions <= profile.instructionsPerTick(kind))
-            .min(java.util.Comparator.comparingInt(profile::instructionsPerTick))
-            .orElseGet(() -> candidates.stream().max(java.util.Comparator.comparingInt(profile::instructionsPerTick)).orElseThrow());
+        // The game resumes the same instruction stream on later ticks. IPT is
+        // throughput, while maxInstructions is the parser's program-size limit.
+        return candidates.stream().min(java.util.Comparator.comparingInt(profile::instructionsPerTick)).orElseThrow();
     }
 
     private record MemoryLayout(int cells, int banks) { }
