@@ -1,83 +1,39 @@
 package com.arc.mpl.profile;
 
+import java.io.InputStream;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
-/** Built-in profiles. Profile data will later be generated from audited game sources. */
+/** Built-in profiles loaded from audited, versioned JSON resources. */
 public final class KnownProfiles {
-    private static final TargetProfile V146 = new FixedProfile(
-        "v146",
-        Set.of("baseline-logic", "unit-bind-cycle"));
-    private static final TargetProfile V159_7 = new FixedProfile(
-        "v159.7",
-        Set.of("baseline-logic", "unit-bind-cycle", "select", "printchar", "format", "unpackcolor", "draw-print",
-            "logic-build-variables"));
+    private static final Map<String, TargetProfile> PROFILES = loadBuiltins();
 
     private KnownProfiles() {
     }
 
     public static Optional<TargetProfile> find(String id) {
-        return switch (id.toLowerCase(Locale.ROOT)) {
-            case "v146" -> Optional.of(V146);
-            case "v159.7" -> Optional.of(V159_7);
-            default -> Optional.empty();
-        };
+        if (id == null) return Optional.empty();
+        return Optional.ofNullable(PROFILES.get(id.toLowerCase(Locale.ROOT)));
     }
 
-    private record FixedProfile(String id, Set<String> capabilities) implements TargetProfile {
-        @Override
-        public int memoryCellCapacity() {
-            return 64;
-        }
+    private static Map<String, TargetProfile> loadBuiltins() {
+        Map<String, TargetProfile> profiles = new LinkedHashMap<>();
+        loadBuiltin(profiles, "v146");
+        loadBuiltin(profiles, "v159.7");
+        return Map.copyOf(profiles);
+    }
 
-        @Override
-        public int memoryBankCapacity() {
-            return 512;
+    private static void loadBuiltin(Map<String, TargetProfile> profiles, String id) {
+        String resource = "/com/arc/mpl/profile/" + id + ".json";
+        InputStream source = KnownProfiles.class.getResourceAsStream(resource);
+        TargetProfile profile = TargetProfileLoader.load(source);
+        if (!profile.id().equalsIgnoreCase(id)) {
+            throw new IllegalStateException("目标配置资源 ID 不匹配：" + resource);
         }
-
-        @Override
-        public int instructionsPerTick(ProcessorKind processor) {
-            return switch (processor) {
-                case MICRO -> 2;
-                case LOGIC -> 8;
-                case HYPER -> 25;
-            };
-        }
-
-        @Override
-        public int maxInstructions() {
-            return 1_000;
-        }
-
-        @Override
-        public int maxJumpLabels() {
-            return 500;
-        }
-
-        @Override
-        public int maxTokensPerStatement() {
-            return 16;
-        }
-
-        @Override
-        public int maxGraphicsBufferCommands() {
-            return 256;
-        }
-
-        @Override
-        public int displayFlushCommandLimit() {
-            return 1_024;
-        }
-
-        @Override
-        public int maxMessageUtf16CodeUnits() {
-            return 400;
-        }
-
-        @Override
-        public int maxDrawCoordinateMagnitude() {
-            return 1_023;
+        if (profiles.put(id.toLowerCase(Locale.ROOT), profile) != null) {
+            throw new IllegalStateException("重复的内置 target profile：" + id);
         }
     }
 }

@@ -42,11 +42,9 @@ class MplCompilerTest {
             result.mlog().orElseThrow());
         assertEquals("""
             // 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。
-            // @logic.* 由所选 target profile 展开为游戏 mlog 指令。
-            @logic.op(add, __mpl_tmp0, 1, 2);
-            @logic.set(mpl_total, __mpl_tmp0);
-            @logic.op(add, mpl_total, mpl_total, 3);
-            @logic.stop();
+            // 普通结构保留为 MIL；@unit.* 与 @io.* 是由 target profile 展开的受限宏。
+            var total: Int = (1 + 2);
+            total += 3;
             """, result.mil().orElseThrow());
     }
 
@@ -61,6 +59,21 @@ class MplCompilerTest {
         assertTrue(result.succeeded());
         assertEquals("set mpl_frog 21\nprint \"frog=\"\nop mul __mpl_tmp0 mpl_frog 2\nprint __mpl_tmp0\nprintflush message1\nstop\n",
             result.mlog().orElseThrow());
+    }
+
+    @Test
+    void rejectsHardwareLinkTypesOutsideTheSelectedProfile(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Foreign: UnknownBlock = link(\"unknown1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), "var value: Int = 1;");
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        assertTrue(result.mlog().isEmpty());
+        assertEquals("MPL1201", result.diagnostics().get(0).code());
+        assertEquals("compiler.hardware.type.unsupported", result.diagnostics().get(0).messageKey().orElseThrow());
     }
 
     @Test
@@ -88,7 +101,8 @@ class MplCompilerTest {
         assertTrue(release.mlog().orElseThrow().contains("_0:"));
         assertFalse(release.mlog().orElseThrow().contains("mpl_while_start_0"));
         assertTrue(debug.mlog().orElseThrow().contains("mpl_while_start_0:"));
-        assertTrue(debug.mil().orElseThrow().contains("@logic.label(mpl_while_start_0);"));
+        assertEquals(release.mil(), debug.mil());
+        assertTrue(debug.mil().orElseThrow().contains("while (true) {"));
     }
 
     @Test

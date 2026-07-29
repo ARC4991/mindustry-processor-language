@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "id": "v146",
+  "game": { "version": "146", "source": "Mindustry v146 源码审查" },
+  "capabilities": ["baseline-logic", "unit-bind-cycle"],
+  "limits": {
+    "maxInstructions": 1000,
+    "maxJumpLabels": 500,
+    "maxTokensPerStatement": 16,
+    "maxGraphicsBufferCommands": 256,
+    "displayFlushCommandLimit": 1024,
+    "maxMessageUtf16CodeUnits": 400,
+    "maxDrawCoordinateMagnitude": 1023
+  },
+  "processors": {
+    "micro": { "ipt": 2, "linkRange": 10, "permissions": ["normal"] },
+    "logic": { "ipt": 8, "linkRange": 22, "permissions": ["normal"] },
+    "hyper": { "ipt": 25, "linkRange": 42, "permissions": ["normal"] }
+  },
+  "hardware": {
+    "memoryCell": { "capacity": 64 },
+    "memoryBank": { "capacity": 512 }
+  },
+  "instructions": [
+    { "opcode": "set", "operands": ["output", "value"], "permissions": ["normal"] },
+    { "opcode": "op", "operands": ["operator", "output", "left", "right"], "permissions": ["normal"] },
+    { "opcode": "jump", "operands": ["address", "condition", "left", "right"], "permissions": ["normal"] },
+    { "opcode": "ubind", "operands": ["unitType"], "permissions": ["normal", "logicUnitControl"] },
+    { "opcode": "ucontrol", "operands": ["action", "arguments"], "permissions": ["normal", "logicUnitControl"] },
+    { "opcode": "sensor", "operands": ["output", "target", "property"], "permissions": ["normal"] },
+    { "opcode": "print", "operands": ["value"], "permissions": ["normal"] },
+    { "opcode": "printflush", "operands": ["message"], "permissions": ["normal"] }
+  ],
+  "contents": {
+    "units": [
+      {
+        "mplType": "Dagger",
+        "mlogName": "dagger",
+        "logicControllable": true,
+        "fields": [
+          { "name": "totalItems", "type": "Int" },
+          { "name": "itemCapacity", "type": "Int" },
+          { "name": "rotation", "type": "Float" },
+          { "name": "health", "type": "Float" },
+          { "name": "shield", "type": "Float" },
+          { "name": "maxHealth", "type": "Float" },
+          { "name": "ammo", "type": "Float" },
+          { "name": "ammoCapacity", "type": "Float" },
+          { "name": "x", "type": "Float" },
+          { "name": "y", "type": "Float" },
+          { "name": "dead", "type": "Bool" },
+          { "name": "alive", "type": "Bool" },
+          { "name": "shooting", "type": "Bool" },
+          { "name": "boosting", "type": "Bool" },
+          { "name": "range", "type": "Float" },
+          { "name": "shootX", "type": "Float" },
+          { "name": "shootY", "type": "Float" },
+          { "name": "mining", "type": "Bool" },
+          { "name": "mineX", "type": "Int" },
+          { "name": "mineY", "type": "Int" },
+          { "name": "speed", "type": "Float" },
+          { "name": "payloadCount", "type": "Int" },
+          { "name": "size", "type": "Float" }
+        ],
+        "actions": [
+          { "name": "move", "parameters": ["Float", "Float"], "target": "ucontrol move" }
+        ]
+      },
+      {
+        "mplType": "Alpha",
+        "mlogName": "alpha",
+        "logicControllable": true,
+        "fields": [
+          { "name": "totalItems", "type": "Int" },
+          { "name": "itemCapacity", "type": "Int" },
+          { "name": "rotation", "type": "Float" },
+          { "name": "health", "type": "Float" },
+          { "name": "shield", "type": "Float" },
+          { "name": "maxHealth", "type": "Float" },
+          { "name": "ammo", "type": "Float" },
+          { "name": "ammoCapacity", "type": "Float" },
+          { "name": "x", "type": "Float" },
+          { "name": "y", "type": "Float" },
+          { "name": "dead", "type": "Bool" },
+          { "name": "alive", "type": "Bool" },
+          { "name": "shooting", "type": "Bool" },
+          { "name": "boosting", "type": "Bool" },
+          { "name": "range", "type": "Float" },
+          { "name": "shootX", "type": "Float" },
+          { "name": "shootY", "type": "Float" },
+          { "name": "mining", "type": "Bool" },
+          { "name": "mineX", "type": "Int" },
+          { "name": "mineY", "type": "Int" },
+          { "name": "speed", "type": "Float" },
+          { "name": "payloadCount", "type": "Int" },
+          { "name": "size", "type": "Float" }
+        ],
+        "actions": [
+          { "name": "move", "parameters": ["Float", "Float"], "target": "ucontrol move" }
+        ]
+      }
+    ],
+    "buildings": [
+      { "mplType": "Duo", "mlogName": "duo", "fields": [
+        { "name": "health", "type": "Float", "target": "@health" },
+        { "name": "enabled", "type": "Bool", "target": "@enabled" },
+        { "name": "x", "type": "Float", "target": "@x" },
+        { "name": "y", "type": "Float", "target": "@y" }
+      ], "actions": [ { "name": "shoot", "parameters": ["Float", "Float", "Bool"], "target": "control shoot" }, { "name": "setEnabled", "parameters": ["Bool"], "target": "control enabled" } ] },
+      { "mplType": "Message", "mlogName": "message", "fields": [], "actions": [] },
+      { "mplType": "Display", "mlogName": "logic-display", "fields": [], "actions": [] },
+      { "mplType": "MemoryCell", "mlogName": "memory-cell", "fields": [], "actions": [] },
+      { "mplType": "MemoryBank", "mlogName": "memory-bank", "fields": [], "actions": [] },
+      { "mplType": "Switch", "mlogName": "switch", "fields": [ { "name": "enabled", "type": "Bool", "target": "@enabled" } ], "actions": [ { "name": "setEnabled", "parameters": ["Bool"], "target": "control enabled" } ] }
+    ]
+  },
+  "macros": [
+    { "name": "@unit.each", "parameters": [ { "name": "type", "type": "GameUnitType" }, { "name": "filters", "type": "UnitFilter[]" } ], "effects": ["readsWorld", "bindsUnit"], "maxCost": { "instructions": 24, "virtualSlots": 4, "physicalSlots": 0 }, "lowering": ["ubind", "sensor", "jump"] },
+    { "name": "@unit.move", "parameters": [ { "name": "x", "type": "Float" }, { "name": "y", "type": "Float" } ], "effects": ["controlsUnit"], "maxCost": { "instructions": 1, "virtualSlots": 0, "physicalSlots": 0 }, "lowering": ["ucontrol"] },
+    { "name": "@io.print", "parameters": [ { "name": "message", "type": "GameLink<Message>" }, { "name": "values", "type": "PrintValue[]" } ], "effects": ["writesMessage", "flushesMessage"], "maxCost": { "instructions": 2, "virtualSlots": 0, "physicalSlots": 0 }, "lowering": ["print", "printflush"] }
+  ]
+}

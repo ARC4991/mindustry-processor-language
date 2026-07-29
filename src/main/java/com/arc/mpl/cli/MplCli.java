@@ -7,6 +7,13 @@ import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.DiagnosticLanguage;
 import com.arc.mpl.diagnostic.DiagnosticMessages;
 import com.arc.mpl.project.ProjectInitializer;
+import com.arc.mpl.project.HardwareContract;
+import com.arc.mpl.project.HardwareLoader;
+import com.arc.mpl.project.MindustrySchematicWriter;
+import com.arc.mpl.project.BuildArtifactWriter;
+import com.arc.mpl.project.RuntimePlan;
+import com.arc.mpl.project.RuntimePlanner;
+import com.arc.mpl.project.RuntimePreferencesLoader;
 
 import java.nio.file.Path;
 import java.nio.file.Files;
@@ -77,10 +84,14 @@ public final class MplCli {
                 return;
             }
             try {
-                Path mlogOutput = Path.of(build.mlogOutput());
-                Path milOutput = milSiblingOf(mlogOutput);
-                Files.writeString(milOutput, result.mil().orElseThrow());
-                Files.writeString(mlogOutput, result.mlog().orElseThrow());
+                Path outputDirectory = Path.of(build.outputDirectory());
+                HardwareContract hardware = new HardwareLoader().load(Path.of(build.projectDirectory()));
+                RuntimePlan plan = new RuntimePlanner().plan(result.mlog().orElseThrow(), result.profile().orElseThrow(),
+                    new RuntimePreferencesLoader().load(Path.of(build.projectDirectory())));
+                new BuildArtifactWriter().write(outputDirectory, result.mlog().orElseThrow(), result.mil().orElseThrow(),
+                    result.profile().orElseThrow(), hardware, plan);
+                Path mlogOutput = outputDirectory.resolve("Main.mlog");
+                Path milOutput = outputDirectory.resolve("Main.mil");
                 System.out.println(message(language, "cli.mil.written", milOutput));
                 System.out.println(message(language, "cli.mlog.written", mlogOutput));
             } catch (IOException | IllegalArgumentException exception) {
@@ -143,7 +154,7 @@ public final class MplCli {
         System.err.printf("%s %s: %s%n", diagnostic.severity(), diagnostic.code(), diagnostic.render(language));
     }
 
-    private record BuildArguments(String target, boolean debug, String projectDirectory, String mlogOutput) {
+    private record BuildArguments(String target, boolean debug, String projectDirectory, String outputDirectory) {
     }
 
     /** Removes the global language switch before command-specific parsing. */

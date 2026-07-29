@@ -42,6 +42,8 @@ import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.ValueType;
+import com.arc.mpl.profile.KnownProfiles;
+import com.arc.mpl.profile.TargetProfile;
 
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -54,48 +56,22 @@ import java.util.Optional;
 
 /** Name resolution and strict type checks for the currently implemented MPL subset. */
 public final class SemanticAnalyzer {
-    /**
-     * This intentionally small table is the v146-compatible front-end seed.
-     * It belongs in a generated profile description once profile content data is loaded.
-     */
-    private static final Map<String, UnitType> UNIT_TYPES = Map.of(
-        "Alpha", new UnitType("alpha"),
-        "Dagger", new UnitType("dagger")
-    );
-
-    /** Read-only Unit fields that the first UnitSet vertical slice permits in MPL. */
-    private static final Map<String, ValueType> UNIT_PROPERTIES = Map.ofEntries(
-        Map.entry("totalItems", ValueType.INT),
-        Map.entry("itemCapacity", ValueType.INT),
-        Map.entry("rotation", ValueType.FLOAT),
-        Map.entry("health", ValueType.FLOAT),
-        Map.entry("shield", ValueType.FLOAT),
-        Map.entry("maxHealth", ValueType.FLOAT),
-        Map.entry("ammo", ValueType.FLOAT),
-        Map.entry("ammoCapacity", ValueType.FLOAT),
-        Map.entry("x", ValueType.FLOAT),
-        Map.entry("y", ValueType.FLOAT),
-        Map.entry("dead", ValueType.BOOL),
-        Map.entry("alive", ValueType.BOOL),
-        Map.entry("shooting", ValueType.BOOL),
-        Map.entry("boosting", ValueType.BOOL),
-        Map.entry("range", ValueType.FLOAT),
-        Map.entry("shootX", ValueType.FLOAT),
-        Map.entry("shootY", ValueType.FLOAT),
-        Map.entry("mining", ValueType.BOOL),
-        Map.entry("mineX", ValueType.INT),
-        Map.entry("mineY", ValueType.INT),
-        Map.entry("speed", ValueType.FLOAT),
-        Map.entry("payloadCount", ValueType.INT),
-        Map.entry("size", ValueType.FLOAT)
-    );
-
+    private final TargetProfile profile;
     private final Deque<Map<String, Symbol>> scopes = new ArrayDeque<>();
     private final List<Diagnostic> diagnostics = new ArrayList<>();
     private Path file;
     private Map<String, String> messages = Map.of();
     private int unitIterationDepth;
     private String activeUnitBinding;
+
+    /** Uses the v146 baseline when semantic analysis is invoked outside a compiler request. */
+    public SemanticAnalyzer() {
+        this(KnownProfiles.find("v146").orElseThrow());
+    }
+
+    public SemanticAnalyzer(TargetProfile profile) {
+        this.profile = java.util.Objects.requireNonNull(profile, "profile");
+    }
 
     public SemanticResult analyze(Program program, Path sourceFile) {
         return analyze(program, sourceFile, Map.of());
@@ -174,7 +150,7 @@ public final class SemanticAnalyzer {
                 filters.add(analyzeUnitFilter(filter, loop.name()));
             }
             List<HirStatement> body = analyzeBlock(loop.body());
-            UnitType type = query.orElseThrow().type();
+            TargetProfile.UnitType type = query.orElseThrow().type();
             return new HirUnitIteration(
                 loop.name(),
                 query.orElseThrow().typeName(),
@@ -215,8 +191,8 @@ public final class SemanticAnalyzer {
         }
 
         String typeName = member.member().substring("getAll".length());
-        UnitType type = UNIT_TYPES.get(typeName);
-        if (type == null) {
+        Optional<TargetProfile.UnitType> type = profile.unitType(typeName);
+        if (type.isEmpty() || !type.orElseThrow().logicControllable()) {
             error("MPL3302", "当前 target 不支持 Unit.getAll" + typeName + "()", member.span());
             return Optional.empty();
         }
@@ -258,7 +234,7 @@ public final class SemanticAnalyzer {
             managedLimit = (int) literal.value();
         }
 
-        return Optional.of(new UnitQuery(typeName, type, List.copyOf(filters), managedLimit));
+        return Optional.of(new UnitQuery(typeName, type.orElseThrow(), List.copyOf(filters), managedLimit));
     }
 
     private HirExpression analyzeUnitFilter(Expression source, String bindingName) {
@@ -357,17 +333,22 @@ public final class SemanticAnalyzer {
     }
 
     private HirStatement analyzeUnitControl(String sourceBinding, String command, List<Expression> sourceArguments, SourceSpan span) {
-        if (!"move".equals(command)) {
-            error("MPL3305", "当前阶段 Unit 仅支持 move(x, y)", span);
+        Optional<TargetProfile.UnitAction> action = profile.unitAction(command);
+        if (action.isEmpty()) {
+            error("MPL3305", "当前 target 的 Unit 不支持控制动作：" + command, span);
             return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
         }
-        if (sourceArguments.size() != 2) {
-            error("MPL3305", "Unit.move(x, y) 需要两个数值参数", span);
+        if (sourceArguments.size() != action.orElseThrow().parameterTypes().size()) {
+            error("MPL3305", "Unit." + command + "(...) 参数数量不匹配", span);
         }
         List<HirExpression> arguments = new ArrayList<>();
-        for (Expression argument : sourceArguments) {
+        for (int index = 0; index < sourceArguments.size(); index++) {
+            Expression argument = sourceArguments.get(index);
             HirExpression value = analyzeExpression(argument);
-            requireNumeric(value.type(), argument.span(), "Unit.move 参数");
+            if (index < action.orElseThrow().parameterTypes().size()
+                && !action.orElseThrow().parameterTypes().get(index).canAssignFrom(value.type())) {
+                error("MPL3305", "Unit." + command + " 参数类型不匹配", argument.span());
+            }
             arguments.add(value);
         }
         return new HirUnitControl(activeUnitBinding == null ? sourceBinding : activeUnitBinding, command, arguments);
@@ -380,7 +361,7 @@ public final class SemanticAnalyzer {
             error("MPL3103", "不能将 " + display(initializer.type()) + " 赋给 " + display(type), declaration.initializer().span());
         }
         declare(declaration.name(), new Symbol(type, declaration.mutable()), declaration.span());
-        return new HirVariableDeclaration(declaration.name(), type, initializer);
+        return new HirVariableDeclaration(declaration.name(), type, declaration.mutable(), initializer);
     }
 
     private HirExpression analyzeExpression(Expression expression) {
@@ -467,12 +448,12 @@ public final class SemanticAnalyzer {
                 error("MPL3304", "Unit.flag 是编译器私有运行时属性，MPL 不允许访问", member.span());
                 return new HirMemberAccess(target, member.member(), ValueType.ERROR);
             }
-            ValueType type = UNIT_PROPERTIES.get(member.member());
-            if (type == null) {
+            Optional<ValueType> type = profile.unitPropertyType(member.member());
+            if (type.isEmpty()) {
                 error("MPL3304", "当前 target 的 Unit 不支持只读属性：" + member.member(), member.span());
                 return new HirMemberAccess(target, member.member(), ValueType.ERROR);
             }
-            return new HirMemberAccess(target, member.member(), type);
+            return new HirMemberAccess(target, member.member(), type.orElseThrow());
         }
         error("MPL3201", "当前阶段不支持该成员访问", member.span());
         return new HirConstant("0", ValueType.ERROR);
@@ -628,9 +609,6 @@ public final class SemanticAnalyzer {
     private record Symbol(ValueType type, boolean mutable) {
     }
 
-    private record UnitType(String mlogName) {
-    }
-
-    private record UnitQuery(String typeName, UnitType type, List<Expression> filters, int managedLimit) {
+    private record UnitQuery(String typeName, TargetProfile.UnitType type, List<Expression> filters, int managedLimit) {
     }
 }

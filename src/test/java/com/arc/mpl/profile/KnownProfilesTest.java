@@ -25,6 +25,13 @@ class KnownProfilesTest {
         assertEquals(1_023, profile.maxDrawCoordinateMagnitude());
         assertTrue(profile.capabilities().contains("baseline-logic"));
         assertFalse(profile.capabilities().contains("select"));
+        assertEquals("dagger", profile.unitType("Dagger").orElseThrow().mlogName());
+        assertEquals(com.arc.mpl.hir.ValueType.FLOAT, profile.unitPropertyType("health").orElseThrow());
+        assertEquals(java.util.List.of(com.arc.mpl.hir.ValueType.FLOAT, com.arc.mpl.hir.ValueType.FLOAT),
+            profile.unitAction("move").orElseThrow().parameterTypes());
+        assertEquals("duo", profile.buildingType("Duo").orElseThrow().mlogName());
+        assertTrue(profile.instructions().stream().anyMatch(instruction -> instruction.opcode().equals("ubind")));
+        assertTrue(profile.macros().stream().anyMatch(macro -> macro.name().equals("@unit.each")));
     }
 
     @Test
@@ -33,5 +40,11 @@ class KnownProfilesTest {
 
         assertTrue(profile.capabilities().containsAll(
             java.util.Set.of("select", "printchar", "format", "unpackcolor", "draw-print", "logic-build-variables")));
+    }
+
+    @Test
+    void rejectsUnknownOrMissingProfile() {
+        assertTrue(KnownProfiles.find("v999").isEmpty());
+        assertTrue(KnownProfiles.find(null).isEmpty());
     }
 }
