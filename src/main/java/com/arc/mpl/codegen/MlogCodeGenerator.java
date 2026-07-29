@@ -63,6 +63,7 @@ public final class MlogCodeGenerator {
     private Map<String, Integer> functionIndexes;
     private Set<String> globalVariables;
     private Map<String, HirHardwareLink> activeBuildingBindings;
+    private String activeDrawTarget;
     private String currentFunction;
 
     /** Creates a compact release emitter, suitable for deployment to a processor. */
@@ -89,6 +90,7 @@ public final class MlogCodeGenerator {
         }
         globalVariables = new HashSet<>();
         activeBuildingBindings = new HashMap<>();
+        activeDrawTarget = null;
         for (HirStatement statement : program.statements()) {
             if (statement instanceof HirVariableDeclaration declaration) globalVariables.add(declaration.name());
         }
@@ -99,6 +101,7 @@ public final class MlogCodeGenerator {
         for (HirStatement statement : program.statements()) {
             emitStatement(statement);
         }
+        flushPendingDraw();
         // MPL 程序默认只执行一次；持续逻辑必须由用户显式写 while。
         output.stop();
         for (HirFunction function : program.functions()) emitFunction(function);
@@ -132,7 +135,7 @@ public final class MlogCodeGenerator {
             return;
         }
         if (statement instanceof HirDrawFlush flush) {
-            output.drawFlush(flush.displayName());
+            flushDrawBuffer(flush.displayName());
             return;
         }
         if (statement instanceof HirBlock block) {
@@ -505,6 +508,8 @@ public final class MlogCodeGenerator {
     }
 
     private void emitDraw(HirDraw draw) {
+        if (activeDrawTarget != null && !activeDrawTarget.equals(draw.displayName())) output.drawFlush(activeDrawTarget);
+        activeDrawTarget = draw.displayName();
         List<String> values = draw.arguments().stream().map(this::emitExpression).toList();
         List<String> operands = switch (draw.command()) {
             case CLEAR -> List.of(values.get(0), values.get(1), values.get(2), "0", "0", "0");
@@ -519,6 +524,18 @@ public final class MlogCodeGenerator {
             case LINE -> "line";
         };
         output.draw(command, operands);
+    }
+
+    /** The target owns one graphics buffer, so runtime flushes it before switching Displays and at exit. */
+    private void flushDrawBuffer(String requestedTarget) {
+        if (activeDrawTarget != null) output.drawFlush(activeDrawTarget);
+        else output.drawFlush(requestedTarget);
+        activeDrawTarget = null;
+    }
+
+    private void flushPendingDraw() {
+        if (activeDrawTarget != null) output.drawFlush(activeDrawTarget);
+        activeDrawTarget = null;
     }
 
     private void emitBuildingIteration(HirBuildingIteration iteration) {

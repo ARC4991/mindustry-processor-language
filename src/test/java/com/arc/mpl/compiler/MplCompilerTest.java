@@ -447,6 +447,27 @@ class MplCompilerTest {
     }
 
     @Test
+    void flushesTheProcessorGraphicsBufferBeforeSwitchingDisplays(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
+            const Left: Display = link("display1");
+            const Right: Display = link("display2");
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            Left.fillRect(0, 0, 1, 1);
+            Right.fillRect(0, 0, 1, 1);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.indexOf("draw rect 0 0 1 1 0 0") < mlog.indexOf("drawflush display1"));
+        assertTrue(mlog.indexOf("drawflush display1") < mlog.lastIndexOf("draw rect 0 0 1 1 0 0"));
+        assertTrue(mlog.contains("drawflush display2\nstop"));
+    }
+
+    @Test
     void expandsBuildingTraversalOverDeclaredLinksOnly(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """

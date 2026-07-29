@@ -103,7 +103,8 @@ public final class SemanticAnalyzer {
     private final Map<String, Set<String>> directGlobalDependencies = new HashMap<>();
     private final List<TopLevelCall> topLevelCalls = new ArrayList<>();
     private final Set<String> initializedGlobals = new HashSet<>();
-    private final Map<String, Integer> pendingDrawCommands = new HashMap<>();
+    private int pendingDrawCommands;
+    private String pendingDrawDisplayAlias;
     private Path file;
     private Map<String, String> messages = Map.of();
     private Map<String, HardwareContract.LinkDeclaration> hardwareLinks = Map.of();
@@ -154,7 +155,8 @@ public final class SemanticAnalyzer {
         directGlobalDependencies.clear();
         topLevelCalls.clear();
         initializedGlobals.clear();
-        pendingDrawCommands.clear();
+        pendingDrawCommands = 0;
+        pendingDrawDisplayAlias = null;
         unitIterationDepth = 0;
         loopDepth = 0;
         activeUnitBinding = null;
@@ -752,7 +754,8 @@ public final class SemanticAnalyzer {
         }
         if ("flush".equals(method)) {
             if (!sourceArguments.isEmpty()) error("MPL3203", "Display.flush() 不接受参数", span);
-            pendingDrawCommands.put(display.gameAlias(), 0);
+            pendingDrawCommands = 0;
+            pendingDrawDisplayAlias = null;
             return new HirDrawFlush(display.gameAlias());
         }
         HirDraw.Command command = switch (method) {
@@ -791,10 +794,13 @@ public final class SemanticAnalyzer {
     }
 
     private void recordDraw(String displayAlias, SourceSpan span) {
-        int pending = pendingDrawCommands.merge(displayAlias, 1, Integer::sum);
-        if (pending > profile.maxGraphicsBufferCommands()) {
+        if (pendingDrawDisplayAlias != null && !pendingDrawDisplayAlias.equals(displayAlias)) pendingDrawCommands = 0;
+        if (pendingDrawDisplayAlias == null) pendingDrawDisplayAlias = displayAlias;
+        else if (!pendingDrawDisplayAlias.equals(displayAlias)) pendingDrawDisplayAlias = displayAlias;
+        pendingDrawCommands++;
+        if (pendingDrawCommands > profile.maxGraphicsBufferCommands()) {
             error("MPL3203", "Display 在一次 flush 前最多允许 " + profile.maxGraphicsBufferCommands()
-                + " 条绘制命令，当前为 " + pending, span);
+                + " 条绘制命令，当前为 " + pendingDrawCommands, span);
         }
     }
 
