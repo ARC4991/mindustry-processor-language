@@ -15,7 +15,7 @@ target profile、构建报告和部署清单不能继续以 Java 常量或自由
 
 profile 描述**游戏事实与可用 lowering**；`report.json` 描述一次构建实际使用了多少资源；`deployment.json` 描述安装时必须满足什么硬件契约。三者均不包含用户源码、私有 Unit flag、UnitRef、内部变量名、物理地址或宏展开细节。
 
-当前原型的 `KnownProfiles` 已从内置 `v146.json`、`v159.7.json` 读取 schema 版本、能力、处理器、Memory、当前 lowering 使用的指令签名、已审计的 Unit/Building 内容子集和 MIL 宏表。`SemanticAnalyzer` 已用 profile 校验 `Unit.getAll...`、属性访问和 `move`；构建器也会用 Building 表校验 `.mplh` 的 `link(...)` 类型。Building 遍历、控制 lowering 与宏白名单执行尚未实现，表中的这些项目目前是目标事实与后续实现契约，不能被解释为已经可生成 mlog；表也不能被误称为完整游戏内容表。
+当前原型的 `KnownProfiles` 已从内置 `v146.json`、`v159.7.json` 读取 schema 版本、能力、处理器、Memory、当前 lowering 使用的指令签名、已审计的 Unit/Building 内容子集和 MIL 宏表。`SemanticAnalyzer` 已用 profile 校验 Unit/Building 查询、字段与控制动作；构建器也会用 Building 表校验 `.mplh` 的 `link(...)` 类型。Unit 与 Building 的当前已审计子集可生成 MIL 和 mlog，但这些表仍不能被误称为完整游戏内容表。
 
 ## 版本与兼容性
 

@@ -183,6 +183,46 @@
       "lowering": ["ubind", "sensor", "jump", "ucontrol"]
     },
     {
+      "name": "@building.each",
+      "visibility": "public",
+      "body": "required",
+      "parameters": [
+        { "name": "type", "type": "GameBuildingType" },
+        { "name": "binding", "type": "BuildingBinding" },
+        { "name": "filters", "type": "BuildingFilter[]" }
+      ],
+      "effects": ["readsWorld"],
+      "maxCost": { "instructions": 8, "virtualSlots": 2, "physicalSlots": 0 },
+      "lowering": ["sensor", "jump"]
+    },
+    {
+      "name": "@building.count",
+      "visibility": "public",
+      "body": "none",
+      "parameters": [
+        { "name": "type", "type": "GameBuildingType" },
+        { "name": "binding", "type": "BuildingBinding" },
+        { "name": "filters", "type": "BuildingFilter[]" }
+      ],
+      "effects": ["readsWorld"],
+      "maxCost": { "instructions": 8, "virtualSlots": 3, "physicalSlots": 0 },
+      "lowering": ["sensor", "op", "jump"]
+    },
+    {
+      "name": "@building.get",
+      "visibility": "public",
+      "body": "none",
+      "parameters": [
+        { "name": "type", "type": "GameBuildingType" },
+        { "name": "binding", "type": "BuildingBinding" },
+        { "name": "index", "type": "Int" },
+        { "name": "filters", "type": "BuildingFilter[]" }
+      ],
+      "effects": ["readsWorld", "createsBuildingRef"],
+      "maxCost": { "instructions": 12, "virtualSlots": 5, "physicalSlots": 0 },
+      "lowering": ["sensor", "op", "jump", "set"]
+    },
+    {
       "name": "@io.print",
       "visibility": "public",
       "body": "none",
