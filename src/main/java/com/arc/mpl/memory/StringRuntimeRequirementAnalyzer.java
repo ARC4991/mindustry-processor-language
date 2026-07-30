@@ -12,12 +12,19 @@ final class StringRuntimeRequirementAnalyzer {
     Result analyze(HirProgram program, int defaultCapacity) {
         Map<String, HirClass> classes = new LinkedHashMap<>();
         for (HirClass type : program.classes()) classes.put(type.name(), type);
-        Collector collector = new Collector(defaultCapacity, classes);
+        StringCapacityAnalyzer.Analysis capacities =
+            new StringCapacityAnalyzer().analyze(program, defaultCapacity);
+        Collector collector = new Collector(defaultCapacity, classes, capacities);
         for (HirFunction function : program.functions()) {
             for (HirFunctionParameter parameter : function.parameters()) {
-                if (parameter.type() == ValueType.STRING) collector.variable(function.name(), parameter.name(), defaultCapacity);
+                if (parameter.type() == ValueType.STRING) {
+                    collector.variable(function.name(), parameter.name(),
+                        capacities.variable(function.name(), parameter.name(), defaultCapacity));
+                }
             }
-            if (function.returnType() == ValueType.STRING) collector.functionResult(function.name(), defaultCapacity);
+            if (function.returnType() == ValueType.STRING) {
+                collector.functionResult(function.name(), capacities.functionResult(function.name()));
+            }
             collector.statements(function.name(), function.body());
         }
         collector.statements(null, program.statements());
@@ -51,6 +58,7 @@ final class StringRuntimeRequirementAnalyzer {
     private static final class Collector {
         private final int defaultCapacity;
         private final Map<String, HirClass> classes;
+        private final StringCapacityAnalyzer.Analysis capacities;
         private final List<Requirement> requirements = new ArrayList<>();
         private final Map<String, Requirement> literals = new LinkedHashMap<>();
         private final Map<Integer, Requirement> concatenations = new LinkedHashMap<>();
@@ -61,9 +69,11 @@ final class StringRuntimeRequirementAnalyzer {
         private final Map<StringRuntimeLayout.ObjectFieldKey, Requirement> objectFields = new LinkedHashMap<>();
         private final Map<StringRuntimeLayout.AggregateElementKey, Requirement> aggregateElements = new LinkedHashMap<>();
 
-        private Collector(int defaultCapacity, Map<String, HirClass> classes) {
+        private Collector(int defaultCapacity, Map<String, HirClass> classes,
+                          StringCapacityAnalyzer.Analysis capacities) {
             this.defaultCapacity = defaultCapacity;
             this.classes = Map.copyOf(classes);
+            this.capacities = capacities;
         }
 
         private Result result() { return new Result(requirements); }
@@ -75,7 +85,8 @@ final class StringRuntimeRequirementAnalyzer {
         private void statement(String function, HirStatement statement) {
             if (statement instanceof HirVariableDeclaration declaration) {
                 if (declaration.type() == ValueType.STRING) {
-                    variable(function, declaration.name(), declaration.stringCapacity());
+                    variable(function, declaration.name(),
+                        capacities.variable(function, declaration.name(), declaration.stringCapacity()));
                 }
                 aggregate(function, declaration);
                 expression(function, declaration.initializer());
@@ -222,7 +233,7 @@ final class StringRuntimeRequirementAnalyzer {
             if (concatenations.containsKey(concat.allocationId())) return;
             PhysicalMemoryLayout.StorageKey storage = new PhysicalMemoryLayout.StorageKey(
                 function, "@stringConcat:" + concat.allocationId());
-            Requirement requirement = add(Kind.CONCATENATION, concat.maxCodeUnits(), null,
+            Requirement requirement = add(Kind.CONCATENATION, capacities.concatenation(concat), null,
                 concat.allocationId(), null, null, null, null, storage);
             concatenations.put(concat.allocationId(), requirement);
         }
@@ -240,7 +251,7 @@ final class StringRuntimeRequirementAnalyzer {
             if (snapshots.containsKey(snapshot.allocationId())) return;
             PhysicalMemoryLayout.StorageKey storage = new PhysicalMemoryLayout.StorageKey(
                 function, "@stringSnapshot:" + snapshot.allocationId());
-            Requirement requirement = add(Kind.SNAPSHOT, snapshot.maxCodeUnits(), null,
+            Requirement requirement = add(Kind.SNAPSHOT, capacities.snapshot(snapshot), null,
                 snapshot.allocationId(), null, null, null, null, storage);
             snapshots.put(snapshot.allocationId(), requirement);
         }
@@ -250,7 +261,7 @@ final class StringRuntimeRequirementAnalyzer {
             if (callResults.containsKey(allocationId)) return;
             PhysicalMemoryLayout.StorageKey storage = new PhysicalMemoryLayout.StorageKey(
                 function, "@stringCallResult:" + allocationId);
-            Requirement requirement = add(Kind.CALL_RESULT, defaultCapacity, null, allocationId,
+            Requirement requirement = add(Kind.CALL_RESULT, capacities.callResult(call), null, allocationId,
                 null, null, null, null, storage);
             callResults.put(allocationId, requirement);
         }
@@ -327,7 +338,8 @@ final class StringRuntimeRequirementAnalyzer {
                 if (aggregateElements.containsKey(key)) continue;
                 PhysicalMemoryLayout.StorageKey storage = new PhysicalMemoryLayout.StorageKey(
                     function, "@stringAggregate:" + declaration.name() + ":" + index);
-                Requirement requirement = add(Kind.AGGREGATE_ELEMENT, defaultCapacity, null, null, null, null,
+                Requirement requirement = add(Kind.AGGREGATE_ELEMENT,
+                    capacities.aggregateElement(function, declaration.name(), index), null, null, null, null,
                     null, key, storage);
                 aggregateElements.put(key, requirement);
             }
