@@ -1822,6 +1822,13 @@ public final class SemanticAnalyzer {
             error("MPL3201", "LinkedBuildingSet<T> 变量必须由 Building.getAll类型(...) 查询初始化",
                 declaration.initializer().span());
         }
+        if (type instanceof BuildingType && declaration.mutable()) {
+            error("MPL3212", "保存的 Building<T> 引用具有稳定链接身份，只能使用 val 声明", declaration.span());
+        }
+        if (type instanceof BuildingType && !(initializer instanceof HirBuildingQueryGet)) {
+            error("MPL3212", "Building<T> 引用必须由 LinkedBuildingSet<T>.get(index) 初始化",
+                declaration.initializer().span());
+        }
         boolean global = currentFunction == null && scopes.size() == 1;
         boolean ownsPooledObject = ownedFactory != null;
         if (ownsPooledObject && declaration.mutable()) {

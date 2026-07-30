@@ -98,6 +98,7 @@ public final class MlogCodeGenerator {
     private Map<String, MlogProgramBuilder.Label> stringOutputLabels;
     private Set<String> globalVariables;
     private Map<String, HirHardwareLink> activeBuildingBindings;
+    private Map<String, HirBuildingQuery> storedBuildingReferences;
     private Map<String, MlogGenerationResult.FunctionMetrics> functionMetrics;
     private String activeDrawTarget;
     private String currentFunction;
@@ -172,6 +173,7 @@ public final class MlogCodeGenerator {
         prepareStringOutputLabels();
         globalVariables = new HashSet<>();
         activeBuildingBindings = new HashMap<>();
+        storedBuildingReferences = new HashMap<>();
         functionMetrics = new java.util.LinkedHashMap<>();
         activeDrawTarget = null;
         for (HirStatement statement : program.statements()) {
@@ -296,6 +298,12 @@ public final class MlogCodeGenerator {
         if (statement instanceof HirVariableDeclaration declaration) {
             if (declaration.initializer() instanceof HirUnitQuery
                 || declaration.initializer() instanceof HirBuildingQuery) return;
+            if (declaration.initializer() instanceof HirBuildingQueryGet get
+                && declaration.type() instanceof BuildingType) {
+                storedBuildingReferences.put(storedBuildingReferenceKey(declaration.name()), get.query());
+                output.set(variable(declaration.name()), emitBuildingQueryGet(get));
+                return;
+            }
             if (declaration.initializer() instanceof HirArrayLiteral array) {
                 emitAggregateDeclaration(declaration, array.elements());
                 return;
@@ -969,7 +977,8 @@ public final class MlogCodeGenerator {
         emitJump(end, JumpCondition.LESS_THAN, index, "0");
         output.set(position, "0");
         try {
-            for (HirHardwareLink building : query.buildings()) {
+            for (int buildingIndex = 0; buildingIndex < query.buildings().size(); buildingIndex++) {
+                HirHardwareLink building = query.buildings().get(buildingIndex);
                 MlogProgramBuilder.Label found = label("building_get_found");
                 MlogProgramBuilder.Label next = label("building_get_next");
                 activeBuildingBindings.put(query.bindingName(), building);
@@ -978,7 +987,8 @@ public final class MlogCodeGenerator {
                 output.operation(Operation.ADD, position, position, "1");
                 emitJump(next, JumpCondition.ALWAYS, "0", "0");
                 emitLabel(found);
-                output.set(result, building.gameAlias());
+                // Stored BuildingRef values are stable compiler descriptors, not transient game objects.
+                output.set(result, Integer.toString(buildingIndex + 1));
                 emitJump(end, JumpCondition.ALWAYS, "0", "0");
                 emitLabel(next);
             }
@@ -998,13 +1008,37 @@ public final class MlogCodeGenerator {
         if (target instanceof HirHardwareLink hardware) return hardware.gameAlias();
         if (target instanceof HirVariable variable && variable.type() instanceof BuildingType building
             && !building.nullable()) {
-            return variable(variable.name());
+            return resolveStoredBuildingReference(variable);
         }
         if (target instanceof HirVariable variable && variable.type() == com.arc.mpl.hir.ValueType.BUILDING) {
             HirHardwareLink building = activeBuildingBindings.get(variable.name());
             if (building != null) return building.gameAlias();
         }
         throw new IllegalArgumentException("building control lacks an active linked building target: " + target);
+    }
+
+    /** Resolves a stable compiler descriptor through the processor's current hardware aliases. */
+    private String resolveStoredBuildingReference(HirVariable reference) {
+        HirBuildingQuery query = storedBuildingReferences.get(storedBuildingReferenceKey(reference.name()));
+        if (query == null) {
+            throw new IllegalArgumentException("saved BuildingRef lacks its query descriptor: " + reference.name());
+        }
+        String resolved = temporary();
+        MlogProgramBuilder.Label end = label("building_ref_resolve_end");
+        output.set(resolved, "null");
+        for (int index = 0; index < query.buildings().size(); index++) {
+            MlogProgramBuilder.Label next = label("building_ref_resolve_next");
+            emitJump(next, JumpCondition.NOT_EQUAL, variable(reference.name()), Integer.toString(index + 1));
+            output.set(resolved, query.buildings().get(index).gameAlias());
+            emitJump(end, JumpCondition.ALWAYS, "0", "0");
+            emitLabel(next);
+        }
+        emitLabel(end);
+        return resolved;
+    }
+
+    private String storedBuildingReferenceKey(String name) {
+        return (currentFunction == null || globalVariables.contains(name) ? "@top" : currentFunction) + ":" + name;
     }
 
     private void emitLoopBody(List<HirStatement> body, MlogProgramBuilder.Label continueTarget,
@@ -1759,7 +1793,7 @@ public final class MlogCodeGenerator {
         if (member.target() instanceof HirVariable variable && variable.type() instanceof BuildingType building
             && !building.nullable()) {
             String result = temporary();
-            output.sensor(result, variable(variable.name()), "@" + member.member());
+            output.sensor(result, resolveStoredBuildingReference(variable), "@" + member.member());
             return result;
         }
         if (member.target() instanceof HirVariable variable && variable.type() instanceof UnitType) {
