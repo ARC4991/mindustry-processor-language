@@ -68,6 +68,41 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesPureFunctionsIntoADeployableHelperTopology(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), """
+            {
+              "runtime": {
+                "goal": "maxPerformance",
+                "processors": { "micro": 2 },
+                "memory": { "bank": 1 }
+              }
+            }
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun add(left: Int, right: Int): Int {
+                return left + right;
+            }
+            val result = add(11, 13);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        MultiShardCompilation multi = result.multiShard().orElseThrow();
+        assertEquals(List.of("Main", "Worker-0"), multi.shards().stream()
+            .map(MultiShardCompilation.Shard::id).toList());
+        assertEquals(2, multi.topology().shards().size());
+        assertEquals(16, multi.topology().physicalSlots());
+        assertTrue(multi.shards().get(0).mlog().contains("mpl_mailbox_send_wait"));
+        assertFalse(multi.shards().get(0).mlog().contains("mpl_function_add"));
+        assertTrue(multi.shards().get(1).mlog().contains("mpl_function_add"));
+        assertTrue(multi.shards().get(1).mil().contains("fun add(left: Int, right: Int): Int"));
+        assertEquals(multi.shards().get(0).mlog(), result.mlog().orElseThrow());
+        assertEquals(multi.topology().physicalMemoryLayout(), result.physicalMemoryLayout());
+    }
+
+    @Test
     void compilesDistinctStaticObjectsAndRegeneratesParseableMil(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

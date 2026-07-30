@@ -108,7 +108,8 @@ public final class MplCompiler {
         } catch (IllegalArgumentException exception) {
             return new CompilationResult(profile, List.of(new Diagnostic(
                 Severity.ERROR, "MPL1301", exception.getMessage(), Optional.of(sourceFile), Optional.empty())),
-                Optional.empty(), Optional.empty(), optimized.report(), PhysicalMemoryLayout.empty(), effectAnalysis);
+                Optional.empty(), Optional.empty(), optimized.report(), PhysicalMemoryLayout.empty(), effectAnalysis,
+                Optional.empty());
         }
         MlogLabelStyle labelStyle = request.debug() ? MlogLabelStyle.DEBUG : MlogLabelStyle.RELEASE;
         String mil = new MilCodeGenerator().generate(program);
@@ -120,12 +121,36 @@ public final class MplCompiler {
             target.capabilities()).generate(program);
         OptimizationReport optimizationReport = new ProfileLoweringAnalyzer().analyze(optimized.report(), program,
             labelStyle, memoryLayout, hardwareRequirements, target, mlog);
+        Optional<MultiShardCompilation> multiShard = Optional.empty();
+        try {
+            Optional<HelperShardCompiler.Result> helperResult = new HelperShardCompiler().compile(
+                program, effectAnalysis, mlog, mil, target, runtimePreferences, memoryLayout,
+                labelStyle, hardwareRequirements);
+            if (helperResult.isPresent()) {
+                HelperShardCompiler.Result result = helperResult.orElseThrow();
+                multiShard = Optional.of(result.compilation());
+                memoryLayout = result.memoryLayout();
+                MultiShardCompilation.Shard main = result.compilation().shards().get(0);
+                mlog = main.mlog();
+                mil = main.mil();
+            }
+        } catch (IllegalArgumentException exception) {
+            return new CompilationResult(profile, List.of(new Diagnostic(
+                Severity.ERROR, "MPL1302", exceptionMessage(exception), Optional.of(sourceFile), Optional.empty())),
+                Optional.empty(), Optional.empty(), optimizationReport, memoryLayout, effectAnalysis, Optional.empty());
+        }
         List<Diagnostic> diagnostics = new ArrayList<>(analyzed.diagnostics());
-        diagnostics.addAll(new MlogOutputValidator().validate(mlog, target));
+        if (multiShard.isPresent()) {
+            multiShard.orElseThrow().shards().forEach(shard ->
+                diagnostics.addAll(new MlogOutputValidator().validate(shard.mlog(), target)));
+        } else {
+            diagnostics.addAll(new MlogOutputValidator().validate(mlog, target));
+        }
         boolean hasError = diagnostics.stream().anyMatch(diagnostic -> diagnostic.severity() == Severity.ERROR);
         return new CompilationResult(profile, diagnostics,
             hasError ? Optional.empty() : Optional.of(mlog),
-            hasError ? Optional.empty() : Optional.of(mil), optimizationReport, memoryLayout, effectAnalysis);
+            hasError ? Optional.empty() : Optional.of(mil), optimizationReport, memoryLayout, effectAnalysis,
+            hasError ? Optional.empty() : multiShard);
     }
 
     private String exceptionMessage(Exception exception) {

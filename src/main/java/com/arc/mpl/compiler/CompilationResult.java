@@ -19,7 +19,8 @@ public record CompilationResult(
     Optional<String> mil,
     OptimizationReport optimizationReport,
     PhysicalMemoryLayout physicalMemoryLayout,
-    HirEffectAnalyzer.Analysis effectAnalysis
+    HirEffectAnalyzer.Analysis effectAnalysis,
+    Optional<MultiShardCompilation> multiShard
 ) {
     public CompilationResult {
         profile = profile == null ? Optional.empty() : profile;
@@ -29,6 +30,7 @@ public record CompilationResult(
         optimizationReport = optimizationReport == null ? OptimizationReport.NONE : optimizationReport;
         physicalMemoryLayout = physicalMemoryLayout == null ? PhysicalMemoryLayout.empty() : physicalMemoryLayout;
         effectAnalysis = effectAnalysis == null ? HirEffectAnalyzer.Analysis.empty() : effectAnalysis;
+        multiShard = multiShard == null ? Optional.empty() : multiShard;
     }
 
     public CompilationResult(
@@ -38,7 +40,8 @@ public record CompilationResult(
         Optional<String> mil,
         OptimizationReport optimizationReport
     ) {
-        this(profile, diagnostics, mlog, mil, optimizationReport, PhysicalMemoryLayout.empty(), HirEffectAnalyzer.Analysis.empty());
+        this(profile, diagnostics, mlog, mil, optimizationReport, PhysicalMemoryLayout.empty(),
+            HirEffectAnalyzer.Analysis.empty(), Optional.empty());
     }
 
     /**
@@ -52,7 +55,8 @@ public record CompilationResult(
         Optional<String> mlog,
         Optional<String> mil
     ) {
-        this(profile, diagnostics, mlog, mil, OptimizationReport.NONE, PhysicalMemoryLayout.empty(), HirEffectAnalyzer.Analysis.empty());
+        this(profile, diagnostics, mlog, mil, OptimizationReport.NONE, PhysicalMemoryLayout.empty(),
+            HirEffectAnalyzer.Analysis.empty(), Optional.empty());
     }
 
     /** Compatibility constructor for callers that only receive a final mlog artifact. */
@@ -61,7 +65,8 @@ public record CompilationResult(
         List<Diagnostic> diagnostics,
         Optional<String> mlog
     ) {
-        this(profile, diagnostics, mlog, Optional.empty(), OptimizationReport.NONE, PhysicalMemoryLayout.empty(), HirEffectAnalyzer.Analysis.empty());
+        this(profile, diagnostics, mlog, Optional.empty(), OptimizationReport.NONE, PhysicalMemoryLayout.empty(),
+            HirEffectAnalyzer.Analysis.empty(), Optional.empty());
     }
 
     public boolean succeeded() {

@@ -29,7 +29,7 @@ class RuntimeHelperPlannerTest {
 
     @Test
     void mapsPureFunctionsToStableKindsAndPairedMailboxes() {
-        HirProgram program = new HirProgram(List.of(add), List.of());
+        HirProgram program = calledProgram();
         RuntimePreferences performance = new RuntimePreferences(RuntimePreferences.Goal.MAX_PERFORMANCE,
             Map.of(TargetProfile.ProcessorKind.MICRO, 2), Map.of(RuntimePreferences.MemoryKind.BANK, 1));
 
@@ -48,7 +48,7 @@ class RuntimeHelperPlannerTest {
 
     @Test
     void keepsSmallResourceBuildsSingleShardAndHonorsProcessorLimits() {
-        HirProgram program = new HirProgram(List.of(add), List.of());
+        HirProgram program = calledProgram();
         HirEffectAnalyzer.Analysis effects = new HirEffectAnalyzer().analyze(program);
         RuntimePreferences minimal = new RuntimePreferences(RuntimePreferences.Goal.MIN_RESOURCES,
             Map.of(TargetProfile.ProcessorKind.MICRO, 2), Map.of(RuntimePreferences.MemoryKind.BANK, 1));
@@ -57,5 +57,22 @@ class RuntimeHelperPlannerTest {
 
         assertFalse(new RuntimeHelperPlanner().plan(program, effects, "stop\n", profile, minimal).enabled());
         assertFalse(new RuntimeHelperPlanner().plan(program, effects, "stop\n", profile, oneProcessor).enabled());
+    }
+
+    @Test
+    void doesNotAllocateAWorkerForAnUnreachablePureFunction() {
+        HirProgram unused = new HirProgram(List.of(add), List.of());
+        RuntimePreferences performance = new RuntimePreferences(RuntimePreferences.Goal.MAX_PERFORMANCE,
+            Map.of(TargetProfile.ProcessorKind.MICRO, 2), Map.of(RuntimePreferences.MemoryKind.BANK, 1));
+
+        assertFalse(new RuntimeHelperPlanner().plan(unused, new HirEffectAnalyzer().analyze(unused),
+            "stop\n", profile, performance).enabled());
+    }
+
+    private HirProgram calledProgram() {
+        return new HirProgram(List.of(add), List.of(new com.arc.mpl.hir.HirExpressionStatement(
+            new com.arc.mpl.hir.HirFunctionCall("add", List.of(
+                new com.arc.mpl.hir.HirConstant("1", ValueType.INT),
+                new com.arc.mpl.hir.HirConstant("2", ValueType.INT)), ValueType.INT))));
     }
 }

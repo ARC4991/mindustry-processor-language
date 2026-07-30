@@ -28,7 +28,7 @@ public final class RuntimeHelperPlanner {
         List<HirFunction> candidates = program.functions().stream()
             .filter(function -> {
                 HirEffectAnalyzer.FunctionEffect effect = effects.function(function.name());
-                return effect != null && effect.pureNumeric();
+                return effects.reachable(function.name()) && effect != null && effect.pureNumeric();
             }).toList();
         return RuntimeHelperPlan.singleWorker(candidates);
     }

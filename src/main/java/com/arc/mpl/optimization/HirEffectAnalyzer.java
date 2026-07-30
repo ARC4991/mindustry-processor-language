@@ -98,7 +98,7 @@ public final class HirEffectAnalyzer {
                 }
             }
         } while (changed);
-        return new Analysis(summaries);
+        return new Analysis(summaries, reachableFunctions(program, functions));
     }
 
     private FunctionEffect inspect(HirFunction function, Map<String, HirFunction> functions,
@@ -325,6 +325,22 @@ public final class HirEffectAnalyzer {
         return recursive;
     }
 
+    private Set<String> reachableFunctions(HirProgram program, Map<String, HirFunction> functions) {
+        Set<String> direct = new LinkedHashSet<>();
+        collectCalls(program.statements(), direct);
+        Set<String> reachable = new LinkedHashSet<>();
+        ArrayDeque<String> pending = new ArrayDeque<>(direct);
+        while (!pending.isEmpty()) {
+            String name = pending.removeFirst();
+            HirFunction function = functions.get(name);
+            if (function == null || !reachable.add(name)) continue;
+            Set<String> nested = new LinkedHashSet<>();
+            collectCalls(function.body(), nested);
+            nested.forEach(pending::addLast);
+        }
+        return Set.copyOf(reachable);
+    }
+
     private void markRecursive(String start, String current, Map<String, Set<String>> graph,
                                ArrayDeque<String> path, Set<String> recursive) {
         if (path.contains(current)) { recursive.add(current); recursive.addAll(path); return; }
@@ -434,9 +450,14 @@ public final class HirEffectAnalyzer {
         }
     }
 
-    public record Analysis(Map<String, FunctionEffect> functions) {
+    public record Analysis(Map<String, FunctionEffect> functions, Set<String> reachableFunctions) {
         public Analysis {
             functions = Map.copyOf(Objects.requireNonNull(functions, "functions"));
+            reachableFunctions = Set.copyOf(Objects.requireNonNull(reachableFunctions, "reachableFunctions"));
+        }
+
+        public Analysis(Map<String, FunctionEffect> functions) {
+            this(functions, functions.keySet());
         }
 
         public FunctionEffect function(String name) {
@@ -444,11 +465,15 @@ public final class HirEffectAnalyzer {
         }
 
         public static Analysis empty() {
-            return new Analysis(Map.of());
+            return new Analysis(Map.of(), Set.of());
         }
 
         public List<FunctionEffect> pureNumericFunctions() {
             return functions.values().stream().filter(FunctionEffect::pureNumeric).toList();
+        }
+
+        public boolean reachable(String function) {
+            return reachableFunctions.contains(function);
         }
     }
 }
