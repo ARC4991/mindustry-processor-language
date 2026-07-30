@@ -2,7 +2,7 @@
 
 MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处理器的高级语言与编译器项目。它先将 MPL 源码降级为支持 profile 宏的 MIL（Macro Intermediate Language），再生成游戏可执行的 mlog 指令。MIL 保留变量、表达式、函数和结构化控制流等 MPL 基础语法，只展开 Unit Set/Unit/Building、字符串运行时等高级糖及其运行时需求。
 
-项目目前处于原型实现阶段，尚未提供稳定的编译器版本。编译器使用 Java（JDK 17），MPL 与 MIL 均使用拆分的 ANTLR 4 词法/语法文件；任何标记为“讨论基线”的语法仍可能调整。
+项目目前处于原型实现阶段，尚未提供稳定的编译器版本。编译器使用 Java（JDK 17），MPL 与 MIL 均使用拆分的 ANTLR 4 词法/语法文件；任何标记为“讨论基线”的语法仍可能调整。v146 使用兼容的 String 字符跳转表，v159.7 已自动选择 `printchar` 专用 lowering，并在构建报告中给出相对 baseline 的指令与标签差值。
 
 ## 快速试用
 

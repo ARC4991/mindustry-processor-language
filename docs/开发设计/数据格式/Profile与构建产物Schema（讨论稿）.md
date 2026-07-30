@@ -45,7 +45,7 @@ profile 的 `macros` 是 MIL 白名单的唯一来源。每一个宏必须同时
 
 - `shards` 逐片列出指令、标签、token 峰值、IPT、虚拟槽、物理槽、String、对象池和 runtime 元数据；
 - `totals` 可以求和展示，但物理与虚拟槽必须分别列出，不能把 `512 + 4096` 解释为可互换的内存；
-- `optimizations` 记录优化名称、所属 shard 与实际应用次数。只有后端能够可靠计算节省的指令数时，才会在后续 schema 版本增加独立估算字段，不能用应用次数冒充节省量；
+- `optimizations` 记录优化名称、所属 shard 与实际应用次数；profile lowering 还可写 `estimatedInstructionsSaved`、`estimatedLabelsSaved`。这两个可选字段必须来自同一 HIR/布局的 baseline 与专用 mlog 对照，不能用应用次数冒充节省量；
 - `diagnosticSummary` 即使构建失败也可生成，但失败构建不得伪造可部署的 `deployment.json`。
 
 ## `deployment.json` 与运行时蓝图
