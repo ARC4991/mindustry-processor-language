@@ -48,9 +48,9 @@ class MlogSharedRuntimeTest {
         assertTrue(mlog.indexOf(magic) > readyZero.length());
         assertTrue(mlog.indexOf(heartbeatZero) < mlog.indexOf(readyOne));
         assertTrue(mlog.indexOf(Integer.toString(-shared.epoch())) < mlog.indexOf(readyOne));
-        assertTrue(mlog.contains("set __mpl_tmp"));
-        assertTrue(mlog.contains("read __mpl_tmp"));
-        assertTrue(mlog.contains("notEqual __mpl_tmp"));
+        assertTrue(mlog.contains("set __mpl_runtime"));
+        assertTrue(mlog.contains("read __mpl_runtime"));
+        assertTrue(mlog.contains("notEqual __mpl_runtime"));
         assertTrue(new MlogOutputValidator().validate(mlog, profile).isEmpty());
     }
 
@@ -69,10 +69,10 @@ class MlogSharedRuntimeTest {
 
         String mlog = generator("Worker-0", prepared).generate(new HirProgram(List.of()));
 
-        assertTrue(mlog.startsWith("_0:\nset __mpl_tmp0 null\nread __mpl_tmp0 cell__mpl_mem0 63\n"));
+        assertTrue(mlog.startsWith("_0:\nset __mpl_runtime0 null\nread __mpl_runtime0 cell__mpl_mem0 63\n"));
         assertEquals(11, count(mlog, " null\nread "));
-        assertTrue(mlog.contains("read __mpl_tmp1 cell__mpl_mem1 0"));
-        assertTrue(mlog.contains("read __mpl_tmp4 cell__mpl_mem1 3"));
+        assertTrue(mlog.contains("read __mpl_runtime1 cell__mpl_mem1 0"));
+        assertTrue(mlog.contains("read __mpl_runtime4 cell__mpl_mem1 3"));
         String resetAck = constantWrite(prepared.physicalMemoryLayout(), shared.header(),
             shared.heartbeatIndex("Worker-0"), Integer.toString(-shared.epoch()));
         String readyAck = constantWrite(prepared.physicalMemoryLayout(), shared.header(),
