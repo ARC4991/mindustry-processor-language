@@ -15,14 +15,14 @@
     ],
     "memorySegments": [
       {
-        "id": "bank__mpl_mem0",
+        "id": "bank1",
         "kind": "bank",
         "capacity": 512,
         "usedSlots": 134,
         "blueprintPosition": { "x": 6, "y": 0 },
         "bindings": [
-          { "shard": "Main", "alias": "bank__mpl_mem0", "access": "readWrite", "autoConnected": true },
-          { "shard": "Worker-0", "alias": "bank__mpl_mem0", "access": "readWrite", "autoConnected": true }
+          { "shard": "Main", "alias": "bank1", "access": "readWrite", "autoConnected": true },
+          { "shard": "Worker-0", "alias": "bank1", "access": "readWrite", "autoConnected": true }
         ]
       }
     ],
@@ -38,7 +38,7 @@
       "acknowledgementIndexes": { "Worker-0": 5 },
       "heartbeatIndexes": { "Worker-0": 6 },
       "slices": [
-        { "memory": "bank__mpl_mem0", "offset": 122, "logicalStart": 0, "length": 7 }
+        { "memory": "bank1", "offset": 122, "logicalStart": 0, "length": 7 }
       ],
       "mailboxes": [
         {
@@ -48,7 +48,7 @@
           "payloadSlots": 2,
           "slots": 5,
           "slices": [
-            { "memory": "bank__mpl_mem0", "offset": 129, "logicalStart": 0, "length": 5 }
+            { "memory": "bank1", "offset": 129, "logicalStart": 0, "length": 5 }
           ]
         }
       ],

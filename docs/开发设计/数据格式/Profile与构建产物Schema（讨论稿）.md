@@ -55,7 +55,7 @@ profile 的 `macros` 是 MIL 白名单的唯一来源。每一个宏必须同时
 - `runtimeTopology`：处理器和真实 Memory Cell/Bank。可选 `runtime.msch` **只包含这一类**，并可包含处理器到 Memory 的内部连接。
 - `externalHardware`：Display、Message、Switch、炮塔及其它 `link(...)` 建筑。它们不进入蓝图，必须由玩家自行放置、连接；清单只记录 shard、alias、期望类型、读/写权限与组合屏关系。
 
-每个 shard 和 Runtime Memory 还必须记录蓝图局部坐标 `blueprintPosition`。Memory binding 以 `autoConnected` 区分蓝图内已连接的编译器资源与未来可能的手工部署资源；当前生成的 Runtime Memory 始终为 `true`。其 alias 依方块类型使用 `cell__mpl_memN` 或 `bank__mpl_memN`，以防止 v146 在读入蓝图时重命名链接。
+每个 shard 和 Runtime Memory 还必须记录蓝图局部坐标 `blueprintPosition`。Memory binding 以 `autoConnected` 区分蓝图内已连接的编译器资源与未来可能的手工部署资源；当前生成的 Runtime Memory 始终为 `true`。其 alias 必须与游戏的自动重连名称严格一致，依方块类型分别使用从 1 开始的 `cellN` 或 `bankN`。这样即使处理器先完成、Memory 后完成，v146 把延迟生效的链接重新命名后，生成的 mlog 仍访问同一个名称。
 
 多 shard 构建还包含 `runtimeTopology.sharedRuntime`：记录 magic、ABI、布局指纹、部署 epoch、Main/Worker 身份、ready/回执/heartbeat 下标、header 的物理 slice，以及每个 SPSC 邮箱的生产者、消费者、payload 宽度和 slice。`tasks` 逐项记录 helper 函数、所有者 Worker、稳定 kind、参数/返回槽数、严格数值类型，以及可选的 `estimatedInstructions` / `estimatedLabels` target 函数体成本，使部署诊断能从邮箱消息反查编译期任务。该字段来自实际代码生成使用的同一份布局与 `RuntimeHelperPlan`，不允许由报告层重新估算；单 shard 构建省略它。
 
