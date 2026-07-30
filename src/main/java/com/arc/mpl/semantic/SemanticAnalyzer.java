@@ -242,6 +242,7 @@ public final class SemanticAnalyzer {
         topLevelFunctionCounts = program.functions().stream().collect(java.util.stream.Collectors.groupingBy(
             FunctionDeclaration::name, LinkedHashMap::new, java.util.stream.Collectors.counting()));
         for (FunctionDeclaration function : program.functions()) registerFunction(function);
+        inferImplicitFunctionReturnTypes(program.functions());
 
         List<HirStatement> statements = new ArrayList<>();
         try {
@@ -497,7 +498,7 @@ public final class SemanticAnalyzer {
         if (parameters.contains(ValueType.VOID)) {
             error("MPL3503", "函数参数不能使用 Void 类型", function.span());
         }
-        MplType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.VOID);
+        MplType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.ERROR);
         if (parameters.stream().anyMatch(type -> isAggregate(type) || type instanceof UnitType)
             || isAggregate(returnType) || returnType instanceof UnitType) {
             error("MPL3602", "第一版函数 ABI 尚不支持聚合、Set<Unit<T>> 或 UnitRef 参数及返回值", function.span());
@@ -521,6 +522,175 @@ public final class SemanticAnalyzer {
         declarationFunctions.put(function, signature);
         callGraph.putIfAbsent(internalName, new HashSet<>());
         directGlobalDependencies.putIfAbsent(internalName, new HashSet<>());
+    }
+
+    /**
+     * Kotlin-style return inference for top-level functions.  Signatures are
+     * registered first, then inferred to a fixed point, so a function may use
+     * a later declaration whose own result can already be determined.
+     * Unresolvable paths deliberately remain a compile-time error instead of
+     * becoming mlog's untyped numeric value.
+     */
+    private void inferImplicitFunctionReturnTypes(List<FunctionDeclaration> declarations) {
+        boolean changed;
+        int remainingPasses = declarations.size() + 1;
+        do {
+            changed = false;
+            for (FunctionDeclaration declaration : declarations) {
+                if (declaration.returnType().isPresent()) continue;
+                FunctionSignature current = declarationFunctions.get(declaration);
+                if (current == null || current.returnType() != ValueType.ERROR) continue;
+                MplType inferred = inferFunctionReturnType(declaration, current.parameterTypes());
+                if (inferred == ValueType.ERROR) continue;
+                replaceFunctionSignature(current, inferred);
+                changed = true;
+            }
+        } while (changed && --remainingPasses > 0);
+
+        for (FunctionDeclaration declaration : declarations) {
+            if (declaration.returnType().isPresent()) continue;
+            FunctionSignature signature = declarationFunctions.get(declaration);
+            if (signature != null && signature.returnType() == ValueType.ERROR) {
+                error("MPL3503", "无法推导函数 " + declaration.name()
+                    + " 的返回类型；请显式标注类型", declaration.span());
+            }
+        }
+    }
+
+    private void replaceFunctionSignature(FunctionSignature previous, MplType returnType) {
+        if (isAggregate(returnType) || returnType instanceof UnitType) {
+            error("MPL3602", "第一版函数 ABI 尚不支持聚合、Set<Unit<T>> 或 UnitRef 参数及返回值",
+                previous.declaration().span());
+            return;
+        }
+        boolean returnsOwnedObject = returnType instanceof ObjectType object && !object.nullable()
+            && ownedObjectFactoryAnalyzer.returnsFreshObject(previous.declaration().body());
+        FunctionSignature replacement = new FunctionSignature(previous.sourceName(), previous.internalName(),
+            previous.declaration(), previous.parameterTypes(), returnType, returnsOwnedObject);
+        functions.put(replacement.internalName(), replacement);
+        declarationFunctions.put(replacement.declaration(), replacement);
+        List<FunctionSignature> overloads = functionOverloads.get(replacement.sourceName());
+        if (overloads != null) {
+            for (int index = 0; index < overloads.size(); index++) {
+                if (overloads.get(index).internalName().equals(replacement.internalName())) {
+                    overloads.set(index, replacement);
+                    break;
+                }
+            }
+        }
+    }
+
+    private MplType inferFunctionReturnType(FunctionDeclaration declaration, List<MplType> parameterTypes) {
+        Map<String, MplType> locals = new HashMap<>();
+        for (int index = 0; index < declaration.parameters().size(); index++) {
+            locals.put(declaration.parameters().get(index).name(), parameterTypes.get(index));
+        }
+        List<Optional<MplType>> returns = new ArrayList<>();
+        inferReturnTypes(declaration.body().statements(), locals, returns);
+        if (returns.isEmpty()) return ValueType.VOID;
+        boolean emptyReturn = returns.stream().anyMatch(Optional::isEmpty);
+        if (emptyReturn) return returns.stream().allMatch(Optional::isEmpty) ? ValueType.VOID : ValueType.ERROR;
+        MplType result = null;
+        for (Optional<MplType> returned : returns) {
+            MplType candidate = returned.orElseThrow();
+            if (candidate == ValueType.ERROR) return ValueType.ERROR;
+            result = result == null ? candidate : commonInferenceType(result, candidate);
+            if (result == ValueType.ERROR) return ValueType.ERROR;
+        }
+        return result == null ? ValueType.VOID : result;
+    }
+
+    private void inferReturnTypes(List<Statement> statements, Map<String, MplType> locals,
+                                  List<Optional<MplType>> returns) {
+        for (Statement statement : statements) {
+            if (statement instanceof VariableDeclaration declaration) {
+                MplType initializer = inferExpressionType(declaration.initializer(), locals);
+                MplType declared = declaration.declaredType().map(type -> parseType(type, declaration.span()))
+                    .orElse(initializer);
+                locals.put(declaration.name(), declared);
+            } else if (statement instanceof ReturnStatement returned) {
+                returns.add(returned.value().map(value -> inferExpressionType(value, locals)));
+            } else if (statement instanceof BlockStatement block) {
+                inferReturnTypes(block.statements(), new HashMap<>(locals), returns);
+            } else if (statement instanceof IfStatement branch) {
+                inferReturnTypes(branch.thenBlock().statements(), new HashMap<>(locals), returns);
+                branch.elseBranch().ifPresent(alternative -> inferReturnTypes(List.of(alternative), new HashMap<>(locals), returns));
+            } else if (statement instanceof WhileStatement loop) {
+                inferReturnTypes(loop.body().statements(), new HashMap<>(locals), returns);
+            } else if (statement instanceof DoWhileStatement loop) {
+                inferReturnTypes(loop.body().statements(), new HashMap<>(locals), returns);
+            } else if (statement instanceof ForStatement loop) {
+                Map<String, MplType> loopLocals = new HashMap<>(locals);
+                loop.declarationInitializer().ifPresent(initializer -> loopLocals.put(initializer.name(),
+                    initializer.declaredType().map(type -> parseType(type, initializer.span()))
+                        .orElseGet(() -> inferExpressionType(initializer.initializer(), loopLocals))));
+                inferReturnTypes(loop.body().statements(), loopLocals, returns);
+            }
+        }
+    }
+
+    private MplType inferExpressionType(Expression expression, Map<String, MplType> locals) {
+        if (expression instanceof IntegerLiteral) return ValueType.INT;
+        if (expression instanceof FloatLiteral) return ValueType.FLOAT;
+        if (expression instanceof BooleanLiteral) return ValueType.BOOL;
+        if (expression instanceof StringLiteral) return ValueType.STRING;
+        if (expression instanceof NullLiteral) return ValueType.NULL;
+        if (expression instanceof Identifier identifier) return locals.getOrDefault(identifier.name(), ValueType.ERROR);
+        if (expression instanceof NewExpression allocation) {
+            return classes.containsKey(allocation.className()) ? new ObjectType(allocation.className(), false) : ValueType.ERROR;
+        }
+        if (expression instanceof UnaryExpression unary) {
+            MplType operand = inferExpressionType(unary.operand(), locals);
+            return "!".equals(unary.operator()) ? ValueType.BOOL : operand;
+        }
+        if (expression instanceof AssignmentExpression assignment) {
+            MplType value = inferExpressionType(assignment.value(), locals);
+            locals.put(assignment.target().name(), value);
+            return value;
+        }
+        if (expression instanceof BinaryExpression binary) {
+            MplType left = inferExpressionType(binary.left(), locals);
+            MplType right = inferExpressionType(binary.right(), locals);
+            return switch (binary.operator()) {
+                case "==", "!=", "===", "!==", "<", "<=", ">", ">=", "&&", "||" -> ValueType.BOOL;
+                case "+" -> left == ValueType.STRING || right == ValueType.STRING ? ValueType.STRING
+                    : numericInferenceType(left, right);
+                case "-", "*", "%" -> numericInferenceType(left, right);
+                case "/" -> left == ValueType.ERROR || right == ValueType.ERROR ? ValueType.ERROR : ValueType.FLOAT;
+                default -> ValueType.ERROR;
+            };
+        }
+        if (expression instanceof CallExpression call && call.callee() instanceof Identifier function) {
+            List<MplType> arguments = call.arguments().stream().map(value -> inferExpressionType(value, locals)).toList();
+            List<FunctionSignature> candidates = functionOverloads.getOrDefault(function.name(), List.of()).stream()
+                .filter(signature -> signature.parameterTypes().size() == arguments.size())
+                .filter(signature -> java.util.stream.IntStream.range(0, arguments.size())
+                    .allMatch(index -> canAssign(signature.parameterTypes().get(index), arguments.get(index))))
+                .filter(signature -> signature.returnType() != ValueType.ERROR)
+                .toList();
+            return candidates.size() == 1 ? candidates.get(0).returnType() : ValueType.ERROR;
+        }
+        return ValueType.ERROR;
+    }
+
+    private MplType numericInferenceType(MplType left, MplType right) {
+        if (left == ValueType.ERROR || right == ValueType.ERROR) return ValueType.ERROR;
+        if (left == ValueType.FLOAT || right == ValueType.FLOAT) return ValueType.FLOAT;
+        return left == ValueType.INT && right == ValueType.INT ? ValueType.INT : ValueType.ERROR;
+    }
+
+    private MplType commonInferenceType(MplType left, MplType right) {
+        if (left.equals(right)) return left;
+        if ((left == ValueType.INT && right == ValueType.FLOAT) || (left == ValueType.FLOAT && right == ValueType.INT)) {
+            return ValueType.FLOAT;
+        }
+        if (left instanceof ObjectType leftObject && right instanceof ObjectType rightObject) {
+            if (canAssign(left, right)) return left;
+            if (canAssign(right, left)) return right;
+        }
+        if (left == ValueType.NULL && right instanceof ObjectType object) return new ObjectType(object.className(), true);
+        if (right == ValueType.NULL && left instanceof ObjectType object) return new ObjectType(object.className(), true);
+        return ValueType.ERROR;
     }
 
     private HirFunction analyzeMethod(ClassInfo type, MethodInfo method) {
