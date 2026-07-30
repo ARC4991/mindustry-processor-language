@@ -76,4 +76,43 @@ class RuntimePlannerTest {
         assertThrows(IllegalArgumentException.class,
             () -> new RuntimePlanner().plan("stop\n", profile, preferences, layout));
     }
+
+    @Test
+    void plansEveryShardWithinTheGlobalProcessorCounts() {
+        RuntimePreferences preferences = new RuntimePreferences(RuntimePreferences.Goal.MIN_RESOURCES,
+            java.util.Map.of(TargetProfile.ProcessorKind.MICRO, 1, TargetProfile.ProcessorKind.LOGIC, 1),
+            RuntimePreferences.defaults().memory());
+
+        RuntimeTopologyPlan plan = new RuntimePlanner().planTopology(List.of(
+            new RuntimePlanner.ShardSource("Main", List.of("main"), "set mpl_main 1\nstop\n"),
+            new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), "set mpl_worker 1\nstop\n")
+        ), profile, preferences, PhysicalMemoryLayout.empty());
+
+        assertEquals(List.of(TargetProfile.ProcessorKind.MICRO, TargetProfile.ProcessorKind.LOGIC),
+            plan.shards().stream().map(ShardPlan::processor).toList());
+        assertEquals(4, plan.instructions());
+        assertEquals(2, plan.virtualSlots());
+    }
+
+    @Test
+    void rejectsInsufficientProcessorsAndOversizedIndividualShards() {
+        RuntimePreferences oneProcessor = new RuntimePreferences(RuntimePreferences.Goal.MIN_RESOURCES,
+            java.util.Map.of(TargetProfile.ProcessorKind.MICRO, 1), RuntimePreferences.defaults().memory());
+        List<RuntimePlanner.ShardSource> twoShards = List.of(
+            new RuntimePlanner.ShardSource("Main", List.of("main"), "stop\n"),
+            new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), "stop\n")
+        );
+        IllegalArgumentException count = assertThrows(IllegalArgumentException.class,
+            () -> new RuntimePlanner().planTopology(twoShards, profile, oneProcessor, PhysicalMemoryLayout.empty()));
+        org.junit.jupiter.api.Assertions.assertTrue(count.getMessage().contains("处理器数量不足"));
+
+        String oversized = String.join("\n",
+            java.util.Collections.nCopies(profile.maxInstructions() + 1, "set value 1")) + "\n";
+        IllegalArgumentException limit = assertThrows(IllegalArgumentException.class,
+            () -> new RuntimePlanner().planTopology(List.of(
+                new RuntimePlanner.ShardSource("Main", List.of("main"), "stop\n"),
+                new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), oversized)
+            ), profile, RuntimePreferences.defaults(), PhysicalMemoryLayout.empty()));
+        org.junit.jupiter.api.Assertions.assertTrue(limit.getMessage().contains("shard Worker-0"));
+    }
 }
