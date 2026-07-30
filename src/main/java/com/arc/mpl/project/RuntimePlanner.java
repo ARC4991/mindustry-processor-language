@@ -2,6 +2,7 @@ package com.arc.mpl.project;
 
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.profile.TargetProfile;
+import com.arc.mpl.codegen.MlogProgramMetrics;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashSet;
@@ -22,28 +23,25 @@ public final class RuntimePlanner {
     /** Uses the exact compiler-owned Memory layout already referenced by generated mlog aliases. */
     public RuntimePlan plan(String mlog, TargetProfile profile, RuntimePreferences preferences,
                             PhysicalMemoryLayout memoryLayout) {
-        int instructions = 0;
-        int labels = 0;
-        int maximumTokens = 0;
+        MlogProgramMetrics metrics = MlogProgramMetrics.analyze(mlog);
         Set<String> variables = new HashSet<>();
         for (String raw : mlog.split("\\R")) {
             String line = raw.strip();
             if (line.isEmpty()) continue;
-            if (line.endsWith(":")) { labels++; continue; }
+            if (line.startsWith("#") || line.endsWith(":")) continue;
             String[] tokens = line.split("\\s+");
-            instructions++;
-            maximumTokens = Math.max(maximumTokens, tokens.length);
             for (String token : tokens) {
                 if (token.startsWith("mpl_") || token.startsWith("__mpl_")) variables.add(token);
             }
         }
-        if (instructions > profile.maxInstructions()) {
-            throw new IllegalArgumentException("生成程序含 " + instructions + " 条指令，超过 target " + profile.id()
+        if (metrics.instructions() > profile.maxInstructions()) {
+            throw new IllegalArgumentException("生成程序含 " + metrics.instructions() + " 条指令，超过 target " + profile.id()
                 + " 的 " + profile.maxInstructions() + " 条上限");
         }
-        TargetProfile.ProcessorKind processor = chooseProcessor(instructions, profile, preferences);
+        TargetProfile.ProcessorKind processor = chooseProcessor(metrics.instructions(), profile, preferences);
         validateMemoryLimits(memoryLayout, preferences);
-        RuntimePlan plan = new RuntimePlan(processor, instructions, labels, maximumTokens, variables.size(), memoryLayout);
+        RuntimePlan plan = new RuntimePlan(processor, metrics.instructions(), metrics.labels(),
+            metrics.maxTokensPerStatement(), variables.size(), memoryLayout);
         log.info("自动运行时规划：processor={}, instructions={}, labels={}, virtualSlots={}, physicalSlots={}, objectPoolSlots={}, stringSlots={}",
             plan.processorId(), plan.instructions(), plan.labels(), plan.virtualSlots(), plan.physicalSlots(),
             plan.objectPoolSlots(), plan.stringSlots());
