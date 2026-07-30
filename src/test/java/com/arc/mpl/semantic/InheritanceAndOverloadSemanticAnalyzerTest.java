@@ -92,6 +92,34 @@ class InheritanceAndOverloadSemanticAnalyzerTest {
     }
 
     @Test
+    void infersInstanceMethodReturnTypesFromFieldsAndOtherMethods() {
+        Program source = parser.parse("""
+            class Counter {
+                public value: Int;
+                public fun Counter(value: Int) { this.value = value; }
+                public fun add(amount: Int) { return this.value + amount; }
+                public fun halfAfterAdd(amount: Int) { return this.add(amount) / 2.0; }
+                public fun reset(value: Int) { this.value = value; }
+            }
+            val counter = new Counter(2);
+            val total = counter.add(4);
+            val half = counter.halfAfterAdd(4);
+            counter.reset(0);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(source, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var functions = result.program().orElseThrow().functions();
+        assertEquals(com.arc.mpl.hir.ValueType.INT, functions.stream()
+            .filter(function -> function.name().equals("__mpl_class_Counter_add")).findFirst().orElseThrow().returnType());
+        assertEquals(com.arc.mpl.hir.ValueType.FLOAT, functions.stream()
+            .filter(function -> function.name().equals("__mpl_class_Counter_halfAfterAdd")).findFirst().orElseThrow().returnType());
+        assertEquals(com.arc.mpl.hir.ValueType.VOID, functions.stream()
+            .filter(function -> function.name().equals("__mpl_class_Counter_reset")).findFirst().orElseThrow().returnType());
+    }
+
+    @Test
     void rejectsInvalidInheritanceAndAmbiguousOverloadContracts() {
         assertDiagnostic("""
             class Child extends Missing { public fun Child() { super(); } }
