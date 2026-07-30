@@ -322,6 +322,50 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesInheritanceOverloadsAndVirtualMethodDispatch(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            class Animal {
+                public value: Int;
+                public fun Animal(value: Int) { this.value = value; }
+                public fun score(amount: Int): Int { return this.value + amount; }
+            }
+            class Dog extends Animal {
+                public bonus: Int;
+                public fun Dog(value: Int, bonus: Int) { super(value); this.bonus = bonus; }
+                public fun score(amount: Int): Int { return super.score(amount) + this.bonus; }
+                public fun score(amount: Float): Int { return this.bonus; }
+            }
+            fun classify(value: Animal): Int { return 1; }
+            fun classify(value: Dog): Int { return 2; }
+            fun read(subject: Animal): Int { return subject.score(2); }
+            val animal: Animal = new Dog(3, 4);
+            val overridden = read(animal);
+            val overloaded = classify(new Dog(1, 2));
+            val decimal = new Dog(1, 2).score(1.5);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("class Dog extends Animal {"), mil);
+        assertTrue(mil.contains("super(value);"), mil);
+        assertTrue(mil.contains("super.score(amount)"), mil);
+        assertTrue(mil.contains("fun classify(value: Animal): Int"), mil);
+        assertTrue(mil.contains("fun classify(value: Dog): Int"), mil);
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("virtual_method_"), mlog);
+        assertTrue(mlog.contains("__mpl_obj1_value"), mlog);
+        assertTrue(mlog.contains("__mpl_obj1_bonus"), mlog);
+
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
+        assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
+    }
+
+    @Test
     void laysOutScalarTupleObjectFields(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
@@ -572,6 +616,35 @@ class MplCompilerTest {
         assertTrue(mil.contains("val __module_math_mpl_factor: Int = 2;"));
         assertTrue(result.mlog().orElseThrow().contains("print \"value=\""));
         assertTrue(result.mlog().orElseThrow().contains("printflush message1"));
+    }
+
+    @Test
+    void resolvesExportedFunctionOverloadsAcrossModules(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("types.mpl"), """
+            export class Animal { public fun Animal() {} }
+            export class Dog extends Animal { public fun Dog() { super(); } }
+            export fun classify(value: Animal): Int { return 1; }
+            export fun classify(value: Dog): Int { return 2; }
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            import { Animal, Dog, classify } from "./types";
+            val animal: Animal = new Dog();
+            val result: Int = classify(animal);
+            val specific: Int = classify(new Dog());
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("fun __module_types_mpl_classify(value: __module_types_mpl_Animal): Int"), mil);
+        assertTrue(mil.contains("fun __module_types_mpl_classify(value: __module_types_mpl_Dog): Int"), mil);
+
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
+        assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
     }
 
     @Test

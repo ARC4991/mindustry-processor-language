@@ -1,7 +1,7 @@
 package com.arc.mpl.semantic;
 
 import com.arc.mpl.ast.Program;
-import com.arc.mpl.hir.HirFunctionCall;
+import com.arc.mpl.hir.HirMethodCall;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirNewObject;
 import com.arc.mpl.hir.HirObjectFieldAssignment;
@@ -56,10 +56,10 @@ class ObjectSemanticAnalyzerTest {
         assertEquals(new ObjectType("Counter", false), first.type());
         assertEquals(1, first.allocationId());
         assertEquals(2, second.allocationId());
-        HirFunctionCall call = assertInstanceOf(HirFunctionCall.class,
+        HirMethodCall call = assertInstanceOf(HirMethodCall.class,
             assertInstanceOf(HirVariableDeclaration.class, program.statements().get(2)).initializer());
-        assertEquals("__mpl_class_Counter_add", call.function());
-        assertEquals(2, call.arguments().size());
+        assertEquals("__mpl_class_Counter_add", call.dispatchTargets().get(0).function());
+        assertEquals(1, call.arguments().size());
         assertInstanceOf(HirObjectFieldAssignment.class,
             assertInstanceOf(HirExpressionStatement.class, program.functions().get(0).body().get(0)).expression());
     }
