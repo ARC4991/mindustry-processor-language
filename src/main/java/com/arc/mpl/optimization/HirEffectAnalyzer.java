@@ -81,7 +81,8 @@ public final class HirEffectAnalyzer {
                 throw new IllegalArgumentException("重复 HIR 函数：" + function.name());
             }
         }
-        Set<String> recursive = recursiveFunctions(functions);
+        Map<String, Set<String>> callGraph = functionCallGraph(functions);
+        Set<String> recursive = recursiveFunctions(callGraph);
         Map<String, FunctionEffect> summaries = new LinkedHashMap<>();
         for (HirFunction function : program.functions()) {
             summaries.put(function.name(), recursive.contains(function.name())
@@ -98,7 +99,7 @@ public final class HirEffectAnalyzer {
                 }
             }
         } while (changed);
-        return new Analysis(summaries, reachableFunctions(program, functions));
+        return new Analysis(summaries, reachableFunctions(program, functions, callGraph), callGraph);
     }
 
     private FunctionEffect inspect(HirFunction function, Map<String, HirFunction> functions,
@@ -313,19 +314,26 @@ public final class HirEffectAnalyzer {
         }
     }
 
-    private Set<String> recursiveFunctions(Map<String, HirFunction> functions) {
+    private Map<String, Set<String>> functionCallGraph(Map<String, HirFunction> functions) {
         Map<String, Set<String>> graph = new LinkedHashMap<>();
         functions.forEach((name, function) -> {
             Set<String> calls = new LinkedHashSet<>();
             collectCalls(function.body(), calls);
-            graph.put(name, calls.stream().filter(functions::containsKey).collect(java.util.stream.Collectors.toSet()));
+            Set<String> localCalls = calls.stream().filter(functions::containsKey)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            graph.put(name, java.util.Collections.unmodifiableSet(localCalls));
         });
+        return java.util.Collections.unmodifiableMap(graph);
+    }
+
+    private Set<String> recursiveFunctions(Map<String, Set<String>> graph) {
         Set<String> recursive = new HashSet<>();
-        for (String function : functions.keySet()) markRecursive(function, function, graph, new ArrayDeque<>(), recursive);
+        for (String function : graph.keySet()) markRecursive(function, function, graph, new ArrayDeque<>(), recursive);
         return recursive;
     }
 
-    private Set<String> reachableFunctions(HirProgram program, Map<String, HirFunction> functions) {
+    private Set<String> reachableFunctions(HirProgram program, Map<String, HirFunction> functions,
+                                           Map<String, Set<String>> callGraph) {
         Set<String> direct = new LinkedHashSet<>();
         collectCalls(program.statements(), direct);
         Set<String> reachable = new LinkedHashSet<>();
@@ -334,9 +342,7 @@ public final class HirEffectAnalyzer {
             String name = pending.removeFirst();
             HirFunction function = functions.get(name);
             if (function == null || !reachable.add(name)) continue;
-            Set<String> nested = new LinkedHashSet<>();
-            collectCalls(function.body(), nested);
-            nested.forEach(pending::addLast);
+            callGraph.getOrDefault(name, Set.of()).forEach(pending::addLast);
         }
         return Set.copyOf(reachable);
     }
@@ -450,14 +456,24 @@ public final class HirEffectAnalyzer {
         }
     }
 
-    public record Analysis(Map<String, FunctionEffect> functions, Set<String> reachableFunctions) {
+    public record Analysis(Map<String, FunctionEffect> functions, Set<String> reachableFunctions,
+                           Map<String, Set<String>> callGraph) {
         public Analysis {
             functions = Map.copyOf(Objects.requireNonNull(functions, "functions"));
             reachableFunctions = Set.copyOf(Objects.requireNonNull(reachableFunctions, "reachableFunctions"));
+            Objects.requireNonNull(callGraph, "callGraph");
+            Map<String, Set<String>> copiedGraph = new LinkedHashMap<>();
+            callGraph.forEach((function, callees) -> copiedGraph.put(function,
+                Set.copyOf(Objects.requireNonNull(callees, "callees"))));
+            callGraph = java.util.Collections.unmodifiableMap(copiedGraph);
         }
 
         public Analysis(Map<String, FunctionEffect> functions) {
-            this(functions, functions.keySet());
+            this(functions, functions.keySet(), Map.of());
+        }
+
+        public Analysis(Map<String, FunctionEffect> functions, Set<String> reachableFunctions) {
+            this(functions, reachableFunctions, Map.of());
         }
 
         public FunctionEffect function(String name) {
@@ -465,7 +481,7 @@ public final class HirEffectAnalyzer {
         }
 
         public static Analysis empty() {
-            return new Analysis(Map.of(), Set.of());
+            return new Analysis(Map.of(), Set.of(), Map.of());
         }
 
         public List<FunctionEffect> pureNumericFunctions() {
@@ -474,6 +490,10 @@ public final class HirEffectAnalyzer {
 
         public boolean reachable(String function) {
             return reachableFunctions.contains(function);
+        }
+
+        public Set<String> callees(String function) {
+            return callGraph.getOrDefault(function, Set.of());
         }
     }
 }

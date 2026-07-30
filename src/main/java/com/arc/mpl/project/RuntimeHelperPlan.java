@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Stable compiler-private mapping from pure numeric functions to one Worker task protocol. */
+/** Stable compiler-private mapping from pure numeric functions to Worker task protocols. */
 public record RuntimeHelperPlan(List<Worker> workers, Map<String, Task> tasks) {
     public RuntimeHelperPlan {
         workers = List.copyOf(Objects.requireNonNull(workers, "workers"));
@@ -21,11 +21,34 @@ public record RuntimeHelperPlan(List<Worker> workers, Map<String, Task> tasks) {
         if (workers.stream().map(Worker::id).distinct().count() != workers.size()) {
             throw new IllegalArgumentException("helper Worker id 不能重复");
         }
-        for (Task task : tasks.values()) {
-            if (!workers.stream().anyMatch(worker -> worker.id().equals(task.worker()))) {
-                throw new IllegalArgumentException("helper 任务引用未知 Worker：" + task.function());
+        if (workers.stream().flatMap(worker -> java.util.stream.Stream.of(
+            worker.requestMailbox(), worker.responseMailbox())).distinct().count() != workers.size() * 2L) {
+            throw new IllegalArgumentException("helper 邮箱 id 不能重复");
+        }
+        Map<String, Worker> functionOwners = new LinkedHashMap<>();
+        for (Worker worker : workers) {
+            for (String function : worker.functions()) {
+                if (functionOwners.putIfAbsent(function, worker) != null) {
+                    throw new IllegalArgumentException("helper 函数不能属于多个 Worker：" + function);
+                }
             }
         }
+        if (!functionOwners.keySet().equals(tasks.keySet())) {
+            throw new IllegalArgumentException("helper Worker 函数与任务集合不一致");
+        }
+        if (tasks.values().stream().map(Task::kind).distinct().count() != tasks.size()) {
+            throw new IllegalArgumentException("helper task kind 不能重复");
+        }
+        tasks.forEach((name, task) -> {
+            if (!name.equals(task.function())) throw new IllegalArgumentException("helper 任务名称与索引不一致：" + name);
+            Worker owner = functionOwners.get(name);
+            if (!owner.id().equals(task.worker())) {
+                throw new IllegalArgumentException("helper 任务引用错误 Worker：" + name);
+            }
+            if (task.parameterTypes().size() > owner.requestPayloadSlots()) {
+                throw new IllegalArgumentException("helper 请求邮箱宽度不足：" + name);
+            }
+        });
     }
 
     public static RuntimeHelperPlan empty() {
@@ -75,23 +98,51 @@ public record RuntimeHelperPlan(List<Worker> workers, Map<String, Task> tasks) {
             if (kind < 1 || kind > 2_000_000_000) throw new IllegalArgumentException("helper task kind 超出范围：" + kind);
             parameterTypes = List.copyOf(Objects.requireNonNull(parameterTypes, "parameterTypes"));
             Objects.requireNonNull(returnType, "returnType");
+            if (parameterTypes.stream().anyMatch(type -> !scalar(type)) || !scalar(returnType)) {
+                throw new IllegalArgumentException("helper ABI 只允许 Int、Float 或 Bool：" + function);
+            }
         }
 
         static Task from(HirFunction function, String worker, int kind) {
             return new Task(function.name(), worker, kind,
                 function.parameters().stream().map(parameter -> parameter.type()).toList(), function.returnType());
         }
+
+        private static boolean scalar(MplType type) {
+            return type == com.arc.mpl.hir.ValueType.INT || type == com.arc.mpl.hir.ValueType.FLOAT
+                || type == com.arc.mpl.hir.ValueType.BOOL;
+        }
     }
 
-    static RuntimeHelperPlan singleWorker(List<HirFunction> functions) {
+    static RuntimeHelperPlan partitioned(List<HirFunction> functions, List<List<HirFunction>> partitions) {
         if (functions.isEmpty()) return empty();
-        String worker = "Worker-0";
+        Objects.requireNonNull(partitions, "partitions");
+        if (partitions.isEmpty() || partitions.stream().anyMatch(List::isEmpty)) {
+            throw new IllegalArgumentException("helper 分区不能为空");
+        }
+        Map<String, String> owners = new LinkedHashMap<>();
+        List<Worker> workers = new java.util.ArrayList<>();
+        for (int index = 0; index < partitions.size(); index++) {
+            String worker = "Worker-" + index;
+            List<HirFunction> partition = List.copyOf(partitions.get(index));
+            for (HirFunction function : partition) {
+                if (owners.putIfAbsent(function.name(), worker) != null) {
+                    throw new IllegalArgumentException("helper 函数被重复分区：" + function.name());
+                }
+            }
+            int requestWidth = partition.stream().mapToInt(function -> function.parameters().size()).max().orElse(0);
+            workers.add(new Worker(worker, "MainToWorker" + index, "Worker" + index + "ToMain", requestWidth,
+                partition.stream().map(HirFunction::name).toList()));
+        }
+        if (!owners.keySet().equals(functions.stream().map(HirFunction::name)
+            .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new)))) {
+            throw new IllegalArgumentException("helper 分区没有恰好覆盖全部候选函数");
+        }
         Map<String, Task> tasks = new LinkedHashMap<>();
         int kind = 1;
-        for (HirFunction function : functions) tasks.put(function.name(), Task.from(function, worker, kind++));
-        int requestWidth = functions.stream().mapToInt(function -> function.parameters().size()).max().orElse(0);
-        Worker workerPlan = new Worker(worker, "MainToWorker0", "Worker0ToMain", requestWidth,
-            functions.stream().map(HirFunction::name).toList());
-        return new RuntimeHelperPlan(List.of(workerPlan), tasks);
+        for (HirFunction function : functions) {
+            tasks.put(function.name(), Task.from(function, owners.get(function.name()), kind++));
+        }
+        return new RuntimeHelperPlan(workers, tasks);
     }
 }
