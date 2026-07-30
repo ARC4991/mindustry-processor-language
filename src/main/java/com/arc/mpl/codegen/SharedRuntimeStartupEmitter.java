@@ -45,8 +45,8 @@ final class SharedRuntimeStartupEmitter {
             MlogProgramBuilder.Label wait = label("runtime_workers_wait");
             output.label(wait);
             for (String worker : shared.workers()) {
-                String heartbeat = readConstant(shared.header(), shared.heartbeatIndex(worker));
-                output.jump(wait, NOT_EQUAL, heartbeat, Integer.toString(shared.epoch()));
+                String acknowledgement = readConstant(shared.header(), shared.acknowledgementIndex(worker));
+                output.jump(wait, NOT_EQUAL, acknowledgement, Integer.toString(shared.epoch()));
             }
         });
     }
@@ -62,6 +62,7 @@ final class SharedRuntimeStartupEmitter {
         writeConstant(shared.header(), SharedRuntimeLayout.EPOCH_INDEX,
             Integer.toString(shared.epoch()));
         for (String worker : shared.workers()) {
+            writeConstant(shared.header(), shared.acknowledgementIndex(worker), "0");
             writeConstant(shared.header(), shared.heartbeatIndex(worker), "0");
         }
 
@@ -69,8 +70,8 @@ final class SharedRuntimeStartupEmitter {
         output.label(wait);
         String resetAck = Integer.toString(-shared.epoch());
         for (String worker : shared.workers()) {
-            String heartbeat = readConstant(shared.header(), shared.heartbeatIndex(worker));
-            output.jump(wait, NOT_EQUAL, heartbeat, resetAck);
+            String acknowledgement = readConstant(shared.header(), shared.acknowledgementIndex(worker));
+            output.jump(wait, NOT_EQUAL, acknowledgement, resetAck);
         }
         for (SharedMailboxLayout mailbox : shared.mailboxes()) {
             writeConstant(mailbox.allocation(), SharedMailboxLayout.VERSION_INDEX, "0");
@@ -94,7 +95,7 @@ final class SharedRuntimeStartupEmitter {
         verifyConstant(resetWait, shared.header(), SharedRuntimeLayout.EPOCH_INDEX,
             Integer.toString(shared.epoch()));
         verifyConstant(resetWait, shared.header(), SharedRuntimeLayout.READY_INDEX, "0");
-        writeConstant(shared.header(), shared.heartbeatIndex(context.shardId()),
+        writeConstant(shared.header(), shared.acknowledgementIndex(context.shardId()),
             Integer.toString(-shared.epoch()));
 
         output.label(readyWait);
@@ -111,11 +112,11 @@ final class SharedRuntimeStartupEmitter {
         verifyConstant(readyWait, shared.header(), SharedRuntimeLayout.EPOCH_INDEX,
             Integer.toString(shared.epoch()));
         verifyConstant(readyWait, shared.header(), SharedRuntimeLayout.READY_INDEX, "1");
-        writeConstant(shared.header(), shared.heartbeatIndex(context.shardId()),
+        writeConstant(shared.header(), shared.acknowledgementIndex(context.shardId()),
             Integer.toString(shared.epoch()));
         output.jump(readyDone, ALWAYS, "0", "0");
         output.label(resetAck);
-        writeConstant(shared.header(), shared.heartbeatIndex(context.shardId()),
+        writeConstant(shared.header(), shared.acknowledgementIndex(context.shardId()),
             Integer.toString(-shared.epoch()));
         output.jump(readyWait, ALWAYS, "0", "0");
         output.label(readyDone);

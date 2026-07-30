@@ -8,13 +8,13 @@ public record SharedRuntimeLayout(PhysicalMemoryLayout.Allocation header, String
                                   List<String> workers, int fingerprint, int epoch,
                                   List<SharedMailboxLayout> mailboxes) {
     public static final int MAGIC = 0x4d504c;
-    public static final int ABI_VERSION = 1;
+    public static final int ABI_VERSION = 2;
     public static final int MAGIC_INDEX = 0;
     public static final int ABI_INDEX = 1;
     public static final int FINGERPRINT_INDEX = 2;
     public static final int EPOCH_INDEX = 3;
     public static final int READY_INDEX = 4;
-    public static final int HEARTBEAT_START = 5;
+    public static final int ACKNOWLEDGEMENT_START = 5;
 
     public SharedRuntimeLayout {
         Objects.requireNonNull(header, "header");
@@ -56,13 +56,19 @@ public record SharedRuntimeLayout(PhysicalMemoryLayout.Allocation header, String
 
     public static int requiredSlots(int workers) {
         if (workers < 1) throw new IllegalArgumentException("Worker 数量必须为正数");
-        return Math.addExact(HEARTBEAT_START, workers);
+        return Math.addExact(ACKNOWLEDGEMENT_START, Math.multiplyExact(workers, 2));
+    }
+
+    public int acknowledgementIndex(String worker) {
+        int index = workers.indexOf(worker);
+        if (index < 0) throw new IllegalArgumentException("未知共享 Runtime Worker：" + worker);
+        return ACKNOWLEDGEMENT_START + index;
     }
 
     public int heartbeatIndex(String worker) {
         int index = workers.indexOf(worker);
         if (index < 0) throw new IllegalArgumentException("未知共享 Runtime Worker：" + worker);
-        return HEARTBEAT_START + index;
+        return ACKNOWLEDGEMENT_START + workers.size() + index;
     }
 
     public int slots() {

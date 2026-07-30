@@ -166,6 +166,8 @@ public final class BuildArtifactWriter {
             shared.workers().forEach(workers::add);
             runtime.put("slots", shared.slots());
             runtime.put("readyIndex", SharedRuntimeLayout.READY_INDEX);
+            ObjectNode acknowledgements = runtime.putObject("acknowledgementIndexes");
+            shared.workers().forEach(worker -> acknowledgements.put(worker, shared.acknowledgementIndex(worker)));
             ObjectNode heartbeats = runtime.putObject("heartbeatIndexes");
             shared.workers().forEach(worker -> heartbeats.put(worker, shared.heartbeatIndex(worker)));
             ArrayNode slices = runtime.putArray("slices");
