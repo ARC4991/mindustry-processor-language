@@ -53,6 +53,26 @@ class BlueprintLayoutTest {
         ), layout.memories().stream().map(value -> new Position(value.x(), value.y())).toList());
     }
 
+    @Test
+    void packsMultipleShardsBesideOneSharedBank() {
+        PhysicalMemoryLayout memory = new PhysicalMemoryLayout(List.of(
+            segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512)
+        ), Map.of(), 0);
+        RuntimeTopologyPlan plan = new RuntimeTopologyPlan(List.of(
+            new ShardPlan("Main", List.of("main"), TargetProfile.ProcessorKind.MICRO, 2, 0, 4, 0),
+            new ShardPlan("Worker-0", List.of("worker"), TargetProfile.ProcessorKind.MICRO, 2, 0, 4, 1)
+        ), memory);
+
+        BlueprintLayout layout = BlueprintLayout.topology(plan);
+
+        assertEquals(2, layout.width());
+        assertEquals(3, layout.height());
+        assertEquals(List.of(new Position(0, 0), new Position(1, 0)),
+            layout.shards().stream().map(value -> new Position(value.x(), value.y())).toList());
+        assertEquals(List.of(new Position(0, 1)),
+            layout.memories().stream().map(value -> new Position(value.x(), value.y())).toList());
+    }
+
     private PhysicalMemoryLayout.Segment segment(String alias, RuntimePreferences.MemoryKind kind, int capacity) {
         return new PhysicalMemoryLayout.Segment(alias, kind, capacity, 0);
     }

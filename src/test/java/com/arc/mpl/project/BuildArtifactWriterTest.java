@@ -161,6 +161,50 @@ class BuildArtifactWriterTest {
     }
 
     @Test
+    void writesMultipleProcessorsAndConnectsSharedMemoryToEveryShard() throws Exception {
+        TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
+        PhysicalMemoryLayout.StorageKey key = new PhysicalMemoryLayout.StorageKey(null, "shared");
+        PhysicalMemoryLayout layout = new PhysicalMemoryLayout(
+            List.of(new PhysicalMemoryLayout.Segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 1)),
+            Map.of(key, new PhysicalMemoryLayout.Allocation(key, 1,
+                List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 1)))), 1);
+        RuntimeTopologyPlan plan = new RuntimeTopologyPlan(List.of(
+            new ShardPlan("Main", List.of("main", "io"), TargetProfile.ProcessorKind.MICRO, 2, 0, 4, 0),
+            new ShardPlan("Worker-0", List.of("worker"), TargetProfile.ProcessorKind.MICRO, 2, 0, 4, 1)
+        ), layout);
+
+        new BuildArtifactWriter().write(temporaryDirectory, List.of(
+            new BuildArtifactWriter.ShardArtifact("Main", "write 1 bank__mpl_mem0 0\nstop\n", ""),
+            new BuildArtifactWriter.ShardArtifact("Worker-0", "read worker bank__mpl_mem0 0\nstop\n", "")
+        ), profile, new HardwareContract(List.of(), Map.of()), plan,
+            new ProjectMetadata("multi-demo", "1.0.0"), OptimizationReport.NONE);
+
+        assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("Main.mlog"))
+            .startsWith("# MPL shard: Main / build: "));
+        assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("Worker-0.mlog"))
+            .startsWith("# MPL shard: Worker-0 / build: "));
+        JsonNode report = new ObjectMapper().readTree(
+            java.nio.file.Files.readString(temporaryDirectory.resolve("report.json")));
+        assertEquals(2, report.path("shards").size());
+        assertEquals(4, report.path("totals").path("instructions").asInt());
+        assertEquals(1, report.path("totals").path("physicalSlots").asInt());
+        assertEquals(0, report.path("shards").get(1).path("resources").path("physicalSlots").asInt());
+        JsonNode deployment = new ObjectMapper().readTree(
+            java.nio.file.Files.readString(temporaryDirectory.resolve("deployment.json")));
+        JsonNode bindings = deployment.path("runtimeTopology").path("memorySegments").get(0).path("bindings");
+        assertEquals(List.of("Main", "Worker-0"), java.util.stream.StreamSupport.stream(bindings.spliterator(), false)
+            .map(value -> value.path("shard").asText()).toList());
+        assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("连接说明.txt"))
+            .contains("Runtime Memory 已自动连接到所有 shard"));
+        assertEquals(List.of(
+            new ProcessorPlacement("micro-processor", 0, 0,
+                List.of(new LogicLink("bank__mpl_mem0", 0, 1))),
+            new ProcessorPlacement("micro-processor", 1, 0,
+                List.of(new LogicLink("bank__mpl_mem0", -1, 1)))
+        ), readProcessorPlacements(temporaryDirectory.resolve("runtime.msch")));
+    }
+
+    @Test
     void reportsRealObjectPoolSlotsInsteadOfAPlaceholder() throws Exception {
         TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
         PhysicalMemoryLayout.StorageKey occupancyKey = PhysicalMemoryLayout.objectPoolOccupancyKey("Counter");
@@ -257,6 +301,38 @@ class BuildArtifactWriterTest {
         }
     }
 
+    private List<ProcessorPlacement> readProcessorPlacements(Path file) throws Exception {
+        byte[] bytes = java.nio.file.Files.readAllBytes(file);
+        try (DataInputStream stream = new DataInputStream(
+            new InflaterInputStream(new ByteArrayInputStream(bytes, 5, bytes.length - 5)))) {
+            stream.readShort();
+            stream.readShort();
+            int tagCount = stream.readUnsignedByte();
+            for (int index = 0; index < tagCount; index++) {
+                stream.readUTF();
+                stream.readUTF();
+            }
+            int blockCount = stream.readUnsignedByte();
+            List<String> blocks = new java.util.ArrayList<>();
+            for (int index = 0; index < blockCount; index++) blocks.add(stream.readUTF());
+            int tileCount = stream.readInt();
+            List<ProcessorPlacement> processors = new java.util.ArrayList<>();
+            for (int index = 0; index < tileCount; index++) {
+                String block = blocks.get(stream.readUnsignedByte());
+                int packed = stream.readInt();
+                int x = (short)(packed >>> 16);
+                int y = (short)packed;
+                int configType = stream.readUnsignedByte();
+                byte[] config = configType == 14 ? stream.readNBytes(stream.readInt()) : null;
+                stream.readUnsignedByte();
+                if (block.endsWith("processor") && config != null) {
+                    processors.add(new ProcessorPlacement(block, x, y, readLogicConfig(config).links()));
+                }
+            }
+            return List.copyOf(processors);
+        }
+    }
+
     private ProcessorConfig readLogicConfig(byte[] config) throws Exception {
         try (DataInputStream stream = new DataInputStream(new InflaterInputStream(new ByteArrayInputStream(config)))) {
             stream.readUnsignedByte();
@@ -274,6 +350,9 @@ class BuildArtifactWriterTest {
     }
 
     private record TilePlacement(String block, int x, int y) {
+    }
+
+    private record ProcessorPlacement(String block, int x, int y, List<LogicLink> links) {
     }
 
     private record ProcessorConfig(String code, List<LogicLink> links) {

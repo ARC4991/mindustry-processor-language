@@ -4,7 +4,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.List;
+import java.util.Objects;
 import java.util.zip.DeflaterOutputStream;
 
 /** Writes the audited v146 .msch wire format for the compiler runtime topology. */
@@ -15,11 +17,33 @@ public final class MindustrySchematicWriter {
     }
 
     byte[] write(String mlog, RuntimePlan plan, BlueprintLayout layout, String name, String buildHash) throws IOException {
-        BlueprintLayout.ShardPlacement main = layout.main();
-        List<Link> links = layout.memories().stream().map(memory -> new Link(memory.segment().alias(),
-            memory.x() - main.x(), memory.y() - main.y())).toList();
+        return write(Map.of("Main", mlog), RuntimeTopologyPlan.singleShard(plan), layout, name, buildHash);
+    }
+
+    public byte[] write(Map<String, String> mlogByShard, RuntimeTopologyPlan plan,
+                        String name, String buildHash) throws IOException {
+        return write(mlogByShard, plan, BlueprintLayout.topology(plan), name, buildHash);
+    }
+
+    byte[] write(Map<String, String> mlogByShard, RuntimeTopologyPlan plan, BlueprintLayout layout,
+                 String name, String buildHash) throws IOException {
+        Objects.requireNonNull(mlogByShard, "mlogByShard");
+        Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(layout, "layout");
+        if (!mlogByShard.keySet().equals(plan.shards().stream()
+            .map(ShardPlan::id).collect(java.util.stream.Collectors.toSet()))) {
+            throw new IllegalArgumentException("mlog shard 集合与 Runtime 拓扑不一致");
+        }
         List<Tile> tiles = new java.util.ArrayList<>();
-        tiles.add(new Tile(processorBlock(plan), main.x(), main.y(), logicConfig(mlog, links)));
+        for (ShardPlan shard : plan.shards()) {
+            BlueprintLayout.ShardPlacement placement = layout.shards().stream()
+                .filter(value -> value.id().equals(shard.id())).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("蓝图缺少 shard 布局：" + shard.id()));
+            List<Link> links = layout.memories().stream().map(memory -> new Link(memory.segment().alias(),
+                memory.x() - placement.x(), memory.y() - placement.y())).toList();
+            tiles.add(new Tile(processorBlock(shard), placement.x(), placement.y(),
+                logicConfig(Objects.requireNonNull(mlogByShard.get(shard.id()), shard.id()), links)));
+        }
         for (BlueprintLayout.MemoryPlacement memory : layout.memories()) {
             boolean cell = memory.segment().kind() == RuntimePreferences.MemoryKind.CELL;
             tiles.add(new Tile(cell ? "memory-cell" : "memory-bank", memory.x(), memory.y(), null));
@@ -27,8 +51,8 @@ public final class MindustrySchematicWriter {
         return schematic(tiles, layout.width(), layout.height(), name, buildHash);
     }
 
-    private String processorBlock(RuntimePlan plan) {
-        return switch (plan.processor()) {
+    private String processorBlock(ShardPlan shard) {
+        return switch (shard.processor()) {
             case MICRO -> "micro-processor";
             case LOGIC -> "logic-processor";
             case HYPER -> "hyper-processor";

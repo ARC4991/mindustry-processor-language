@@ -17,15 +17,22 @@ public record BlueprintLayout(int width, int height, List<ShardPlacement> shards
     }
 
     public static BlueprintLayout singleShard(RuntimePlan plan) {
-        int processorSize = switch (plan.processor()) {
-            case MICRO -> 1;
-            case LOGIC -> 2;
-            case HYPER -> 3;
-        };
+        return topology(RuntimeTopologyPlan.singleShard(plan));
+    }
+
+    public static BlueprintLayout topology(RuntimeTopologyPlan plan) {
+        Objects.requireNonNull(plan, "plan");
+        List<Integer> processorSizes = plan.shards().stream().map(BlueprintLayout::processorSize).toList();
         List<PhysicalMemoryLayout.Segment> segments = plan.physicalMemoryLayout().segments();
-        Packing packing = compactPacking(processorSize, segments);
-        ShardPlacement main = new ShardPlacement("Main", plan.processorId(), List.of("main"),
-            anchor(packing.processor().x(), processorSize), anchor(packing.processor().y(), processorSize));
+        Packing packing = compactPacking(processorSizes, segments);
+        List<ShardPlacement> shards = new ArrayList<>();
+        for (int index = 0; index < plan.shards().size(); index++) {
+            ShardPlan shard = plan.shards().get(index);
+            int size = processorSizes.get(index);
+            Rectangle rectangle = packing.processors().get(index);
+            shards.add(new ShardPlacement(shard.id(), shard.processorId(), shard.roles(),
+                anchor(rectangle.x(), size), anchor(rectangle.y(), size)));
+        }
         List<MemoryPlacement> memories = new ArrayList<>();
         for (int index = 0; index < segments.size(); index++) {
             PhysicalMemoryLayout.Segment segment = segments.get(index);
@@ -33,20 +40,25 @@ public record BlueprintLayout(int width, int height, List<ShardPlacement> shards
             int size = memorySize(segment);
             memories.add(new MemoryPlacement(segment, anchor(rectangle.x(), size), anchor(rectangle.y(), size)));
         }
-        return new BlueprintLayout(packing.width(), packing.height(), List.of(main), memories);
+        return new BlueprintLayout(packing.width(), packing.height(), shards, memories);
     }
 
-    /** Exhaustively chooses a deterministic minimum-area first-fit packing for the current single shard. */
-    private static Packing compactPacking(int processorSize, List<PhysicalMemoryLayout.Segment> segments) {
-        int minimumWidth = processorSize;
-        int maximumWidth = processorSize;
+    /** Exhaustively chooses a deterministic minimum-area first-fit packing for processors then Memory. */
+    private static Packing compactPacking(List<Integer> processorSizes,
+                                           List<PhysicalMemoryLayout.Segment> segments) {
+        int minimumWidth = 1;
+        int maximumWidth = 0;
+        for (int size : processorSizes) {
+            minimumWidth = Math.max(minimumWidth, size);
+            maximumWidth += size;
+        }
         for (PhysicalMemoryLayout.Segment segment : segments) {
             minimumWidth = Math.max(minimumWidth, memorySize(segment));
             maximumWidth += memorySize(segment);
         }
         Packing best = null;
         for (int width = minimumWidth; width <= maximumWidth; width++) {
-            Packing candidate = packAtWidth(processorSize, segments, width, maximumWidth);
+            Packing candidate = packAtWidth(processorSizes, segments, width, maximumWidth);
             if (best == null || candidate.area() < best.area()
                 || candidate.area() == best.area() && candidate.maximumDimension() < best.maximumDimension()
                 || candidate.area() == best.area() && candidate.maximumDimension() == best.maximumDimension()
@@ -57,14 +69,21 @@ public record BlueprintLayout(int width, int height, List<ShardPlacement> shards
         return Objects.requireNonNull(best, "compact blueprint packing");
     }
 
-    private static Packing packAtWidth(int processorSize, List<PhysicalMemoryLayout.Segment> segments,
+    private static Packing packAtWidth(List<Integer> processorSizes,
+                                       List<PhysicalMemoryLayout.Segment> segments,
                                        int width, int maximumHeight) {
         boolean[][] occupied = new boolean[maximumHeight][width];
-        Rectangle processor = new Rectangle(0, 0, processorSize);
-        occupy(occupied, processor);
+        List<Rectangle> processors = new ArrayList<>();
+        int usedWidth = 0;
+        int usedHeight = 0;
+        for (int size : processorSizes) {
+            Rectangle processor = firstFree(occupied, size);
+            occupy(occupied, processor);
+            processors.add(processor);
+            usedWidth = Math.max(usedWidth, processor.x() + size);
+            usedHeight = Math.max(usedHeight, processor.y() + size);
+        }
         List<Rectangle> memories = new ArrayList<>();
-        int usedWidth = processorSize;
-        int usedHeight = processorSize;
         for (PhysicalMemoryLayout.Segment segment : segments) {
             int size = memorySize(segment);
             Rectangle placed = firstFree(occupied, size);
@@ -73,7 +92,7 @@ public record BlueprintLayout(int width, int height, List<ShardPlacement> shards
             usedWidth = Math.max(usedWidth, placed.x() + size);
             usedHeight = Math.max(usedHeight, placed.y() + size);
         }
-        return new Packing(usedWidth, usedHeight, processor, List.copyOf(memories));
+        return new Packing(usedWidth, usedHeight, List.copyOf(processors), List.copyOf(memories));
     }
 
     private static Rectangle firstFree(boolean[][] occupied, int size) {
@@ -88,7 +107,7 @@ public record BlueprintLayout(int width, int height, List<ShardPlacement> shards
                 if (free) return new Rectangle(x, y, size);
             }
         }
-        throw new IllegalArgumentException("无法在蓝图候选宽度内放置 Runtime Memory");
+        throw new IllegalArgumentException("无法在蓝图候选宽度内放置 Runtime 方块");
     }
 
     private static void occupy(boolean[][] occupied, Rectangle rectangle) {
@@ -99,6 +118,14 @@ public record BlueprintLayout(int width, int height, List<ShardPlacement> shards
 
     private static int memorySize(PhysicalMemoryLayout.Segment segment) {
         return segment.kind() == RuntimePreferences.MemoryKind.CELL ? 1 : 2;
+    }
+
+    private static int processorSize(ShardPlan shard) {
+        return switch (shard.processor()) {
+            case MICRO -> 1;
+            case LOGIC -> 2;
+            case HYPER -> 3;
+        };
     }
 
     private static int anchor(int origin, int size) {
@@ -127,7 +154,7 @@ public record BlueprintLayout(int width, int height, List<ShardPlacement> shards
 
     private record Rectangle(int x, int y, int size) { }
 
-    private record Packing(int width, int height, Rectangle processor, List<Rectangle> memories) {
+    private record Packing(int width, int height, List<Rectangle> processors, List<Rectangle> memories) {
         private int area() { return Math.multiplyExact(width, height); }
         private int maximumDimension() { return Math.max(width, height); }
     }
