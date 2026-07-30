@@ -102,7 +102,7 @@ class RuntimePlannerTest {
             plan.shards().stream().map(ShardPlan::processor).toList());
         assertEquals(MlogProgramMetrics.analyze(main).instructions()
             + MlogProgramMetrics.analyze(worker).instructions(), plan.instructions());
-        assertEquals(6, plan.runtimeSlots());
+        assertEquals(7, plan.runtimeSlots());
         org.junit.jupiter.api.Assertions.assertTrue(plan.instructions() > 4);
     }
 

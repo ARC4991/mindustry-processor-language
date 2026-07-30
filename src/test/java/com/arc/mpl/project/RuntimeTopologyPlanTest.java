@@ -58,8 +58,8 @@ class RuntimeTopologyPlanTest {
         RuntimeTopologyPlan topology = new RuntimeTopologyPlan(shards, prepared.physicalMemoryLayout(),
             java.util.Optional.of(prepared.sharedRuntime()));
 
-        assertEquals(6, topology.runtimeSlots());
-        assertEquals(6, topology.physicalSlots());
+        assertEquals(7, topology.runtimeSlots());
+        assertEquals(7, topology.physicalSlots());
         assertThrows(IllegalArgumentException.class, () -> new RuntimeTopologyPlan(List.of(
             shards.get(0), new ShardPlan("Worker-1", List.of("worker"), TargetProfile.ProcessorKind.MICRO,
                 10, 1, 4, 2)), prepared.physicalMemoryLayout(), java.util.Optional.of(prepared.sharedRuntime())));

@@ -206,8 +206,8 @@ class BuildArtifactWriterTest {
             java.nio.file.Files.readString(temporaryDirectory.resolve("report.json")));
         assertEquals(2, report.path("shards").size());
         assertEquals(plan.instructions(), report.path("totals").path("instructions").asInt());
-        assertEquals(11, report.path("totals").path("physicalSlots").asInt());
-        assertEquals(10, report.path("totals").path("runtimeSlots").asInt());
+        assertEquals(12, report.path("totals").path("physicalSlots").asInt());
+        assertEquals(11, report.path("totals").path("runtimeSlots").asInt());
         assertEquals(0, report.path("shards").get(1).path("resources").path("physicalSlots").asInt());
         JsonNode deployment = new ObjectMapper().readTree(
             java.nio.file.Files.readString(temporaryDirectory.resolve("deployment.json")));
@@ -215,9 +215,10 @@ class BuildArtifactWriterTest {
         assertEquals(List.of("Main", "Worker-0"), java.util.stream.StreamSupport.stream(bindings.spliterator(), false)
             .map(value -> value.path("shard").asText()).toList());
         JsonNode sharedRuntime = deployment.path("runtimeTopology").path("sharedRuntime");
-        assertEquals(1, sharedRuntime.path("abiVersion").asInt());
-        assertEquals(10, sharedRuntime.path("slots").asInt());
-        assertEquals(5, sharedRuntime.path("heartbeatIndexes").path("Worker-0").asInt());
+        assertEquals(2, sharedRuntime.path("abiVersion").asInt());
+        assertEquals(11, sharedRuntime.path("slots").asInt());
+        assertEquals(5, sharedRuntime.path("acknowledgementIndexes").path("Worker-0").asInt());
+        assertEquals(6, sharedRuntime.path("heartbeatIndexes").path("Worker-0").asInt());
         assertEquals("MainToWorker", sharedRuntime.path("mailboxes").get(0).path("id").asText());
         assertEquals(1, sharedRuntime.path("mailboxes").get(0).path("payloadSlots").asInt());
         assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("连接说明.txt"))

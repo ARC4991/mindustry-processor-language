@@ -80,13 +80,13 @@ class MlogSharedRuntimeTest {
         assertTrue(mlog.contains("cell__mpl_mem1 0"));
         assertTrue(mlog.contains("cell__mpl_mem1 3"));
         String resetAck = constantWrite(prepared.physicalMemoryLayout(), shared.header(),
-            shared.heartbeatIndex("Worker-0"), Integer.toString(-shared.epoch()));
+            shared.acknowledgementIndex("Worker-0"), Integer.toString(-shared.epoch()));
         String readyAck = constantWrite(prepared.physicalMemoryLayout(), shared.header(),
-            shared.heartbeatIndex("Worker-0"), Integer.toString(shared.epoch()));
+            shared.acknowledgementIndex("Worker-0"), Integer.toString(shared.epoch()));
         assertTrue(mlog.contains(resetAck));
         assertTrue(mlog.indexOf(resetAck) < mlog.indexOf(readyAck));
         assertTrue(mlog.contains(constantWrite(prepared.physicalMemoryLayout(), shared.header(),
-            shared.heartbeatIndex("Worker-0"), Integer.toString(shared.epoch()))));
+            shared.acknowledgementIndex("Worker-0"), Integer.toString(shared.epoch()))));
         assertFalse(mlog.contains(constantWrite(prepared.physicalMemoryLayout(), shared.header(),
             shared.heartbeatIndex("Worker-0"), "0")));
         assertTrue(mlog.endsWith("stop\n"));

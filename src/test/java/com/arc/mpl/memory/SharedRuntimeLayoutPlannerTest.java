@@ -22,9 +22,11 @@ class SharedRuntimeLayoutPlannerTest {
             List.of("Worker-0", "Worker-1"), "code-a", profile, RuntimePreferences.defaults());
 
         SharedRuntimeLayout shared = result.sharedRuntime();
-        assertEquals(7, shared.slots());
-        assertEquals(5, shared.heartbeatIndex("Worker-0"));
-        assertEquals(6, shared.heartbeatIndex("Worker-1"));
+        assertEquals(9, shared.slots());
+        assertEquals(5, shared.acknowledgementIndex("Worker-0"));
+        assertEquals(6, shared.acknowledgementIndex("Worker-1"));
+        assertEquals(7, shared.heartbeatIndex("Worker-0"));
+        assertEquals(8, shared.heartbeatIndex("Worker-1"));
         assertSame(shared.header(), result.physicalMemoryLayout().allocations().get(SharedRuntimeLayout.storageKey()));
     }
 
@@ -60,9 +62,9 @@ class SharedRuntimeLayoutPlannerTest {
         assertSame(existing, result.physicalMemoryLayout().allocations().get(existingKey));
         assertEquals(List.of(
             new PhysicalMemoryLayout.Slice(0, 63, 0, 1),
-            new PhysicalMemoryLayout.Slice(1, 0, 1, 5)
+            new PhysicalMemoryLayout.Slice(1, 0, 1, 6)
         ), result.sharedRuntime().header().slices());
-        assertEquals(69, result.physicalMemoryLayout().physicalSlots());
+        assertEquals(70, result.physicalMemoryLayout().physicalSlots());
     }
 
     @Test
@@ -75,12 +77,12 @@ class SharedRuntimeLayoutPlannerTest {
             List.of("Worker-0"), mailboxes, "code-a", profile, RuntimePreferences.defaults());
 
         SharedRuntimeLayout shared = result.sharedRuntime();
-        assertEquals(15, shared.slots());
-        assertEquals(6, shared.headerSlots());
+        assertEquals(16, shared.slots());
+        assertEquals(7, shared.headerSlots());
         assertEquals(2, shared.mailboxes().size());
         assertEquals(5, shared.mailbox("MainToWorker0").slots());
         assertEquals(4, shared.mailbox("Worker0ToMain").slots());
-        assertEquals(15, result.physicalMemoryLayout().physicalSlots());
+        assertEquals(16, result.physicalMemoryLayout().physicalSlots());
         assertSame(shared.mailbox("MainToWorker0").allocation(), result.physicalMemoryLayout().allocations()
             .get(SharedMailboxLayout.storageKey("MainToWorker0")));
     }
