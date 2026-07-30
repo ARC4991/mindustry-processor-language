@@ -1,6 +1,11 @@
 package com.arc.mpl.project;
 
+import com.arc.mpl.codegen.MlogCodeGenerator;
+import com.arc.mpl.codegen.MlogLabelStyle;
+import com.arc.mpl.codegen.MlogRuntimeContext;
+import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.memory.SharedRuntimeLayoutPlanner;
 import com.arc.mpl.hir.ValueType;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
@@ -20,6 +25,7 @@ import java.util.Map;
 import java.util.zip.InflaterInputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BuildArtifactWriterTest {
@@ -168,14 +174,26 @@ class BuildArtifactWriterTest {
             List.of(new PhysicalMemoryLayout.Segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 1)),
             Map.of(key, new PhysicalMemoryLayout.Allocation(key, 1,
                 List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 1)))), 1);
-        RuntimeTopologyPlan plan = new RuntimeTopologyPlan(List.of(
-            new ShardPlan("Main", List.of("main", "io"), TargetProfile.ProcessorKind.MICRO, 2, 0, 4, 0),
-            new ShardPlan("Worker-0", List.of("worker"), TargetProfile.ProcessorKind.MICRO, 2, 0, 4, 1)
-        ), layout);
+        List<RuntimePlanner.ShardSource> seeds = List.of(
+            new RuntimePlanner.ShardSource("Main", List.of("main", "io"), "main-seed"),
+            new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), "worker-seed"));
+        RuntimePlanner planner = new RuntimePlanner();
+        SharedRuntimeLayoutPlanner.Result prepared = planner.prepareSharedRuntime(
+            seeds, profile, RuntimePreferences.defaults(), layout);
+        String mainMlog = new MlogCodeGenerator(MlogLabelStyle.RELEASE, prepared.physicalMemoryLayout(), List.of(),
+            profile.capabilities(), MlogRuntimeContext.shared("Main", prepared.sharedRuntime()))
+            .generate(new HirProgram(List.of()));
+        String workerMlog = new MlogCodeGenerator(MlogLabelStyle.RELEASE, prepared.physicalMemoryLayout(), List.of(),
+            profile.capabilities(), MlogRuntimeContext.shared("Worker-0", prepared.sharedRuntime()))
+            .generate(new HirProgram(List.of()));
+        RuntimeTopologyPlan plan = planner.planTopology(List.of(
+            new RuntimePlanner.ShardSource("Main", List.of("main", "io"), mainMlog),
+            new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), workerMlog)
+        ), profile, RuntimePreferences.defaults(), prepared);
 
         new BuildArtifactWriter().write(temporaryDirectory, List.of(
-            new BuildArtifactWriter.ShardArtifact("Main", "write 1 bank__mpl_mem0 0\nstop\n", ""),
-            new BuildArtifactWriter.ShardArtifact("Worker-0", "read worker bank__mpl_mem0 0\nstop\n", "")
+            new BuildArtifactWriter.ShardArtifact("Main", mainMlog, ""),
+            new BuildArtifactWriter.ShardArtifact("Worker-0", workerMlog, "")
         ), profile, new HardwareContract(List.of(), Map.of()), plan,
             new ProjectMetadata("multi-demo", "1.0.0"), OptimizationReport.NONE);
 
@@ -186,14 +204,19 @@ class BuildArtifactWriterTest {
         JsonNode report = new ObjectMapper().readTree(
             java.nio.file.Files.readString(temporaryDirectory.resolve("report.json")));
         assertEquals(2, report.path("shards").size());
-        assertEquals(4, report.path("totals").path("instructions").asInt());
-        assertEquals(1, report.path("totals").path("physicalSlots").asInt());
+        assertEquals(plan.instructions(), report.path("totals").path("instructions").asInt());
+        assertEquals(7, report.path("totals").path("physicalSlots").asInt());
+        assertEquals(6, report.path("totals").path("runtimeSlots").asInt());
         assertEquals(0, report.path("shards").get(1).path("resources").path("physicalSlots").asInt());
         JsonNode deployment = new ObjectMapper().readTree(
             java.nio.file.Files.readString(temporaryDirectory.resolve("deployment.json")));
         JsonNode bindings = deployment.path("runtimeTopology").path("memorySegments").get(0).path("bindings");
         assertEquals(List.of("Main", "Worker-0"), java.util.stream.StreamSupport.stream(bindings.spliterator(), false)
             .map(value -> value.path("shard").asText()).toList());
+        JsonNode sharedRuntime = deployment.path("runtimeTopology").path("sharedRuntime");
+        assertEquals(1, sharedRuntime.path("abiVersion").asInt());
+        assertEquals(6, sharedRuntime.path("slots").asInt());
+        assertEquals(5, sharedRuntime.path("heartbeatIndexes").path("Worker-0").asInt());
         assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("连接说明.txt"))
             .contains("Runtime Memory 已自动连接到所有 shard"));
         assertEquals(List.of(
@@ -202,6 +225,20 @@ class BuildArtifactWriterTest {
             new ProcessorPlacement("micro-processor", 1, 0,
                 List.of(new LogicLink("bank__mpl_mem0", -1, 1)))
         ), readProcessorPlacements(temporaryDirectory.resolve("runtime.msch")));
+    }
+
+    @Test
+    void rejectsADeployableMultiProcessorBlueprintWithoutStartupProtocol() {
+        RuntimeTopologyPlan unsafe = new RuntimeTopologyPlan(List.of(
+            new ShardPlan("Main", List.of("main"), TargetProfile.ProcessorKind.MICRO, 1, 0, 1, 0),
+            new ShardPlan("Worker-0", List.of("worker"), TargetProfile.ProcessorKind.MICRO, 1, 0, 1, 0)
+        ), PhysicalMemoryLayout.empty());
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> new MindustrySchematicWriter().write(Map.of("Main", "stop\n", "Worker-0", "stop\n"),
+                unsafe, "unsafe", "0".repeat(64)));
+
+        assertTrue(error.getMessage().contains("缺少共享 Runtime 启动协议"));
     }
 
     @Test

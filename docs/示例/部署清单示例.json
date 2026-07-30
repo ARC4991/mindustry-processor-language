@@ -25,12 +25,27 @@
           { "shard": "Worker-0", "alias": "bank__mpl_mem0", "access": "readWrite", "autoConnected": true }
         ]
       }
-    ]
+    ],
+    "sharedRuntime": {
+      "magic": 5066828,
+      "abiVersion": 1,
+      "fingerprint": 150158518,
+      "epoch": 1648766121,
+      "mainShard": "Main",
+      "workers": ["Worker-0"],
+      "slots": 6,
+      "readyIndex": 4,
+      "heartbeatIndexes": { "Worker-0": 5 },
+      "slices": [
+        { "memory": "bank__mpl_mem0", "offset": 122, "logicalStart": 0, "length": 6 }
+      ]
+    }
   },
   "externalHardware": [
     { "mplName": "AlertBoard", "ownerShard": "Main", "alias": "message1", "type": "Message", "access": "write" },
     { "mplName": "MainScreen", "ownerShard": "Main", "alias": "display1", "type": "Display", "access": "write" }
   ],
+  "logicalDisplays": [],
   "prerequisites": [
     { "kind": "mapRule", "value": "logicUnitControl" }
   ]

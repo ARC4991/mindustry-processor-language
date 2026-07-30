@@ -1,5 +1,6 @@
 package com.arc.mpl.project;
 
+import com.arc.mpl.memory.SharedRuntimeLayout;
 import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.optimization.OptimizationReport;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -154,6 +155,28 @@ public final class BuildArtifactWriter {
                 binding.put("autoConnected", true);
             });
         });
+        plan.sharedRuntime().ifPresent(shared -> {
+            ObjectNode runtime = topology.putObject("sharedRuntime");
+            runtime.put("magic", SharedRuntimeLayout.MAGIC);
+            runtime.put("abiVersion", SharedRuntimeLayout.ABI_VERSION);
+            runtime.put("fingerprint", shared.fingerprint());
+            runtime.put("epoch", shared.epoch());
+            runtime.put("mainShard", shared.mainShard());
+            ArrayNode workers = runtime.putArray("workers");
+            shared.workers().forEach(workers::add);
+            runtime.put("slots", shared.slots());
+            runtime.put("readyIndex", SharedRuntimeLayout.READY_INDEX);
+            ObjectNode heartbeats = runtime.putObject("heartbeatIndexes");
+            shared.workers().forEach(worker -> heartbeats.put(worker, shared.heartbeatIndex(worker)));
+            ArrayNode slices = runtime.putArray("slices");
+            shared.header().slices().forEach(slice -> {
+                ObjectNode item = slices.addObject();
+                item.put("memory", plan.physicalMemoryLayout().segments().get(slice.segmentIndex()).alias());
+                item.put("offset", slice.offset());
+                item.put("logicalStart", slice.logicalStart());
+                item.put("length", slice.length());
+            });
+        });
 
         ObjectNode deployment = artifactHeader(profile, digest);
         deployment.put("layoutFingerprint", digest(topology.toString()));
@@ -269,7 +292,7 @@ public final class BuildArtifactWriter {
         resources.put("physicalSlots", plan.physicalSlots());
         resources.put("objectPoolSlots", plan.objectPoolSlots());
         resources.put("stringSlots", plan.stringSlots());
-        resources.put("runtimeSlots", 0);
+        resources.put("runtimeSlots", plan.runtimeSlots());
         return resources;
     }
 
@@ -282,7 +305,7 @@ public final class BuildArtifactWriter {
         resources.put("physicalSlots", ownsSharedLayout ? plan.physicalSlots() : 0);
         resources.put("objectPoolSlots", ownsSharedLayout ? plan.objectPoolSlots() : 0);
         resources.put("stringSlots", ownsSharedLayout ? plan.stringSlots() : 0);
-        resources.put("runtimeSlots", 0);
+        resources.put("runtimeSlots", ownsSharedLayout ? plan.runtimeSlots() : 0);
         return resources;
     }
 

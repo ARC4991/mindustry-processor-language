@@ -30,6 +30,9 @@ public final class MindustrySchematicWriter {
         Objects.requireNonNull(mlogByShard, "mlogByShard");
         Objects.requireNonNull(plan, "plan");
         Objects.requireNonNull(layout, "layout");
+        if (plan.shards().size() > 1 && plan.sharedRuntime().isEmpty()) {
+            throw new IllegalArgumentException("多处理器蓝图缺少共享 Runtime 启动协议");
+        }
         if (!mlogByShard.keySet().equals(plan.shards().stream()
             .map(ShardPlan::id).collect(java.util.stream.Collectors.toSet()))) {
             throw new IllegalArgumentException("mlog shard 集合与 Runtime 拓扑不一致");

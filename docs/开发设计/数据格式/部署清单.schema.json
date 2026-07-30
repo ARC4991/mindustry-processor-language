@@ -23,7 +23,34 @@
       "properties": {
         "blueprint": { "$ref": "#/$defs/blueprint" },
         "shards": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/shard" } },
-        "memorySegments": { "type": "array", "items": { "$ref": "#/$defs/memory" } }
+        "memorySegments": { "type": "array", "items": { "$ref": "#/$defs/memory" } },
+        "sharedRuntime": { "$ref": "#/$defs/sharedRuntime" }
+      }
+    },
+    "sharedRuntime": {
+      "type": "object", "additionalProperties": false,
+      "required": ["magic", "abiVersion", "fingerprint", "epoch", "mainShard", "workers", "slots", "readyIndex", "heartbeatIndexes", "slices"],
+      "properties": {
+        "magic": { "type": "integer", "minimum": 1 },
+        "abiVersion": { "type": "integer", "minimum": 1 },
+        "fingerprint": { "type": "integer", "minimum": 1 },
+        "epoch": { "type": "integer", "minimum": 1 },
+        "mainShard": { "type": "string" },
+        "workers": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+        "slots": { "type": "integer", "minimum": 6 },
+        "readyIndex": { "type": "integer", "minimum": 0 },
+        "heartbeatIndexes": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "slices": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/runtimeSlice" } }
+      }
+    },
+    "runtimeSlice": {
+      "type": "object", "additionalProperties": false,
+      "required": ["memory", "offset", "logicalStart", "length"],
+      "properties": {
+        "memory": { "type": "string" },
+        "offset": { "type": "integer", "minimum": 0 },
+        "logicalStart": { "type": "integer", "minimum": 0 },
+        "length": { "type": "integer", "minimum": 1 }
       }
     },
     "blueprint": {
@@ -41,7 +68,7 @@
         "id": { "type": "string" },
         "processor": { "type": "string" },
         "mlog": { "type": "string", "pattern": "\\.mlog$" },
-        "roles": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["main", "worker"] } },
+        "roles": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } },
         "blueprintPosition": { "$ref": "#/$defs/position" }
       }
     },
