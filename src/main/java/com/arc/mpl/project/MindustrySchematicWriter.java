@@ -49,7 +49,8 @@ public final class MindustrySchematicWriter {
             stream.writeInt(tiles.size());
             for (Tile tile : tiles) {
                 stream.writeByte(blocks.indexOf(tile.block));
-                stream.writeInt(tile.x | tile.y << 16);
+                // arc.math.geom.Point2.pack stores x in the high 16 bits and y in the low 16 bits.
+                stream.writeInt(((tile.x & 0xffff) << 16) | (tile.y & 0xffff));
                 if (tile.config == null) stream.writeByte(0);
                 else { stream.writeByte(14); stream.writeInt(tile.config.length); stream.write(tile.config); }
                 stream.writeByte(0);
