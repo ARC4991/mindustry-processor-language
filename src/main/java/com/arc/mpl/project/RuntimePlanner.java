@@ -58,6 +58,14 @@ public final class RuntimePlanner {
     public SharedRuntimeLayoutPlanner.Result prepareSharedRuntime(List<ShardSource> sources, TargetProfile profile,
                                                                   RuntimePreferences preferences,
                                                                   PhysicalMemoryLayout baseMemoryLayout) {
+        return prepareSharedRuntime(sources, profile, preferences, baseMemoryLayout, List.of());
+    }
+
+    /** Allocates the startup header and all statically owned SPSC mailboxes. */
+    public SharedRuntimeLayoutPlanner.Result prepareSharedRuntime(List<ShardSource> sources, TargetProfile profile,
+                                                                  RuntimePreferences preferences,
+                                                                  PhysicalMemoryLayout baseMemoryLayout,
+                                                                  List<SharedRuntimeLayoutPlanner.MailboxRequirement> mailboxes) {
         Objects.requireNonNull(sources, "sources");
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(preferences, "preferences");
@@ -67,7 +75,7 @@ public final class RuntimePlanner {
         ShardSource main = uniqueMain(sources);
         List<String> workers = sources.stream().filter(source -> !source.id().equals(main.id()))
             .map(ShardSource::id).toList();
-        return new SharedRuntimeLayoutPlanner().plan(baseMemoryLayout, main.id(), workers,
+        return new SharedRuntimeLayoutPlanner().plan(baseMemoryLayout, main.id(), workers, mailboxes,
             sourceSeed(sources), profile, preferences);
     }
 

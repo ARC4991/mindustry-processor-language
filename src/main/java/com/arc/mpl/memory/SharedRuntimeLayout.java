@@ -5,7 +5,8 @@ import java.util.Objects;
 
 /** Versioned shared-Memory header and per-Worker heartbeat slots. */
 public record SharedRuntimeLayout(PhysicalMemoryLayout.Allocation header, String mainShard,
-                                  List<String> workers, int fingerprint, int epoch) {
+                                  List<String> workers, int fingerprint, int epoch,
+                                  List<SharedMailboxLayout> mailboxes) {
     public static final int MAGIC = 0x4d504c;
     public static final int ABI_VERSION = 1;
     public static final int MAGIC_INDEX = 0;
@@ -30,6 +31,23 @@ public record SharedRuntimeLayout(PhysicalMemoryLayout.Allocation header, String
             throw new IllegalArgumentException("共享 Runtime header 槽数与 Worker 数量不匹配");
         }
         if (fingerprint <= 0 || epoch <= 0) throw new IllegalArgumentException("共享 Runtime 指纹和 epoch 必须为正数");
+        mailboxes = List.copyOf(Objects.requireNonNull(mailboxes, "mailboxes"));
+        if (mailboxes.stream().map(SharedMailboxLayout::id).distinct().count() != mailboxes.size()) {
+            throw new IllegalArgumentException("共享 Runtime 邮箱 id 不能重复");
+        }
+        List<String> shards = new java.util.ArrayList<>();
+        shards.add(mainShard);
+        shards.addAll(workers);
+        for (SharedMailboxLayout mailbox : mailboxes) {
+            if (!shards.contains(mailbox.producer()) || !shards.contains(mailbox.consumer())) {
+                throw new IllegalArgumentException("共享邮箱端点不属于 Runtime 拓扑：" + mailbox.id());
+            }
+        }
+    }
+
+    public SharedRuntimeLayout(PhysicalMemoryLayout.Allocation header, String mainShard,
+                               List<String> workers, int fingerprint, int epoch) {
+        this(header, mainShard, workers, fingerprint, epoch, List.of());
     }
 
     public static PhysicalMemoryLayout.StorageKey storageKey() {
@@ -48,6 +66,15 @@ public record SharedRuntimeLayout(PhysicalMemoryLayout.Allocation header, String
     }
 
     public int slots() {
+        return Math.addExact(header.size(), mailboxes.stream().mapToInt(SharedMailboxLayout::slots).sum());
+    }
+
+    public int headerSlots() {
         return header.size();
+    }
+
+    public SharedMailboxLayout mailbox(String id) {
+        return mailboxes.stream().filter(mailbox -> mailbox.id().equals(id)).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("未知共享 Runtime 邮箱：" + id));
     }
 }

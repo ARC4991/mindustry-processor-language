@@ -1,6 +1,7 @@
 package com.arc.mpl.project;
 
 import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.memory.SharedMailboxLayout;
 import com.arc.mpl.memory.SharedRuntimeLayout;
 
 import java.util.LinkedHashSet;
@@ -41,6 +42,12 @@ public record RuntimeTopologyPlan(List<ShardPlan> shards, PhysicalMemoryLayout p
             }
             if (!shared.header().equals(physicalMemoryLayout.allocations().get(SharedRuntimeLayout.storageKey()))) {
                 throw new IllegalArgumentException("共享 Runtime header 不属于拓扑的物理 Memory 布局");
+            }
+            for (SharedMailboxLayout mailbox : shared.mailboxes()) {
+                if (!mailbox.allocation().equals(physicalMemoryLayout.allocations().get(mailbox.allocation().key()))) {
+                    throw new IllegalArgumentException("共享 Runtime 邮箱不属于拓扑的物理 Memory 布局："
+                        + mailbox.id());
+                }
             }
         }
     }

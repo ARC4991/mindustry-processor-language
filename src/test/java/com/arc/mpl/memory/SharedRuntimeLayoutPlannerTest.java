@@ -64,4 +64,40 @@ class SharedRuntimeLayoutPlannerTest {
         ), result.sharedRuntime().header().slices());
         assertEquals(69, result.physicalMemoryLayout().physicalSlots());
     }
+
+    @Test
+    void allocatesOwnedFixedWidthMailboxesAfterTheHeader() {
+        List<SharedRuntimeLayoutPlanner.MailboxRequirement> mailboxes = List.of(
+            new SharedRuntimeLayoutPlanner.MailboxRequirement("MainToWorker0", "Main", "Worker-0", 2),
+            new SharedRuntimeLayoutPlanner.MailboxRequirement("Worker0ToMain", "Worker-0", "Main", 1));
+
+        SharedRuntimeLayoutPlanner.Result result = planner.plan(PhysicalMemoryLayout.empty(), "Main",
+            List.of("Worker-0"), mailboxes, "code-a", profile, RuntimePreferences.defaults());
+
+        SharedRuntimeLayout shared = result.sharedRuntime();
+        assertEquals(15, shared.slots());
+        assertEquals(6, shared.headerSlots());
+        assertEquals(2, shared.mailboxes().size());
+        assertEquals(5, shared.mailbox("MainToWorker0").slots());
+        assertEquals(4, shared.mailbox("Worker0ToMain").slots());
+        assertEquals(15, result.physicalMemoryLayout().physicalSlots());
+        assertSame(shared.mailbox("MainToWorker0").allocation(), result.physicalMemoryLayout().allocations()
+            .get(SharedMailboxLayout.storageKey("MainToWorker0")));
+    }
+
+    @Test
+    void mailboxShapeAffectsTheLayoutFingerprintAndEndpointsMustBelongToTheTopology() {
+        SharedRuntimeLayoutPlanner.Result narrow = planner.plan(PhysicalMemoryLayout.empty(), "Main",
+            List.of("Worker-0"), List.of(new SharedRuntimeLayoutPlanner.MailboxRequirement(
+                "Requests", "Main", "Worker-0", 1)), "code-a", profile, RuntimePreferences.defaults());
+        SharedRuntimeLayoutPlanner.Result wide = planner.plan(PhysicalMemoryLayout.empty(), "Main",
+            List.of("Worker-0"), List.of(new SharedRuntimeLayoutPlanner.MailboxRequirement(
+                "Requests", "Main", "Worker-0", 2)), "code-a", profile, RuntimePreferences.defaults());
+
+        assertNotEquals(narrow.sharedRuntime().fingerprint(), wide.sharedRuntime().fingerprint());
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+            () -> planner.plan(PhysicalMemoryLayout.empty(), "Main", List.of("Worker-0"),
+                List.of(new SharedRuntimeLayoutPlanner.MailboxRequirement("Invalid", "Main", "Worker-9", 1)),
+                "code-a", profile, RuntimePreferences.defaults()));
+    }
 }
