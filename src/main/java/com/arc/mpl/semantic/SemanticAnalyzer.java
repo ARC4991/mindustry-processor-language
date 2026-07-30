@@ -3364,13 +3364,6 @@ public final class SemanticAnalyzer {
     }
 
     private Optional<CollectionType.Kind> collectionFactory(Expression callee) {
-        if (callee instanceof Identifier identifier) {
-            return switch (identifier.name()) {
-                case "listOf" -> Optional.of(CollectionType.Kind.LIST);
-                case "setOf" -> Optional.of(CollectionType.Kind.SET);
-                default -> Optional.empty();
-            };
-        }
         if (callee instanceof MemberAccessExpression member && member.target() instanceof Identifier namespace
             && "of".equals(member.member())) {
             return switch (namespace.name()) {

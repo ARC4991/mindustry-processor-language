@@ -381,7 +381,7 @@ public final class MilCodeGenerator {
         if (value instanceof HirArrayLiteral array) return aggregateLiteral("[", "]", array.elements());
         if (value instanceof HirTupleLiteral tuple) return aggregateLiteral("(", ")", tuple.elements());
         if (value instanceof HirCollectionLiteral collection) {
-            String factory = collection.type().kind() == com.arc.mpl.hir.CollectionType.Kind.LIST ? "listOf" : "setOf";
+            String factory = collection.type().kind() == com.arc.mpl.hir.CollectionType.Kind.LIST ? "List.of" : "Set.of";
             return aggregateLiteral(factory + "(", ")", collection.elements());
         }
         if (value instanceof HirIndexAccess access) return expression(access.target()) + "[" + expression(access.index()) + "]";
