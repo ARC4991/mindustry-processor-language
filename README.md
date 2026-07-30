@@ -67,6 +67,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - [MPL/MIL 混合模块示例](examples/混合模块)：展示相对 import、导出常量、跨语言函数、硬件 alias 与完整蓝图构建产物。
 - [工作区包示例](examples/工作区包)：展示 `mpl install`、确定性锁文件、包 `.mplh require` 与 `with` 硬件注入。
 - [对象模型示例](examples/对象模型)：展示构造器、字段、实例方法、对象身份、长期实例和函数内非逃逸临时实例的完整构建。
+- [继承与类型推导示例](examples/继承与类型推导)：展示单继承、`super`、虚方法、最具体重载以及变量/方法返回类型推导。
 - [字符串运行时示例](examples/字符串运行时)：展示动态拼接、函数值复制、长度、内容比较和私有字符输出表。
 
 ## 当前范围
