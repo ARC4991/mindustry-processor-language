@@ -91,7 +91,7 @@ mlog 没有“以一个变量的数值作为另一个变量名/下标”的读�
 
 多 shard 部署时，虚拟槽按每个处理器各自计量，不能把 `Main` 与 Worker 的数量相加并当作一个地址空间。物理 Memory 的容量也只按真实 Bank/Cell 计一次；多个处理器链接同一 Bank 只获得同一份共享数值槽。
 
-`stop` 也仍是“永久停在当前处理器”的语义，不会因其他 shard 写入 Memory 而被唤醒。故多处理器 runtime 的长期 Worker 必须显式轮询邮箱；一次性 MPL 顶层程序仍只执行一次，只是协调器会在收齐 Worker 结果后发送 shutdown，再由所有 shard 停止。这个内部轮询循环不是语言级隐式 main 循环。
+`stop` 也仍是“永久停在当前处理器”的语义，不会因其他 shard 写入 Memory 而被唤醒。故多处理器 runtime 的长期 Worker 显式轮询邮箱，并在请求/响应等待点更新独立心跳；一次性 MPL 顶层程序仍只执行一次。协调器收齐 Worker 结果后发送 `kind = 0` 的私有 shutdown，等待 Worker 写回该消息的精确确认版本，再由所有 shard 停止。这个内部轮询循环不是语言级隐式 main 循环。
 
 ## `new`、数组和 String 的可实现边界
 
