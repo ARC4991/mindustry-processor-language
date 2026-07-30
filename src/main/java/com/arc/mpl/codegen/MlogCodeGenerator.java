@@ -61,6 +61,7 @@ import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.BuildingType;
+import com.arc.mpl.hir.CollectionType;
 import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.hir.TupleType;
 import com.arc.mpl.hir.MplType;
@@ -104,6 +105,7 @@ public final class MlogCodeGenerator {
     private Set<String> globalVariables;
     private Map<String, HirHardwareLink> activeBuildingBindings;
     private Map<String, HirBuildingQuery> storedBuildingReferences;
+    private Map<String, Integer> aggregateShapes;
     private Map<String, MlogGenerationResult.FunctionMetrics> functionMetrics;
     private String activeDrawTarget;
     private String currentFunction;
@@ -179,6 +181,7 @@ public final class MlogCodeGenerator {
         globalVariables = new HashSet<>();
         activeBuildingBindings = new HashMap<>();
         storedBuildingReferences = new HashMap<>();
+        aggregateShapes = new HashMap<>();
         functionMetrics = new java.util.LinkedHashMap<>();
         activeDrawTarget = null;
         for (HirStatement statement : program.statements()) {
@@ -310,6 +313,7 @@ public final class MlogCodeGenerator {
                 return;
             }
             if (declaration.initializer() instanceof HirArrayLiteral array) {
+                aggregateShapes.put(aggregateShapeKey(declaration.name()), array.elements().size());
                 emitAggregateDeclaration(declaration, array.elements());
                 return;
             }
@@ -328,6 +332,16 @@ public final class MlogCodeGenerator {
             }
             if (declaration.type() instanceof TupleType tuple) {
                 List<String> values = emitTupleValues(declaration.initializer(), tuple);
+                for (int index = 0; index < values.size(); index++) {
+                    storeAggregateElement(declaration.name(), index, values.get(index));
+                }
+                return;
+            }
+            if (isArray(declaration.type())) {
+                int size = requireAggregateSize(declaration.initializer(), "array declaration");
+                aggregateShapes.put(aggregateShapeKey(declaration.name()), size);
+                List<String> values = emitArrayValues(declaration.initializer(),
+                    (CollectionType) declaration.type(), size);
                 for (int index = 0; index < values.size(); index++) {
                     storeAggregateElement(declaration.name(), index, values.get(index));
                 }
@@ -456,6 +470,16 @@ public final class MlogCodeGenerator {
         returned.value().ifPresent(value -> {
             if (value.type() instanceof TupleType tuple) {
                 List<String> values = emitTupleValues(value, tuple);
+                for (int index = 0; index < values.size(); index++) {
+                    output.set(functionResultElementSlot(currentFunction, index), values.get(index));
+                }
+            } else if (isArray(value.type())) {
+                HirFunction function = functions.get(currentFunction);
+                int size = function == null ? 0 : function.aggregateReturnSize();
+                if (size < 1) {
+                    throw new IllegalArgumentException("array return lacks a specialized shape: " + currentFunction);
+                }
+                List<String> values = emitArrayValues(value, (CollectionType) value.type(), size);
                 for (int index = 0; index < values.size(); index++) {
                     output.set(functionResultElementSlot(currentFunction, index), values.get(index));
                 }
@@ -1167,6 +1191,57 @@ public final class MlogCodeGenerator {
         return List.copyOf(snapshots);
     }
 
+    private List<String> emitArrayValues(HirExpression expression, CollectionType type, int size) {
+        if (!isArray(type) || size < 1) {
+            throw new IllegalArgumentException("array value requires a fixed positive shape");
+        }
+        if (expression instanceof HirFunctionCall call) return emitArrayFunctionCall(call, type, size);
+        List<String> values = new java.util.ArrayList<>();
+        if (expression instanceof HirArrayLiteral array) {
+            for (HirExpression element : array.elements()) values.add(emitExpression(element));
+        } else if (expression instanceof HirVariable variable) {
+            for (int index = 0; index < size; index++) values.add(loadAggregateElement(variable.name(), index));
+        } else {
+            throw new IllegalArgumentException("array value must be a literal, variable, or function call");
+        }
+        if (values.size() != size) {
+            throw new IllegalArgumentException("array value shape does not match specialized size " + size);
+        }
+        List<String> snapshots = new java.util.ArrayList<>();
+        for (String value : values) {
+            String snapshot = temporary();
+            output.set(snapshot, value);
+            snapshots.add(snapshot);
+        }
+        return List.copyOf(snapshots);
+    }
+
+    private int requireAggregateSize(HirExpression expression, String role) {
+        if (expression instanceof HirFunctionCall call && call.aggregateSize() > 0) return call.aggregateSize();
+        if (expression instanceof HirArrayLiteral array) return array.elements().size();
+        if (expression instanceof HirVariable variable) {
+            Integer known = aggregateShapes.get(aggregateShapeKey(variable.name()));
+            if (known != null && known > 0) return known;
+            HirFunction function = currentFunction == null ? null : functions.get(currentFunction);
+            if (function != null) {
+                for (var parameter : function.parameters()) {
+                    if (parameter.name().equals(variable.name()) && parameter.aggregateSize() > 0) {
+                        return parameter.aggregateSize();
+                    }
+                }
+            }
+        }
+        throw new IllegalArgumentException(role + " lacks a specialized aggregate shape");
+    }
+
+    private String aggregateShapeKey(String name) {
+        return (currentFunction == null || globalVariables.contains(name) ? "@top" : currentFunction) + ":" + name;
+    }
+
+    private boolean isArray(MplType type) {
+        return type instanceof CollectionType collection && collection.kind() == CollectionType.Kind.ARRAY;
+    }
+
     private String emitStringConcat(HirStringConcat concat) {
         // Evaluate both sides before mutating the reusable concatenation buffer.
         String left = temporary();
@@ -1388,6 +1463,10 @@ public final class MlogCodeGenerator {
         if (access.target().type() instanceof TupleType tuple) {
             return emitTupleValues(access.target(), tuple).get(position);
         }
+        if (isArray(access.target().type())) {
+            int size = requireAggregateSize(access.target(), "array index access");
+            return emitArrayValues(access.target(), (CollectionType) access.target().type(), size).get(position);
+        }
         throw new IllegalArgumentException("aggregate access target must be a variable or tuple value");
     }
 
@@ -1583,7 +1662,12 @@ public final class MlogCodeGenerator {
             emitTupleFunctionCall(call, tuple);
             return "0";
         }
-        if (function.parameters().stream().anyMatch(parameter -> parameter.type() instanceof TupleType)) {
+        if (isArray(call.type())) {
+            emitArrayFunctionCall(call, (CollectionType) call.type(), call.aggregateSize());
+            return "0";
+        }
+        if (function.parameters().stream().anyMatch(parameter ->
+            parameter.type() instanceof TupleType || isArray(parameter.type()))) {
             return emitStructuredScalarFunctionCall(call, function);
         }
         List<String> savedArguments = new java.util.ArrayList<>();
@@ -1632,6 +1716,24 @@ public final class MlogCodeGenerator {
         return List.copyOf(results);
     }
 
+    private List<String> emitArrayFunctionCall(HirFunctionCall call, CollectionType returnType, int size) {
+        HirFunction function = functions.get(call.function());
+        if (function == null) throw new IllegalArgumentException("unknown HIR function: " + call.function());
+        if (!returnType.equals(function.returnType()) || size < 1 || function.aggregateReturnSize() != size) {
+            throw new IllegalArgumentException("array call shape does not match function signature: " + call.function());
+        }
+        List<SavedFunctionArgument> arguments = saveStructuredArguments(function, call.arguments());
+        writeStructuredArguments(function, arguments);
+        invokeFunction(function);
+        List<String> results = new java.util.ArrayList<>();
+        for (int index = 0; index < size; index++) {
+            String result = temporary();
+            output.set(result, functionResultElementSlot(function.name(), index));
+            results.add(result);
+        }
+        return List.copyOf(results);
+    }
+
     private List<SavedFunctionArgument> saveStructuredArguments(HirFunction function, List<HirExpression> arguments) {
         if (function.parameters().size() != arguments.size()) {
             throw new IllegalArgumentException("function argument count does not match signature: " + function.name());
@@ -1642,6 +1744,12 @@ public final class MlogCodeGenerator {
             HirExpression argument = arguments.get(index);
             if (parameterType instanceof TupleType tuple) {
                 saved.add(new SavedFunctionArgument(emitTupleValues(argument, tuple)));
+                continue;
+            }
+            if (isArray(parameterType)) {
+                int size = function.parameters().get(index).aggregateSize();
+                saved.add(new SavedFunctionArgument(emitArrayValues(argument,
+                    (CollectionType) parameterType, size)));
                 continue;
             }
             String value = temporary();
@@ -1658,6 +1766,13 @@ public final class MlogCodeGenerator {
             if (parameter.type() instanceof TupleType tuple) {
                 if (values.size() != tuple.elementTypes().size()) {
                     throw new IllegalArgumentException("tuple argument shape does not match " + parameter.name());
+                }
+                for (int element = 0; element < values.size(); element++) {
+                    output.set(functionParameterElementSlot(function.name(), parameter.name(), element), values.get(element));
+                }
+            } else if (isArray(parameter.type())) {
+                if (parameter.aggregateSize() < 1 || values.size() != parameter.aggregateSize()) {
+                    throw new IllegalArgumentException("array argument shape does not match " + parameter.name());
                 }
                 for (int element = 0; element < values.size(); element++) {
                     output.set(functionParameterElementSlot(function.name(), parameter.name(), element), values.get(element));

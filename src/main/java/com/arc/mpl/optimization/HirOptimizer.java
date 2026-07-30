@@ -90,7 +90,7 @@ public final class HirOptimizer {
 
     private HirFunction optimizeFunction(HirFunction function) {
         return new HirFunction(function.name(), function.sourceName(), function.parameters(), function.returnType(),
-            optimizeStatements(function.body()));
+            function.aggregateReturnSize(), optimizeStatements(function.body()));
     }
 
     private List<HirStatement> optimizeStatements(List<HirStatement> statements) {
@@ -273,7 +273,7 @@ public final class HirOptimizer {
         }
         if (expression instanceof HirFunctionCall call) {
             return new HirFunctionCall(call.function(), optimizeExpressions(call.arguments()), call.type(),
-                call.stringResultAllocationId());
+                call.stringResultAllocationId(), call.aggregateSize());
         }
         if (expression instanceof com.arc.mpl.hir.HirMethodCall call) {
             return new com.arc.mpl.hir.HirMethodCall(optimizeExpression(call.receiver()), call.sourceName(),

@@ -93,7 +93,7 @@ public final class DisplayRuntimeLowerer {
         collectNames(program.statements());
         List<HirFunction> functions = program.functions().stream()
             .map(function -> new HirFunction(function.name(), function.sourceName(), function.parameters(), function.returnType(),
-                lowerStatements(function.body())))
+                function.aggregateReturnSize(), lowerStatements(function.body())))
             .toList();
         return new HirProgram(program.classes(), functions, lowerStatements(program.statements()));
     }

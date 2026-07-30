@@ -235,6 +235,44 @@ class SemanticAnalyzerTest {
     }
 
     @Test
+    void infersFixedArrayShapesAcrossCallsAndReturns() {
+        Program program = parser.parse("""
+            fun rotate(values: Int[]) { return [values[1], values[0]]; }
+            fun first(values: Int[]): Int { return values[0]; }
+            val source = [1, 2];
+            val rotated = rotate(source);
+            val value = first(rotate([3, 4]));
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var functions = result.program().orElseThrow().functions();
+        var rotate = functions.stream().filter(function -> function.sourceName().equals("rotate"))
+            .findFirst().orElseThrow();
+        var first = functions.stream().filter(function -> function.sourceName().equals("first"))
+            .findFirst().orElseThrow();
+        assertEquals(2, rotate.parameters().get(0).aggregateSize());
+        assertEquals(2, rotate.aggregateReturnSize());
+        assertEquals(2, first.parameters().get(0).aggregateSize());
+    }
+
+    @Test
+    void rejectsConflictingArrayFunctionShapes() {
+        Program program = parser.parse("""
+            fun first(values: Int[]): Int { return values[0]; }
+            val shortValue = first([1, 2]);
+            val longValue = first([1, 2, 3]);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3602")
+            && diagnostic.message().contains("长度 2 和 3")), () -> result.diagnostics().toString());
+    }
+
+    @Test
     void requiresAnExplicitReturnTypeWhenInferenceCannotResolveAValue() {
         Program program = parser.parse("""
             fun readGlobal() { return later; }
@@ -529,7 +567,7 @@ class SemanticAnalyzerTest {
     }
 
     @Test
-    void resolvesEmptyCollectionsFromAnExplicitTypeAndRejectsAggregateCopies() {
+    void resolvesEmptyCollectionsAndAllowsFixedArrayDeclarationCopies() {
         Program validProgram = parser.parse("""
             val emptyArray: Int[] = [];
             val emptyList: List<Int> = List.of();
@@ -550,7 +588,7 @@ class SemanticAnalyzerTest {
         SemanticResult invalidResult = analyzer.analyze(invalidProgram, Path.of("main.mpl"));
 
         assertTrue(invalidResult.program().isEmpty());
-        assertEquals(2, invalidResult.diagnostics().stream().filter(diagnostic -> "MPL3601".equals(diagnostic.code())).count());
+        assertEquals(1, invalidResult.diagnostics().stream().filter(diagnostic -> "MPL3601".equals(diagnostic.code())).count());
     }
 
     @Test

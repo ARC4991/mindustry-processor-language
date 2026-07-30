@@ -130,6 +130,41 @@ class MplCompilerTest {
     }
 
     @Test
+    void specializesFixedArrayFunctionAbiAndRecompilesGeneratedMil(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun rotate(values: Int[]) {
+                return [values[2], values[0], values[1]];
+            }
+            fun total(values: Int[]): Int {
+                return values[0] + values[1] + values[2];
+            }
+            val source = [1, 2, 3];
+            val rotated = rotate(source);
+            val nested = total(rotate([4, 5, 6]));
+            val direct = rotate([7, 8, 9])[0];
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("set __mpl_fn0_arg0_e2"), mlog);
+        assertTrue(mlog.contains("set __mpl_fn0_result_e2"), mlog);
+        assertTrue(mlog.contains("set __mpl_fn1_arg0_e2"), mlog);
+        assertTrue(mlog.contains("set mpl_rotated_e2"), mlog);
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("fun rotate(values: Int[]): Int[]"), mil);
+        assertTrue(mil.contains("val rotated: Int[] = rotate(source);"), mil);
+
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
+        assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
+        assertEquals(mlog, regenerated.mlog().orElseThrow());
+    }
+
+    @Test
     void infersInstanceMethodReturnsAndSerializesThemIntoMil(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

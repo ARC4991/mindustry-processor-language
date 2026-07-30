@@ -142,6 +142,9 @@ public final class SemanticAnalyzer {
     private final Map<String, Set<String>> directGlobalDependencies = new HashMap<>();
     private final List<TopLevelCall> topLevelCalls = new ArrayList<>();
     private final Set<String> initializedGlobals = new HashSet<>();
+    private final Map<FunctionParameterShapeKey, Integer> aggregateParameterSizes = new LinkedHashMap<>();
+    private final Map<String, Integer> aggregateReturnSizes = new LinkedHashMap<>();
+    private final Set<String> aggregateShapeErrors = new HashSet<>();
     private final Deque<ArrayBoundsProof> arrayBoundsProofs = new ArrayDeque<>();
     private final ObjectReceiverEscapeAnalyzer objectReceiverEscapeAnalyzer = new ObjectReceiverEscapeAnalyzer();
     private final OwnedObjectFactoryAnalyzer ownedObjectFactoryAnalyzer = new OwnedObjectFactoryAnalyzer();
@@ -215,6 +218,9 @@ public final class SemanticAnalyzer {
         directGlobalDependencies.clear();
         topLevelCalls.clear();
         initializedGlobals.clear();
+        aggregateParameterSizes.clear();
+        aggregateReturnSizes.clear();
+        aggregateShapeErrors.clear();
         arrayBoundsProofs.clear();
         pooledOwnerScopes.clear();
         pooledOwnerScopes.push(new ArrayList<>());
@@ -254,6 +260,7 @@ public final class SemanticAnalyzer {
             FunctionDeclaration::name, LinkedHashMap::new, java.util.stream.Collectors.counting()));
         for (FunctionDeclaration function : program.functions()) registerFunction(function);
         inferImplicitFunctionReturnTypes(program.functions());
+        inferFunctionAggregateShapes(program);
 
         List<HirStatement> statements = new ArrayList<>();
         try {
@@ -572,7 +579,7 @@ public final class SemanticAnalyzer {
         MplType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.ERROR);
         if (parameters.stream().anyMatch(this::unsupportedTopLevelFunctionAbi)
             || unsupportedTopLevelFunctionAbi(returnType)) {
-            error("MPL3602", "函数 ABI 当前支持标量及 Int/Float/Bool 元组；数组、集合、String 元组、Set<Unit<T>> 和 UnitRef 尚不支持",
+            error("MPL3602", "函数 ABI 当前支持标量、Int/Float/Bool 元组及固定形状的数值/Bool 数组；其他集合和对象聚合尚不支持",
                 function.span());
         }
         boolean returnsOwnedObject = returnType instanceof ObjectType object && !object.nullable()
@@ -629,9 +636,248 @@ public final class SemanticAnalyzer {
         }
     }
 
+    /**
+     * Infers the fixed layout used by array parameters and results without
+     * making the length part of MPL's public {@code T[]} type identity.
+     */
+    private void inferFunctionAggregateShapes(Program program) {
+        boolean hasArrayAbi = false;
+        for (FunctionSignature function : functions.values()) {
+            for (int index = 0; index < function.parameterTypes().size(); index++) {
+                if (!isFunctionArray(function.parameterTypes().get(index))) continue;
+                aggregateParameterSizes.put(new FunctionParameterShapeKey(function.internalName(), index), 0);
+                hasArrayAbi = true;
+            }
+            if (isFunctionArray(function.returnType())) {
+                aggregateReturnSizes.put(function.internalName(), 0);
+                hasArrayAbi = true;
+            }
+        }
+        if (!hasArrayAbi) return;
+
+        int maximumRounds = Math.max(4, (program.functions().size() + 1) * 4);
+        for (int round = 0; round < maximumRounds; round++) {
+            ShapeEnvironment globals = new ShapeEnvironment();
+            boolean changed = shapeStatements(program.statements(), globals, null);
+            for (FunctionDeclaration declaration : program.functions()) {
+                FunctionSignature signature = declarationFunctions.get(declaration);
+                if (signature == null) continue;
+                ShapeEnvironment environment = globals.copy();
+                for (int index = 0; index < declaration.parameters().size(); index++) {
+                    FunctionParameter parameter = declaration.parameters().get(index);
+                    MplType type = signature.parameterTypes().get(index);
+                    environment.types.put(parameter.name(), type);
+                    if (isFunctionArray(type)) {
+                        environment.aggregateSizes.put(parameter.name(), aggregateParameterSize(signature, index));
+                    }
+                }
+                changed |= shapeStatements(declaration.body().statements(), environment, signature);
+            }
+            if (!changed) break;
+            if (round == maximumRounds - 1) {
+                error("MPL3602", "数组函数 ABI 的编译期形状推导未收敛", program.functions().get(0).span());
+            }
+        }
+
+        for (FunctionSignature function : functions.values()) {
+            for (int index = 0; index < function.parameterTypes().size(); index++) {
+                if (isFunctionArray(function.parameterTypes().get(index)) && aggregateParameterSize(function, index) == 0) {
+                    error("MPL3602", "无法推导函数 " + function.sourceName() + " 的数组参数 "
+                        + (index + 1) + " 的固定长度；它必须至少有一个可证明的调用点", function.declaration().span());
+                }
+            }
+            if (isFunctionArray(function.returnType()) && aggregateReturnSize(function) == 0) {
+                error("MPL3602", "无法推导函数 " + function.sourceName() + " 的数组返回长度",
+                    function.declaration().span());
+            }
+        }
+    }
+
+    private boolean shapeStatements(List<Statement> statements, ShapeEnvironment environment,
+                                    FunctionSignature current) {
+        boolean changed = false;
+        for (Statement statement : statements) {
+            if (statement instanceof VariableDeclaration declaration) {
+                ShapeResult initializer = shapeExpression(declaration.initializer(), environment);
+                changed |= initializer.changed();
+                MplType type = declaration.declaredType()
+                    .map(value -> parseType(value, declaration.span()))
+                    .orElseGet(() -> inferExpressionType(declaration.initializer(), environment.types));
+                environment.types.put(declaration.name(), type);
+                if (isFunctionArray(type)) environment.aggregateSizes.put(declaration.name(), initializer.size());
+            } else if (statement instanceof ExpressionStatement expression) {
+                changed |= shapeExpression(expression.expression(), environment).changed();
+            } else if (statement instanceof ReturnStatement returned) {
+                if (returned.value().isPresent()) {
+                    ShapeResult value = shapeExpression(returned.value().orElseThrow(), environment);
+                    changed |= value.changed();
+                    if (current != null && isFunctionArray(current.returnType()) && value.size() > 0) {
+                        changed |= mergeAggregateReturnSize(current, value.size(), returned.span());
+                    }
+                }
+            } else if (statement instanceof BlockStatement block) {
+                changed |= shapeStatements(block.statements(), environment.copy(), current);
+            } else if (statement instanceof IfStatement branch) {
+                changed |= shapeExpression(branch.condition(), environment).changed();
+                changed |= shapeStatements(branch.thenBlock().statements(), environment.copy(), current);
+                if (branch.elseBranch().isPresent()) {
+                    changed |= shapeStatements(List.of(branch.elseBranch().orElseThrow()), environment.copy(), current);
+                }
+            } else if (statement instanceof WhileStatement loop) {
+                changed |= shapeExpression(loop.condition(), environment).changed();
+                changed |= shapeStatements(loop.body().statements(), environment.copy(), current);
+            } else if (statement instanceof DoWhileStatement loop) {
+                changed |= shapeStatements(loop.body().statements(), environment.copy(), current);
+                changed |= shapeExpression(loop.condition(), environment).changed();
+            } else if (statement instanceof ForStatement loop) {
+                ShapeEnvironment body = environment.copy();
+                if (loop.declarationInitializer().isPresent()) {
+                    changed |= shapeStatements(List.of(loop.declarationInitializer().orElseThrow()), body, current);
+                }
+                if (loop.expressionInitializer().isPresent()) {
+                    changed |= shapeExpression(loop.expressionInitializer().orElseThrow(), body).changed();
+                }
+                if (loop.condition().isPresent()) changed |= shapeExpression(loop.condition().orElseThrow(), body).changed();
+                changed |= shapeStatements(loop.body().statements(), body, current);
+                if (loop.update().isPresent()) changed |= shapeExpression(loop.update().orElseThrow(), body).changed();
+            } else if (statement instanceof ForEachStatement loop) {
+                changed |= shapeExpression(loop.iterable(), environment).changed();
+                changed |= shapeStatements(loop.body().statements(), environment.copy(), current);
+            } else if (statement instanceof com.arc.mpl.ast.MilMacroBlockStatement macro) {
+                changed |= shapeExpression(macro.macro(), environment).changed();
+                changed |= shapeStatements(macro.body().statements(), environment.copy(), current);
+            } else if (statement instanceof com.arc.mpl.ast.MilDrawStatement draw) {
+                for (Expression argument : draw.arguments()) changed |= shapeExpression(argument, environment).changed();
+            }
+        }
+        return changed;
+    }
+
+    private ShapeResult shapeExpression(Expression expression, ShapeEnvironment environment) {
+        if (expression instanceof ArrayLiteral array) {
+            boolean changed = false;
+            for (Expression element : array.elements()) changed |= shapeExpression(element, environment).changed();
+            return new ShapeResult(array.elements().size(), changed);
+        }
+        if (expression instanceof Identifier identifier) {
+            return new ShapeResult(environment.aggregateSizes.getOrDefault(identifier.name(), 0), false);
+        }
+        if (expression instanceof CallExpression call) {
+            List<ShapeResult> argumentShapes = call.arguments().stream()
+                .map(argument -> shapeExpression(argument, environment)).toList();
+            boolean changed = argumentShapes.stream().anyMatch(ShapeResult::changed);
+            if (call.callee() instanceof Identifier function) {
+                List<MplType> argumentTypes = call.arguments().stream()
+                    .map(argument -> inferExpressionType(argument, environment.types)).toList();
+                FunctionSignature selected = selectInferredOverload(
+                    functionOverloads.getOrDefault(function.name(), List.of()),
+                    FunctionSignature::parameterTypes, FunctionSignature::returnType, argumentTypes);
+                if (selected != null) {
+                    for (int index = 0; index < selected.parameterTypes().size(); index++) {
+                        if (isFunctionArray(selected.parameterTypes().get(index)) && argumentShapes.get(index).size() > 0) {
+                            changed |= mergeAggregateParameterSize(selected, index, argumentShapes.get(index).size(), call.span());
+                        }
+                    }
+                    return new ShapeResult(aggregateReturnSize(selected), changed);
+                }
+            }
+            changed |= shapeExpression(call.callee(), environment).changed();
+            return new ShapeResult(0, changed);
+        }
+        if (expression instanceof AssignmentExpression assignment) {
+            ShapeResult value = shapeExpression(assignment.value(), environment);
+            if (value.size() > 0) environment.aggregateSizes.put(assignment.target().name(), value.size());
+            return value;
+        }
+        if (expression instanceof BinaryExpression binary) {
+            ShapeResult left = shapeExpression(binary.left(), environment);
+            ShapeResult right = shapeExpression(binary.right(), environment);
+            return new ShapeResult(0, left.changed() || right.changed());
+        }
+        if (expression instanceof UnaryExpression unary) return shapeExpression(unary.operand(), environment).withoutSize();
+        if (expression instanceof IndexExpression access) {
+            ShapeResult target = shapeExpression(access.target(), environment);
+            ShapeResult index = shapeExpression(access.index(), environment);
+            return new ShapeResult(0, target.changed() || index.changed());
+        }
+        if (expression instanceof TupleLiteral tuple) {
+            boolean changed = false;
+            for (Expression element : tuple.elements()) changed |= shapeExpression(element, environment).changed();
+            return new ShapeResult(0, changed);
+        }
+        if (expression instanceof MemberAccessExpression member) {
+            return shapeExpression(member.target(), environment).withoutSize();
+        }
+        if (expression instanceof MemberAssignmentExpression assignment) {
+            ShapeResult target = shapeExpression(assignment.target(), environment);
+            ShapeResult value = shapeExpression(assignment.value(), environment);
+            return new ShapeResult(0, target.changed() || value.changed());
+        }
+        if (expression instanceof LambdaExpression lambda) return shapeExpression(lambda.body(), environment).withoutSize();
+        if (expression instanceof NewExpression allocation) {
+            boolean changed = false;
+            for (Expression argument : allocation.arguments()) changed |= shapeExpression(argument, environment).changed();
+            return new ShapeResult(0, changed);
+        }
+        if (expression instanceof MethodCallExpression call) {
+            boolean changed = false;
+            for (Expression argument : call.arguments()) changed |= shapeExpression(argument, environment).changed();
+            return new ShapeResult(0, changed);
+        }
+        if (expression instanceof com.arc.mpl.ast.MilMacroCallExpression call) {
+            boolean changed = false;
+            for (Expression argument : call.arguments()) changed |= shapeExpression(argument, environment).changed();
+            return new ShapeResult(0, changed);
+        }
+        return new ShapeResult(0, false);
+    }
+
+    private boolean mergeAggregateParameterSize(FunctionSignature function, int index, int size, SourceSpan span) {
+        FunctionParameterShapeKey key = new FunctionParameterShapeKey(function.internalName(), index);
+        int previous = aggregateParameterSizes.getOrDefault(key, 0);
+        if (previous == 0) {
+            aggregateParameterSizes.put(key, size);
+            return true;
+        }
+        if (previous != size) {
+            String identity = function.internalName() + ":arg" + index;
+            if (aggregateShapeErrors.add(identity)) {
+                error("MPL3602", "函数 " + function.sourceName() + " 的数组参数 " + (index + 1)
+                    + " 同时接收了长度 " + previous + " 和 " + size
+                    + "；当前一个 ABI 专门化必须使用唯一固定形状", span);
+            }
+        }
+        return false;
+    }
+
+    private boolean mergeAggregateReturnSize(FunctionSignature function, int size, SourceSpan span) {
+        int previous = aggregateReturnSizes.getOrDefault(function.internalName(), 0);
+        if (previous == 0) {
+            aggregateReturnSizes.put(function.internalName(), size);
+            return true;
+        }
+        if (previous != size) {
+            String identity = function.internalName() + ":return";
+            if (aggregateShapeErrors.add(identity)) {
+                error("MPL3602", "函数 " + function.sourceName() + " 的数组返回路径具有不同长度："
+                    + previous + " 与 " + size, span);
+            }
+        }
+        return false;
+    }
+
+    private int aggregateParameterSize(FunctionSignature function, int index) {
+        return aggregateParameterSizes.getOrDefault(
+            new FunctionParameterShapeKey(function.internalName(), index), 0);
+    }
+
+    private int aggregateReturnSize(FunctionSignature function) {
+        return aggregateReturnSizes.getOrDefault(function.internalName(), 0);
+    }
+
     private void replaceFunctionSignature(FunctionSignature previous, MplType returnType) {
         if (unsupportedTopLevelFunctionAbi(returnType)) {
-            error("MPL3602", "函数 ABI 当前支持标量及 Int/Float/Bool 元组；该返回类型尚不支持",
+            error("MPL3602", "函数 ABI 当前支持标量、Int/Float/Bool 元组及固定形状的数值/Bool 数组；该返回类型尚不支持",
                 previous.declaration().span());
             return;
         }
@@ -1094,18 +1340,21 @@ public final class SemanticAnalyzer {
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
                 MplType type = signature.parameterTypes().get(index);
-                Integer tupleSize = type instanceof TupleType tuple ? tuple.elementTypes().size() : null;
+                Integer aggregateSize = type instanceof TupleType tuple ? tuple.elementTypes().size()
+                    : isFunctionArray(type) ? aggregateParameterSize(signature, index) : null;
                 declare(parameter.name(), new Symbol(type, false,
                     type == ValueType.STRING ? profile.maxMessageUtf16CodeUnits() : null,
-                    tupleSize, tupleSize, null, null, false, false, false, parameter.span()), parameter.span());
-                parameters.add(new HirFunctionParameter(parameter.name(), type));
+                    aggregateSize, aggregateSize, null, null, false, false, false, parameter.span()), parameter.span());
+                parameters.add(new HirFunctionParameter(parameter.name(), type,
+                    isFunctionArray(type) ? aggregateParameterSize(signature, index) : 0));
             }
             List<HirStatement> body = analyzeBlock(function.body());
             if (signature.returnType() != ValueType.VOID && !guaranteesReturn(body)) {
                 error("MPL3504", "函数 " + function.name() + " 并非所有路径都返回 "
                     + display(signature.returnType()), function.span());
             }
-            return new HirFunction(signature.internalName(), signature.sourceName(), parameters, signature.returnType(), body);
+            return new HirFunction(signature.internalName(), signature.sourceName(), parameters, signature.returnType(),
+                isFunctionArray(signature.returnType()) ? aggregateReturnSize(signature) : 0, body);
         } finally {
             scopes.pop();
             currentFunction = previousFunction;
@@ -1545,7 +1794,7 @@ public final class SemanticAnalyzer {
             error("MPL3601", "for 遍历目标必须是已声明的元组、数组、List、Set 或 Unit 查询", loop.iterable().span());
             return new HirBlock(analyzeBlock(loop.body()));
         }
-        Integer size = aggregateSize(loop.iterable(), iterable.type());
+        Integer size = staticAggregateSize(iterable);
         MplType elementType = aggregateIterationElementType(iterable.type(), loop.iterable().span());
         if (size == null || elementType == ValueType.ERROR) {
             return new HirBlock(analyzeBlock(loop.body()));
@@ -2398,10 +2647,13 @@ public final class SemanticAnalyzer {
         if (!canAssign(type, initializer.type())) {
             error("MPL3103", "不能将 " + display(initializer.type()) + " 赋给 " + display(type), declaration.initializer().span());
         }
+        boolean fixedArrayCopy = type instanceof CollectionType collection
+            && collection.kind() == CollectionType.Kind.ARRAY
+            && staticAggregateSize(initializer) != null;
         if (isAggregate(type) && unitQuery == null && buildingQuery == null && !(initializer instanceof HirArrayLiteral)
             && !(initializer instanceof HirTupleLiteral) && !(initializer instanceof HirCollectionLiteral)
             && !(initializer instanceof HirMutableListLiteral)
-            && !(type instanceof TupleType && supportedTupleFunctionAbi(type))) {
+            && !(type instanceof TupleType && supportedTupleFunctionAbi(type)) && !fixedArrayCopy) {
             error("MPL3601", "当前阶段不支持复制聚合值；请在声明处使用字面量或集合工厂", declaration.initializer().span());
         }
         if (unitQuery != null && declaration.mutable()) {
@@ -2732,7 +2984,7 @@ public final class SemanticAnalyzer {
             return new HirMemberAccess(target, "size", ValueType.INT);
         }
         if ("size".equals(member.member()) && isAggregate(target.type())) {
-            Integer size = aggregateSize(member.target(), target.type());
+            Integer size = staticAggregateSize(target);
             if (size == null) {
                 error("MPL3601", "当前聚合值缺少可静态证明的长度", member.span());
                 return new HirConstant("0", ValueType.ERROR);
@@ -2864,7 +3116,8 @@ public final class SemanticAnalyzer {
             List<HirExpression> arguments = adaptArguments(rawArguments, signature.parameterTypes());
             recordCall(signature.internalName(), call.span());
             return new HirFunctionCall(signature.internalName(), arguments, signature.returnType(),
-                signature.returnType() == ValueType.STRING ? nextStringAllocationId++ : 0);
+                signature.returnType() == ValueType.STRING ? nextStringAllocationId++ : 0,
+                isFunctionArray(signature.returnType()) ? aggregateReturnSize(signature) : 0);
         }
         if (call.callee() instanceof MemberAccessExpression member
             && member.target() instanceof Identifier namespace) {
@@ -3594,7 +3847,7 @@ public final class SemanticAnalyzer {
             error("MPL3103", "contains 参数必须是 " + collection.elementType().displayName(), sourceCandidate.span());
             return new HirConstant("0", ValueType.ERROR);
         }
-        Integer size = aggregateSize(sourceTarget, target.type());
+        Integer size = staticAggregateSize(target);
         if (size == null) {
             error("MPL3601", "contains 需要可静态确定长度的聚合值", span);
             return new HirConstant("0", ValueType.ERROR);
@@ -3618,7 +3871,7 @@ public final class SemanticAnalyzer {
             return new HirConstant("0", ValueType.ERROR);
         }
         if (sourceIndex instanceof IntegerLiteral) {
-            Integer size = aggregateSize(sourceTarget, target.type());
+            Integer size = staticAggregateSize(target);
             Optional<Integer> staticIndex = staticAggregateIndex(sourceIndex, size);
             if (staticIndex.isEmpty()) return new HirConstant("0", ValueType.ERROR);
             MplType elementType = target.type() instanceof TupleType tuple
@@ -3690,17 +3943,6 @@ public final class SemanticAnalyzer {
             return typeError("只有元素类型一致的元组可以直接 for 遍历", span);
         }
         return typeError("该类型不可遍历：" + display(type), span);
-    }
-
-    private Integer aggregateSize(Expression source, MplType type) {
-        if (type instanceof TupleType tuple) return tuple.elementTypes().size();
-        if (source instanceof Identifier identifier) {
-            Symbol symbol = lookup(identifier.name());
-            return symbol == null ? null : symbol.staticAggregateSize();
-        }
-        if (source instanceof ArrayLiteral array) return array.elements().size();
-        if (source instanceof TupleLiteral tuple) return tuple.elements().size();
-        return null;
     }
 
     private Optional<Integer> staticAggregateIndex(Expression source, Integer size) {
@@ -3861,10 +4103,15 @@ public final class SemanticAnalyzer {
 
     private Integer staticAggregateSize(HirExpression expression) {
         if (expression.type() instanceof TupleType tuple) return tuple.elementTypes().size();
+        if (expression instanceof HirFunctionCall call && call.aggregateSize() > 0) return call.aggregateSize();
         if (expression instanceof HirArrayLiteral array) return array.elements().size();
         if (expression instanceof HirTupleLiteral tuple) return tuple.elements().size();
         if (expression instanceof HirCollectionLiteral collection) return collection.elements().size();
         if (expression instanceof HirMutableListLiteral list) return list.elements().size();
+        if (expression instanceof HirVariable variable) {
+            Symbol symbol = lookup(variable.name());
+            return symbol == null ? null : symbol.staticAggregateSize();
+        }
         return null;
     }
 
@@ -3876,13 +4123,48 @@ public final class SemanticAnalyzer {
     private boolean unsupportedTopLevelFunctionAbi(MplType type) {
         if (type == ValueType.ERROR) return false;
         if (type instanceof UnitType) return true;
-        if (type instanceof CollectionType) return true;
+        if (type instanceof CollectionType) return !isFunctionArray(type);
         return type instanceof TupleType && !supportedTupleFunctionAbi(type);
     }
 
     private boolean supportedTupleFunctionAbi(MplType type) {
         return type instanceof TupleType tuple && tuple.elementTypes().stream().allMatch(element ->
             element == ValueType.INT || element == ValueType.FLOAT || element == ValueType.BOOL);
+    }
+
+    private boolean isFunctionArray(MplType type) {
+        return type instanceof CollectionType collection
+            && collection.kind() == CollectionType.Kind.ARRAY
+            && (collection.elementType() == ValueType.INT
+                || collection.elementType() == ValueType.FLOAT
+                || collection.elementType() == ValueType.BOOL);
+    }
+
+    private record FunctionParameterShapeKey(String function, int index) { }
+
+    private record ShapeResult(int size, boolean changed) {
+        private ShapeResult {
+            if (size < 0) throw new IllegalArgumentException("聚合形状不能为负数");
+        }
+
+        private ShapeResult withoutSize() { return new ShapeResult(0, changed); }
+    }
+
+    private static final class ShapeEnvironment {
+        private final Map<String, MplType> types;
+        private final Map<String, Integer> aggregateSizes;
+
+        private ShapeEnvironment() {
+            this.types = new LinkedHashMap<>();
+            this.aggregateSizes = new LinkedHashMap<>();
+        }
+
+        private ShapeEnvironment(Map<String, MplType> types, Map<String, Integer> aggregateSizes) {
+            this.types = new LinkedHashMap<>(types);
+            this.aggregateSizes = new LinkedHashMap<>(aggregateSizes);
+        }
+
+        private ShapeEnvironment copy() { return new ShapeEnvironment(types, aggregateSizes); }
     }
 
     private record Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
