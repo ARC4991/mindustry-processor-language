@@ -3,6 +3,7 @@ package com.arc.mpl.cli;
 import com.arc.mpl.compiler.CompilationRequest;
 import com.arc.mpl.compiler.CompilationResult;
 import com.arc.mpl.compiler.MplCompiler;
+import com.arc.mpl.compiler.MultiShardCompilation;
 import com.arc.mpl.diagnostic.Diagnostic;
 import com.arc.mpl.diagnostic.DiagnosticLanguage;
 import com.arc.mpl.diagnostic.DiagnosticMessages;
@@ -99,15 +100,26 @@ public final class MplCli {
             try {
                 Path outputDirectory = Path.of(build.outputDirectory());
                 HardwareContract hardware = new HardwareLoader().load(Path.of(build.projectDirectory()));
-                RuntimePlan plan = new RuntimePlanner().plan(result.mlog().orElseThrow(), result.profile().orElseThrow(),
-                    new RuntimePreferencesLoader().load(Path.of(build.projectDirectory())), result.physicalMemoryLayout());
-                new BuildArtifactWriter().write(outputDirectory, result.mlog().orElseThrow(), result.mil().orElseThrow(),
-                    result.profile().orElseThrow(), hardware, plan, ProjectMetadata.load(Path.of(build.projectDirectory())),
-                    result.optimizationReport());
-                Path mlogOutput = outputDirectory.resolve("Main.mlog");
-                Path milOutput = outputDirectory.resolve("Main.mil");
-                System.out.println(message(language, "cli.mil.written", milOutput));
-                System.out.println(message(language, "cli.mlog.written", mlogOutput));
+                BuildArtifactWriter writer = new BuildArtifactWriter();
+                ProjectMetadata metadata = ProjectMetadata.load(Path.of(build.projectDirectory()));
+                if (result.multiShard().isPresent()) {
+                    MultiShardCompilation multi = result.multiShard().orElseThrow();
+                    writer.write(outputDirectory, multi.shards().stream().map(shard ->
+                        new BuildArtifactWriter.ShardArtifact(shard.id(), shard.mlog(), shard.mil())).toList(),
+                        result.profile().orElseThrow(), hardware, multi.topology(), metadata,
+                        result.optimizationReport());
+                    for (MultiShardCompilation.Shard shard : multi.shards()) {
+                        System.out.println(message(language, "cli.mil.written", outputDirectory.resolve(shard.id() + ".mil")));
+                        System.out.println(message(language, "cli.mlog.written", outputDirectory.resolve(shard.id() + ".mlog")));
+                    }
+                } else {
+                    RuntimePlan plan = new RuntimePlanner().plan(result.mlog().orElseThrow(), result.profile().orElseThrow(),
+                        new RuntimePreferencesLoader().load(Path.of(build.projectDirectory())), result.physicalMemoryLayout());
+                    writer.write(outputDirectory, result.mlog().orElseThrow(), result.mil().orElseThrow(),
+                        result.profile().orElseThrow(), hardware, plan, metadata, result.optimizationReport());
+                    System.out.println(message(language, "cli.mil.written", outputDirectory.resolve("Main.mil")));
+                    System.out.println(message(language, "cli.mlog.written", outputDirectory.resolve("Main.mlog")));
+                }
             } catch (IOException | IllegalArgumentException exception) {
                 System.err.println(message(language, "cli.artifact.write.failed", exceptionMessage(exception)));
                 System.exit(1);

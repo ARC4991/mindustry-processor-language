@@ -106,6 +106,44 @@ class MplCliTest {
     }
 
     @Test
+    void buildWritesAutomaticNumericHelperShardsAndSharedRuntimeBlueprint(@TempDir Path project) throws IOException {
+        Path sourceDirectory = Files.createDirectories(project.resolve("src"));
+        Files.writeString(project.resolve("mpl.json"), """
+            {
+              "name": "helper-demo",
+              "version": "1.0.0",
+              "runtime": {
+                "goal": "maxPerformance",
+                "processors": { "micro": 2 },
+                "memory": { "bank": 1 }
+              }
+            }
+            """);
+        Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun add(left: Int, right: Int): Int {
+                return left + right;
+            }
+            val result = add(11, 13);
+            """);
+        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+
+        MplCli.main(new String[]{
+            "build", "--debug", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
+        });
+
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("Main.mlog")));
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("Worker-0.mlog")));
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("Worker-0.mil")));
+        assertTrue(Files.readString(outputDirectory.resolve("Main.mlog")).contains("mpl_mailbox_send_wait"));
+        assertTrue(Files.readString(outputDirectory.resolve("Worker-0.mlog")).contains("mpl_function_add"));
+        JsonNode deployment = new ObjectMapper().readTree(Files.readString(outputDirectory.resolve("deployment.json")));
+        assertEquals(2, deployment.path("runtimeTopology").path("shards").size());
+        assertEquals(2, deployment.path("runtimeTopology").path("sharedRuntime").path("mailboxes").size());
+        assertEquals("bank__mpl_mem0", deployment.path("runtimeTopology").path("memorySegments").get(0)
+            .path("bindings").get(1).path("alias").asText());
+    }
+
+    @Test
     void buildCarriesDynamicArrayMemoryFromCompilationIntoEveryArtifact(@TempDir Path project) throws IOException {
         Path sourceDirectory = Files.createDirectories(project.resolve("src"));
         Files.writeString(sourceDirectory.resolve("main.mpl"), """
