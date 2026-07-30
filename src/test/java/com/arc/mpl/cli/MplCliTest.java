@@ -126,9 +126,39 @@ class MplCliTest {
         assertTrue(mlog.contains("read "));
         assertTrue(mlog.contains("write "));
         assertEquals(3, report.path("totals").path("physicalSlots").asInt());
-        assertEquals("__mpl_mem0",
+        assertEquals("bank__mpl_mem0",
             deployment.path("runtimeTopology").path("memorySegments").get(0).path("id").asText());
         assertEquals("bank",
             deployment.path("runtimeTopology").path("memorySegments").get(0).path("kind").asText());
+    }
+
+
+    @Test
+    void buildReportsAndDeploysDynamicStringMemory(@TempDir Path project) throws IOException {
+        Path sourceDirectory = Files.createDirectories(project.resolve("src"));
+        Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Status: Message = link(\"message1\");");
+        Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var prefix: String = "M";
+            prefix = "MP";
+            val text: String = prefix + "L";
+            Status.print(text);
+            """);
+        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+
+        MplCli.main(new String[]{
+            "build", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
+        });
+
+        String mlog = Files.readString(outputDirectory.resolve("Main.mlog"));
+        JsonNode report = new ObjectMapper().readTree(Files.readString(outputDirectory.resolve("report.json")));
+        JsonNode deployment = new ObjectMapper().readTree(Files.readString(outputDirectory.resolve("deployment.json")));
+        int stringSlots = report.path("totals").path("stringSlots").asInt();
+        assertTrue(stringSlots > 0);
+        assertEquals(stringSlots, report.path("totals").path("physicalSlots").asInt());
+        assertTrue(mlog.contains("set @counter"));
+        assertTrue(mlog.contains("print \"M\""));
+        assertEquals(stringSlots,
+            deployment.path("runtimeTopology").path("memorySegments").get(0).path("usedSlots").asInt());
     }
 }

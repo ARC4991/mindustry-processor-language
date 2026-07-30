@@ -58,8 +58,8 @@ class BuildArtifactWriterTest {
         JsonNode deploymentJson = new ObjectMapper().readTree(deployment);
         JsonNode main = deploymentJson.path("runtimeTopology").path("shards").get(0);
         assertEquals("main", main.path("roles").get(0).asText());
-        assertEquals(1, main.path("blueprintPosition").path("x").asInt());
-        assertEquals(1, main.path("blueprintPosition").path("y").asInt());
+        assertEquals(0, main.path("blueprintPosition").path("x").asInt());
+        assertEquals(0, main.path("blueprintPosition").path("y").asInt());
         assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("Main.mlog"))
             .startsWith("# MPL shard: Main / build: "));
         assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("连接说明.txt"))
@@ -108,10 +108,10 @@ class BuildArtifactWriterTest {
         TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
         PhysicalMemoryLayout.StorageKey key = new PhysicalMemoryLayout.StorageKey(null, "values");
         PhysicalMemoryLayout layout = new PhysicalMemoryLayout(
-            List.of(new PhysicalMemoryLayout.Segment("__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 3)),
+            List.of(new PhysicalMemoryLayout.Segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 3)),
             Map.of(key, new PhysicalMemoryLayout.Allocation(key, 3,
                 List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 3)))), 3);
-        String mlog = "write 1 __mpl_mem0 0\nstop\n";
+        String mlog = "write 1 bank__mpl_mem0 0\nstop\n";
         RuntimePlan plan = new RuntimePlanner().plan(mlog, profile, RuntimePreferences.defaults(), layout);
 
         new BuildArtifactWriter().write(temporaryDirectory, mlog, "val values: Int[] = [1, 2, 3];\n", profile,
@@ -122,13 +122,18 @@ class BuildArtifactWriterTest {
             java.nio.file.Files.readString(temporaryDirectory.resolve("deployment.json")));
         JsonNode segment = deployment.path("runtimeTopology").path("memorySegments").get(0);
         assertEquals(3, report.path("totals").path("physicalSlots").asInt());
-        assertEquals("__mpl_mem0", segment.path("id").asText());
+        assertEquals("bank__mpl_mem0", segment.path("id").asText());
         assertEquals("bank", segment.path("kind").asText());
         assertEquals(512, segment.path("capacity").asInt());
         assertEquals(3, segment.path("usedSlots").asInt());
-        assertEquals("__mpl_mem0", segment.path("bindings").get(0).path("alias").asText());
-        assertEquals(List.of(new LogicLink("__mpl_mem0", 3, 0)),
+        assertEquals(1, segment.path("blueprintPosition").path("x").asInt());
+        assertEquals(0, segment.path("blueprintPosition").path("y").asInt());
+        assertEquals("bank__mpl_mem0", segment.path("bindings").get(0).path("alias").asText());
+        assertTrue(segment.path("bindings").get(0).path("autoConnected").asBoolean());
+        assertEquals(List.of(new LogicLink("bank__mpl_mem0", 1, 0)),
             readProcessorConfig(temporaryDirectory.resolve("runtime.msch")).links());
+        assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("连接说明.txt"))
+            .contains("Runtime Memory 已自动连接到 Main"));
     }
 
     @Test

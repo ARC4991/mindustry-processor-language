@@ -217,7 +217,7 @@ class MplCompilerTest {
         assertEquals(2, pool.occupancy().size());
         assertEquals(2, pool.field("value").allocation().size());
         String mlog = result.mlog().orElseThrow();
-        assertTrue(mlog.contains("write 0 __mpl_mem0"), mlog);
+        assertTrue(mlog.contains("write 0 bank__mpl_mem0"), mlog);
         assertTrue(mlog.contains("set __mpl_tmp"), mlog);
         assertTrue(mlog.contains(" -1"), mlog);
         String mil = result.mil().orElseThrow();
@@ -1245,16 +1245,12 @@ class MplCompilerTest {
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
         assertTrue(result.succeeded());
-        assertEquals("""
-            _0:
-            sensor __mpl_hw0 message1 @type
-            jump _0 notEqual __mpl_hw0 @message
-            set mpl_title "MPL demo"
-            print mpl_title
-            print " v1"
-            printflush message1
-            stop
-            """, result.mlog().orElseThrow());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("set mpl_title "), mlog);
+        assertTrue(mlog.contains("set @counter __mpl_tmp"), mlog);
+        assertTrue(mlog.contains("print \" v1\""), mlog);
+        assertTrue(mlog.contains("print \"M\""), mlog);
+        assertTrue(result.physicalMemoryLayout().stringRuntime().slots() > 0);
         assertTrue(result.mil().orElseThrow().contains("val title: String = \"MPL demo\";"));
     }
 
@@ -1271,33 +1267,62 @@ class MplCompilerTest {
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
         assertTrue(result.succeeded());
-        assertEquals("""
-            _0:
-            sensor __mpl_hw0 message1 @type
-            jump _0 notEqual __mpl_hw0 @message
-            set mpl_title "MPL"
-            print "运行 "
-            print mpl_title
-            print " v1"
-            printflush message1
-            stop
-            """, result.mlog().orElseThrow());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("print \"运行 \""), mlog);
+        assertTrue(mlog.contains("print \" v1\""), mlog);
+        assertTrue(mlog.contains("set @counter __mpl_tmp"), mlog);
+        assertTrue(mlog.contains("printflush message1"), mlog);
         assertTrue(result.mil().orElseThrow().contains("@io.print(@message1, \"运行 \""));
+        assertTrue(result.physicalMemoryLayout().stringRuntime().concatenations().isEmpty(),
+            "print 专用拼接不应分配中间 String 缓冲");
     }
 
     @Test
-    void rejectsDynamicStringConcatenationOutsideMessagePrint(@TempDir Path project) throws IOException {
+    void compilesDynamicStringConcatenationOutsideMessagePrint(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Status: Message = link(\"message1\");");
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
-            val title: String = "MPL";
+            var title: String = "MP";
+            title = "MPL";
             val banner: String = title + " v1";
+            val length: Int = banner.length;
+            val same: Bool = banner == "MPL v1";
+            Status.print(banner, ":", length, ":", same);
             """);
 
         CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
 
-        assertFalse(result.succeeded());
-        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3103")
-            && diagnostic.message().contains("动态拼接需要 String runtime")));
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("read "), mlog);
+        assertTrue(mlog.contains("write "), mlog);
+        assertTrue(mlog.contains("set @counter __mpl_tmp"), mlog);
+        assertTrue(mlog.contains("printflush message1"), mlog);
+        assertTrue(result.mil().orElseThrow().contains("val banner: String = (title + \" v1\");"));
+        assertTrue(result.physicalMemoryLayout().stringRuntime().slots() > 0);
+    }
+
+    @Test
+    void givesEachStringFunctionCallAnIndependentResultBuffer(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Status: Message = link(\"message1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun copy(value: String): String {
+                return value;
+            }
+
+            val same: Bool = copy("A") == copy("B");
+            Status.print(same);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertEquals(2, result.physicalMemoryLayout().stringRuntime().callResults().size());
+        assertEquals(2, result.physicalMemoryLayout().stringRuntime().snapshots().size());
+        assertTrue(result.mlog().orElseThrow().contains("printflush message1"));
     }
 
     @Test
@@ -1654,9 +1679,9 @@ class MplCompilerTest {
         assertEquals(1, result.physicalMemoryLayout().memoryBanks());
         assertTrue(result.mil().orElseThrow().contains("values.set(i, (values[i] + 1));"));
         String mlog = result.mlog().orElseThrow();
-        assertTrue(mlog.contains("write 1 __mpl_mem0 0"));
-        assertTrue(mlog.lines().anyMatch(line -> line.matches("read __mpl_tmp\\d+ __mpl_mem0 mpl_i")));
-        assertTrue(mlog.lines().anyMatch(line -> line.matches("write __mpl_tmp\\d+ __mpl_mem0 __mpl_tmp\\d+")));
+        assertTrue(mlog.contains("write 1 bank__mpl_mem0 0"));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("read __mpl_tmp\\d+ bank__mpl_mem0 mpl_i")));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("write __mpl_tmp\\d+ bank__mpl_mem0 __mpl_tmp\\d+")));
         assertFalse(mlog.contains("mpl_values_e"));
     }
 

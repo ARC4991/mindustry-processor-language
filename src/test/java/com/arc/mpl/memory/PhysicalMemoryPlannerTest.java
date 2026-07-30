@@ -13,6 +13,8 @@ import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirStatement;
+import com.arc.mpl.hir.HirStringConcat;
+import com.arc.mpl.hir.HirText;
 import com.arc.mpl.hir.HirVariable;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.MplType;
@@ -46,7 +48,7 @@ class PhysicalMemoryPlannerTest {
         assertEquals(3, layout.physicalSlots());
         assertEquals(1, layout.memoryBanks());
         assertEquals(0, layout.memoryCells());
-        assertEquals(new PhysicalMemoryLayout.Segment("__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 3),
+        assertEquals(new PhysicalMemoryLayout.Segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 3),
             layout.segments().get(0));
         assertEquals(List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 3)), allocation(layout, "values").slices());
     }
@@ -127,6 +129,27 @@ class PhysicalMemoryPlannerTest {
             new PhysicalMemoryLayout.Slice(0, 1, 0, 63),
             new PhysicalMemoryLayout.Slice(1, 0, 63, 1)
         ), pool.field("values").allocation().slices());
+    }
+
+    @Test
+    void plansStringDescriptorsOwnedBuffersAndLiteralSequences() {
+        HirVariableDeclaration prefix = new HirVariableDeclaration("prefix", ValueType.STRING, false,
+            new HirText("A"), false, 1);
+        HirStringConcat concat = new HirStringConcat(1, new HirVariable("prefix", ValueType.STRING),
+            new HirText("B"), 2);
+        HirVariableDeclaration result = new HirVariableDeclaration("result", ValueType.STRING, false,
+            concat, false, 2);
+
+        PhysicalMemoryLayout layout = planner.plan(new HirProgram(List.of(prefix, result)), profile,
+            RuntimePreferences.defaults());
+
+        assertEquals(17, layout.stringRuntime().slots());
+        assertEquals(17, layout.physicalSlots());
+        assertEquals(5, layout.stringRuntime().entries().size());
+        assertEquals(5, layout.stringRuntime().bases().size());
+        assertEquals(5, layout.stringRuntime().lengths().size());
+        assertEquals(2, layout.stringRuntime().concatenation(concat).capacity());
+        assertEquals(1, layout.stringRuntime().variable(null, "prefix").orElseThrow().capacity());
     }
 
     private HirVariableDeclaration array(String name, int size) {

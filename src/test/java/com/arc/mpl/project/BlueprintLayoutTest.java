@@ -1,0 +1,61 @@
+package com.arc.mpl.project;
+
+import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.profile.TargetProfile;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+class BlueprintLayoutTest {
+    @Test
+    void keepsAStringRuntimeProcessorAndBanksInOneTightStrip() {
+        PhysicalMemoryLayout memory = new PhysicalMemoryLayout(List.of(
+            segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("bank__mpl_mem1", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("bank__mpl_mem2", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("bank__mpl_mem3", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("bank__mpl_mem4", RuntimePreferences.MemoryKind.BANK, 512)
+        ), Map.of(), 0);
+        RuntimePlan plan = new RuntimePlan(TargetProfile.ProcessorKind.MICRO, 1, 0, 3, 0, memory);
+
+        BlueprintLayout layout = BlueprintLayout.singleShard(plan);
+
+        assertEquals(11, layout.width());
+        assertEquals(2, layout.height());
+        assertEquals(new Position(0, 0), new Position(layout.main().x(), layout.main().y()));
+        assertEquals(List.of(
+            new Position(1, 0), new Position(3, 0), new Position(5, 0),
+            new Position(7, 0), new Position(9, 0)
+        ), layout.memories().stream().map(value -> new Position(value.x(), value.y())).toList());
+    }
+
+    @Test
+    void packsProcessorBanksAndCellsWithoutDecorativeGaps() {
+        PhysicalMemoryLayout memory = new PhysicalMemoryLayout(List.of(
+            segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("bank__mpl_mem1", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("cell__mpl_mem2", RuntimePreferences.MemoryKind.CELL, 64),
+            segment("cell__mpl_mem3", RuntimePreferences.MemoryKind.CELL, 64)
+        ), Map.of(), 0);
+        RuntimePlan plan = new RuntimePlan(TargetProfile.ProcessorKind.HYPER, 1, 0, 3, 0, memory);
+
+        BlueprintLayout layout = BlueprintLayout.singleShard(plan);
+
+        assertEquals(5, layout.width());
+        assertEquals(4, layout.height());
+        assertEquals(1, layout.main().x());
+        assertEquals(1, layout.main().y());
+        assertEquals(List.of(
+            new Position(3, 0), new Position(3, 2), new Position(0, 3), new Position(1, 3)
+        ), layout.memories().stream().map(value -> new Position(value.x(), value.y())).toList());
+    }
+
+    private PhysicalMemoryLayout.Segment segment(String alias, RuntimePreferences.MemoryKind kind, int capacity) {
+        return new PhysicalMemoryLayout.Segment(alias, kind, capacity, 0);
+    }
+
+    private record Position(int x, int y) { }
+}
