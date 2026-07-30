@@ -366,6 +366,39 @@ class MplCompilerTest {
     }
 
     @Test
+    void dispatchesDerivedObjectsStoredInThePhysicalObjectPool(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            class Animal {
+                public value: Int;
+                public fun Animal(value: Int) { this.value = value; }
+                public fun score(amount: Int): Int { return this.value + amount; }
+            }
+            class Dog extends Animal {
+                public bonus: Int;
+                public fun Dog(value: Int, bonus: Int) { super(value); this.bonus = bonus; }
+                public fun score(amount: Int): Int { return super.score(amount) + this.bonus; }
+            }
+            fun createDog(): Dog { return new Dog(3, 4); }
+            fun calculate(): Int {
+                val animal: Animal = createDog();
+                return animal.score(2);
+            }
+            val result = calculate();
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("virtual_method_"), mlog);
+        assertTrue(result.physicalMemoryLayout().physicalSlots() > 0);
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("public value: Int;"), mil);
+        assertTrue(mil.contains("public bonus: Int;"), mil);
+    }
+
+    @Test
     void laysOutScalarTupleObjectFields(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
