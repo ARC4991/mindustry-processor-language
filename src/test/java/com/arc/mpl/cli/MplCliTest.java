@@ -151,6 +151,45 @@ class MplCliTest {
     }
 
     @Test
+    void buildWritesEveryPlannedHelperWorkerIntoTheDeploymentBundle(@TempDir Path project) throws IOException {
+        Path sourceDirectory = Files.createDirectories(project.resolve("src"));
+        Files.writeString(project.resolve("mpl.json"), """
+            {
+              "name": "multi-helper-demo",
+              "version": "1.0.0",
+              "runtime": {
+                "goal": "maxPerformance",
+                "processors": { "micro": 4 },
+                "memory": { "bank": 1 }
+              }
+            }
+            """);
+        Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun add(left: Int, right: Int): Int { return left + right; }
+            fun subtract(left: Int, right: Int): Int { return left - right; }
+            fun multiply(left: Int, right: Int): Int { return left * right; }
+            val sum = add(11, 13);
+            val difference = subtract(11, 3);
+            val product = multiply(6, 7);
+            """);
+        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+
+        MplCli.main(new String[]{
+            "build", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
+        });
+
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("Worker-0.mlog")));
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("Worker-1.mlog")));
+        assertTrue(Files.isRegularFile(outputDirectory.resolve("Worker-2.mlog")));
+        JsonNode runtime = new ObjectMapper().readTree(Files.readString(outputDirectory.resolve("deployment.json")))
+            .path("runtimeTopology").path("sharedRuntime");
+        assertEquals(3, runtime.path("workers").size());
+        assertEquals(6, runtime.path("mailboxes").size());
+        assertEquals(3, runtime.path("tasks").size());
+        assertEquals("Worker-2", runtime.path("tasks").get(2).path("worker").asText());
+    }
+
+    @Test
     void buildCarriesDynamicArrayMemoryFromCompilationIntoEveryArtifact(@TempDir Path project) throws IOException {
         Path sourceDirectory = Files.createDirectories(project.resolve("src"));
         Files.writeString(sourceDirectory.resolve("main.mpl"), """

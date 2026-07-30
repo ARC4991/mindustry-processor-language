@@ -44,6 +44,8 @@ class HirEffectAnalyzerTest {
         assertTrue(analysis.function("caller").pureNumeric());
         assertEquals(List.of("add", "caller"), analysis.pureNumericFunctions().stream()
             .map(HirEffectAnalyzer.FunctionEffect::function).sorted().toList());
+        assertEquals(java.util.Set.of("add"), analysis.callees("caller"));
+        assertTrue(analysis.callees("add").isEmpty());
     }
 
     @Test

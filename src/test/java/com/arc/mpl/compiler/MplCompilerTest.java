@@ -103,6 +103,125 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesIndependentHelpersIntoMultipleWorkerShards(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), """
+            {
+              "runtime": {
+                "goal": "maxPerformance",
+                "processors": { "micro": 4 },
+                "memory": { "bank": 1 }
+              }
+            }
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun add(left: Int, right: Int): Int { return left + right; }
+            fun subtract(left: Int, right: Int): Int { return left - right; }
+            fun multiply(left: Int, right: Int): Int { return left * right; }
+            val sum = add(11, 13);
+            val difference = subtract(11, 3);
+            val product = multiply(6, 7);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        MultiShardCompilation multi = result.multiShard().orElseThrow();
+        assertEquals(List.of("Main", "Worker-0", "Worker-1", "Worker-2"), multi.shards().stream()
+            .map(MultiShardCompilation.Shard::id).toList());
+        assertEquals(38, multi.topology().physicalSlots());
+        assertEquals(List.of(List.of("add"), List.of("subtract"), List.of("multiply")),
+            multi.helperPlan().workers().stream().map(com.arc.mpl.project.RuntimeHelperPlan.Worker::functions).toList());
+        assertTrue(multi.shards().get(1).mlog().contains("mpl_function_add"));
+        assertFalse(multi.shards().get(1).mlog().contains("mpl_function_subtract"));
+        assertTrue(multi.shards().get(2).mlog().contains("mpl_function_subtract"));
+        assertTrue(multi.shards().get(3).mlog().contains("mpl_function_multiply"));
+        assertEquals(6, multi.topology().sharedRuntime().orElseThrow().mailboxes().size());
+    }
+
+    @Test
+    void minResourcesUsesHelperShardsOnlyWhenTheSingleProcessorProgramExceedsTheLimit(
+        @TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        StringBuilder source = new StringBuilder();
+        for (int function = 0; function < 4; function++) {
+            source.append("fun helper").append(function).append("(value: Int): Int {\n")
+                .append("    var result = value;\n");
+            for (int statement = 0; statement < 90; statement++) source.append("    result += 1;\n");
+            source.append("    return result;\n}\n")
+                .append("val result").append(function).append(" = helper").append(function).append("(")
+                .append(function).append(");\n");
+        }
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), source);
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), """
+            {
+              "runtime": {
+                "goal": "minResources",
+                "processors": { "micro": 1 },
+                "memory": { "bank": 1 }
+              }
+            }
+            """);
+
+        CompilationResult singleProcessor = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(singleProcessor.succeeded());
+        assertTrue(singleProcessor.diagnostics().stream().anyMatch(diagnostic -> diagnostic.message().contains("1000")));
+
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), """
+            {
+              "runtime": {
+                "goal": "minResources",
+                "processors": { "micro": 5 },
+                "memory": { "bank": 1 }
+              }
+            }
+            """);
+        CompilationResult sharded = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(sharded.succeeded(), () -> sharded.diagnostics().toString());
+        assertEquals(List.of("Main", "Worker-0", "Worker-1", "Worker-2", "Worker-3"),
+            sharded.multiShard().orElseThrow().shards().stream().map(MultiShardCompilation.Shard::id).toList());
+        assertTrue(sharded.multiShard().orElseThrow().shards().stream()
+            .allMatch(shard -> com.arc.mpl.codegen.MlogProgramMetrics.analyze(shard.mlog()).instructions() <= 1_000));
+    }
+
+    @Test
+    void keepsNestedHelperCallsLocalToOneWorker(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), """
+            {
+              "runtime": {
+                "goal": "maxPerformance",
+                "processors": { "micro": 3 },
+                "memory": { "bank": 1 }
+              }
+            }
+            """);
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun increment(value: Int): Int { return value + 1; }
+            fun twiceIncrement(value: Int): Int { return increment(increment(value)); }
+            fun subtract(left: Int, right: Int): Int { return left - right; }
+            val increased = twiceIncrement(5);
+            val difference = subtract(9, 4);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        MultiShardCompilation multi = result.multiShard().orElseThrow();
+        assertEquals(2, multi.helperPlan().workers().size());
+        String owner = multi.helperPlan().task("increment").orElseThrow().worker();
+        assertEquals(owner, multi.helperPlan().task("twiceIncrement").orElseThrow().worker());
+        MultiShardCompilation.Shard worker = multi.shards().stream().filter(shard -> shard.id().equals(owner))
+            .findFirst().orElseThrow();
+        assertTrue(worker.mlog().contains("mpl_function_increment"));
+        assertTrue(worker.mlog().contains("mpl_function_twiceIncrement"));
+        assertTrue(worker.mlog().split("op add __mpl_fn0_return @counter 1", -1).length - 1 >= 2,
+            worker.mlog());
+    }
+
+    @Test
     void compilesDistinctStaticObjectsAndRegeneratesParseableMil(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
