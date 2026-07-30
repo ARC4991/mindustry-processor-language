@@ -34,8 +34,14 @@ final class SharedMailboxProtocolEmitter {
 
     /** Waits for an empty slot, then commits kind and payload with an odd/even version transition. */
     String emitSend(String mailboxId, String kind, List<String> payload) {
+        return emitSend(mailboxId, kind, payload, () -> { });
+    }
+
+    /** Emits the idle hook on every retry while waiting for producer ownership of the slot. */
+    String emitSend(String mailboxId, String kind, List<String> payload, Runnable idleHook) {
         SharedMailboxLayout mailbox = producerMailbox(mailboxId);
         Objects.requireNonNull(kind, "kind");
+        Objects.requireNonNull(idleHook, "idleHook");
         payload = List.copyOf(Objects.requireNonNull(payload, "payload"));
         if (kind.isBlank() || "null".equals(kind)
             || payload.stream().anyMatch(value -> value == null || value.isBlank() || "null".equals(value))) {
@@ -47,6 +53,7 @@ final class SharedMailboxProtocolEmitter {
 
         MlogProgramBuilder.Label wait = label("mailbox_send_wait");
         output.label(wait);
+        idleHook.run();
         String version = readConstant(mailbox.allocation(), SharedMailboxLayout.VERSION_INDEX);
         output.jump(wait, STRICT_EQUAL, version, "null");
         String acknowledged = readConstant(mailbox.allocation(), SharedMailboxLayout.ACKNOWLEDGED_VERSION_INDEX);
@@ -79,9 +86,16 @@ final class SharedMailboxProtocolEmitter {
 
     /** Waits for one stable committed message, acknowledges it, and returns compiler-private value variables. */
     ReceivedMessage emitReceive(String mailboxId) {
+        return emitReceive(mailboxId, () -> { });
+    }
+
+    /** Emits the idle hook on every retry while waiting for a stable committed message. */
+    ReceivedMessage emitReceive(String mailboxId, Runnable idleHook) {
         SharedMailboxLayout mailbox = consumerMailbox(mailboxId);
+        Objects.requireNonNull(idleHook, "idleHook");
         MlogProgramBuilder.Label wait = label("mailbox_receive_wait");
         output.label(wait);
+        idleHook.run();
         String before = readConstant(mailbox.allocation(), SharedMailboxLayout.VERSION_INDEX);
         output.jump(wait, STRICT_EQUAL, before, "null");
         output.jump(wait, EQUAL, before, "0");
@@ -105,6 +119,26 @@ final class SharedMailboxProtocolEmitter {
         output.jump(wait, STRICT_EQUAL, confirmed, "null");
         output.jump(wait, NOT_EQUAL, confirmed, after);
         return new ReceivedMessage(after, kind, payload);
+    }
+
+    /** Waits until the consumer has durably acknowledged the exact committed version. */
+    void emitAwaitAcknowledged(String mailboxId, String committedVersion) {
+        emitAwaitAcknowledged(mailboxId, committedVersion, () -> { });
+    }
+
+    /** Emits the idle hook on every acknowledgement retry. */
+    void emitAwaitAcknowledged(String mailboxId, String committedVersion, Runnable idleHook) {
+        SharedMailboxLayout mailbox = producerMailbox(mailboxId);
+        if (committedVersion == null || committedVersion.isBlank() || "null".equals(committedVersion)) {
+            throw new IllegalArgumentException("共享邮箱提交版本不能使用 null 或空值");
+        }
+        Objects.requireNonNull(idleHook, "idleHook");
+        MlogProgramBuilder.Label wait = label("mailbox_acknowledgement_wait");
+        output.label(wait);
+        idleHook.run();
+        String acknowledged = readConstant(mailbox.allocation(), SharedMailboxLayout.ACKNOWLEDGED_VERSION_INDEX);
+        output.jump(wait, STRICT_EQUAL, acknowledged, "null");
+        output.jump(wait, NOT_EQUAL, acknowledged, committedVersion);
     }
 
     private String readRequiredField(MlogProgramBuilder.Label wait, PhysicalMemoryLayout.Allocation allocation,
