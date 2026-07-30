@@ -30,3 +30,16 @@ jobs:
 
       - name: 执行测试
         run: ./gradlew --no-daemon clean test
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: 构建官方站点
+        working-directory: website
+        run: |
+          npm ci
+          npm run build

@@ -1,0 +1,87 @@
+name: 持续部署
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  跨平台验证:
+    name: CLI 验证 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 执行测试
+        run: ./gradlew --no-daemon check
+      - name: 构建启动器
+        run: ./gradlew --no-daemon installDist
+      - name: 验证 Unix 启动器
+        if: runner.os != 'Windows'
+        run: build/install/mindustry-processor-language/bin/mindustry-processor-language --version
+      - name: 验证 Windows 启动器
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& "build/install/mindustry-processor-language/bin/mindustry-processor-language.bat" --version'
+
+  发布发行包:
+    name: 发布 GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: 跨平台验证
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 构建跨平台发行包
+        run: ./gradlew --no-daemon releaseArchive
+      - name: 发布
+        uses: softprops/action-gh-release@v2
+        with:
+          files: releases/*
+          generate_release_notes: true
+
+  部署官方网站与包索引:
+    name: 部署 IO
+    if: github.ref == 'refs/heads/master' && secrets.IO_DEPLOY_TOKEN != ''
+    needs: 跨平台验证
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: 构建官方站点
+        working-directory: website
+        run: |
+          npm ci
+          npm run build
+      - name: 组合静态站点与索引
+        run: |
+          mkdir -p website/dist/registry
+          cp registry/index.json website/dist/registry/index.json
+      - name: 部署到 GitHub IO 仓库
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.IO_DEPLOY_TOKEN }}
+          external_repository: ARC4991/mindustry-processor-language-io
+          publish_branch: gh-pages
+          publish_dir: ./website/dist
+          force_orphan: true
+          commit_message: "deploy: 从 ${{ github.sha }} 部署 MPL 官方站点与包索引"
