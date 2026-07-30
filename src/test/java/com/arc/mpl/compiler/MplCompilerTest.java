@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -1323,6 +1324,125 @@ class MplCompilerTest {
         assertEquals(2, result.physicalMemoryLayout().stringRuntime().callResults().size());
         assertEquals(2, result.physicalMemoryLayout().stringRuntime().snapshots().size());
         assertTrue(result.mlog().orElseThrow().contains("printflush message1"));
+    }
+
+    @Test
+    void propagatesExactStringCapacityThroughAFunctionChain(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun identity(value: String): String {
+                return value;
+            }
+
+            fun forward(value: String): String {
+                return identity(value);
+            }
+
+            val result: String = forward("MPL");
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        var strings = result.physicalMemoryLayout().stringRuntime();
+        assertEquals(3, strings.variable("identity", "value").orElseThrow().capacity());
+        assertEquals(3, strings.variable("forward", "value").orElseThrow().capacity());
+        assertEquals(3, strings.variable(null, "result").orElseThrow().capacity());
+        assertTrue(strings.functionResults().values().stream().allMatch(entry -> entry.capacity() == 3));
+        assertTrue(strings.snapshots().values().stream().allMatch(entry -> entry.capacity() == 3));
+        assertTrue(strings.callResults().values().stream().allMatch(entry -> entry.capacity() == 3));
+    }
+
+    @Test
+    void usesTheLargestObservedCapacityAcrossAssignmentsAndCallSites(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun copy(value: String): String {
+                return value;
+            }
+
+            var changing: String = "A";
+            changing = "ABCDE";
+            val short: String = copy("XY");
+            val longest: String = copy(changing);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        var strings = result.physicalMemoryLayout().stringRuntime();
+        assertEquals(5, strings.variable(null, "changing").orElseThrow().capacity());
+        assertEquals(5, strings.variable("copy", "value").orElseThrow().capacity());
+        assertEquals(5, strings.variable(null, "short").orElseThrow().capacity());
+        assertEquals(5, strings.variable(null, "longest").orElseThrow().capacity());
+        assertEquals(5, strings.functionResult("copy").orElseThrow().capacity());
+        assertEquals(List.of(5, 5), strings.callResults().values().stream()
+            .map(com.arc.mpl.memory.StringRuntimeLayout.Entry::capacity).sorted().toList());
+    }
+
+    @Test
+    void keepsTargetCapacityForAnUncalledStringFunction(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun unused(value: String): String {
+                return value;
+            }
+
+            val marker: Int = 1;
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        var strings = result.physicalMemoryLayout().stringRuntime();
+        assertEquals(400, strings.variable("unused", "value").orElseThrow().capacity());
+        assertEquals(400, strings.functionResult("unused").orElseThrow().capacity());
+    }
+
+    @Test
+    void includesFunctionAssignmentsToTopLevelStringCapacity(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var status: String = "A";
+
+            fun updateStatus(): Int {
+                status = "READY";
+                return 0;
+            }
+
+            updateStatus();
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertEquals(5, result.physicalMemoryLayout().stringRuntime()
+            .variable(null, "status").orElseThrow().capacity());
+    }
+
+    @Test
+    void usesLargestStringCapacityAcrossBranchesAndLoops(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var value: String = "A";
+            if (true) {
+                value = "BRANCH";
+            } else {
+                value = "ALT";
+            }
+            do {
+                value = "DO-WHILE";
+            } while (false);
+            for (var index: Int = 0; index < 1; index += 1) {
+                value = "FOR-LOOP-VALUE";
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertEquals(14, result.physicalMemoryLayout().stringRuntime()
+            .variable(null, "value").orElseThrow().capacity());
     }
 
     @Test
