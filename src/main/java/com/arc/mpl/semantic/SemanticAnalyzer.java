@@ -737,13 +737,9 @@ public final class SemanticAnalyzer {
         }
         if (expression instanceof CallExpression call && call.callee() instanceof Identifier function) {
             List<MplType> arguments = call.arguments().stream().map(value -> inferExpressionType(value, locals)).toList();
-            List<FunctionSignature> candidates = functionOverloads.getOrDefault(function.name(), List.of()).stream()
-                .filter(signature -> signature.parameterTypes().size() == arguments.size())
-                .filter(signature -> java.util.stream.IntStream.range(0, arguments.size())
-                    .allMatch(index -> canAssign(signature.parameterTypes().get(index), arguments.get(index))))
-                .filter(signature -> signature.returnType() != ValueType.ERROR)
-                .toList();
-            return candidates.size() == 1 ? candidates.get(0).returnType() : ValueType.ERROR;
+            FunctionSignature selected = selectInferredOverload(functionOverloads.getOrDefault(function.name(), List.of()),
+                FunctionSignature::parameterTypes, FunctionSignature::returnType, arguments);
+            return selected == null ? ValueType.ERROR : selected.returnType();
         }
         if (expression instanceof CallExpression call && call.callee() instanceof MemberAccessExpression member) {
             List<MplType> arguments = call.arguments().stream().map(value -> inferExpressionType(value, locals)).toList();
@@ -751,28 +747,36 @@ public final class SemanticAnalyzer {
                 ClassInfo owner = classes.get(inferringClass);
                 ClassInfo parent = owner == null ? null : owner.parent();
                 if (parent == null) return ValueType.ERROR;
-                List<MethodInfo> candidates = methodCandidates(parent, member.member()).stream()
-                    .filter(MethodInfo::publicAccess)
-                    .filter(method -> method.parameterTypes().size() == arguments.size())
-                    .filter(method -> java.util.stream.IntStream.range(0, arguments.size())
-                        .allMatch(index -> canAssign(method.parameterTypes().get(index), arguments.get(index))))
-                    .filter(method -> method.returnType() != ValueType.ERROR)
-                    .toList();
-                return candidates.size() == 1 ? candidates.get(0).returnType() : ValueType.ERROR;
+                MethodInfo selected = selectInferredOverload(methodCandidates(parent, member.member()).stream()
+                        .filter(MethodInfo::publicAccess).toList(), MethodInfo::parameterTypes, MethodInfo::returnType,
+                    arguments);
+                return selected == null ? ValueType.ERROR : selected.returnType();
             }
             MplType receiver = inferExpressionType(member.target(), locals);
             if (!(receiver instanceof ObjectType object) || object.nullable()) return ValueType.ERROR;
             ClassInfo type = classes.get(object.className());
             if (type == null) return ValueType.ERROR;
-            List<MethodInfo> candidates = methodCandidates(type, member.member()).stream()
-                .filter(method -> method.parameterTypes().size() == arguments.size())
-                .filter(method -> java.util.stream.IntStream.range(0, arguments.size())
-                    .allMatch(index -> canAssign(method.parameterTypes().get(index), arguments.get(index))))
-                .filter(method -> method.returnType() != ValueType.ERROR)
-                .toList();
-            return candidates.size() == 1 ? candidates.get(0).returnType() : ValueType.ERROR;
+            MethodInfo selected = selectInferredOverload(methodCandidates(type, member.member()), MethodInfo::parameterTypes,
+                MethodInfo::returnType, arguments);
+            return selected == null ? ValueType.ERROR : selected.returnType();
         }
         return ValueType.ERROR;
+    }
+
+    private <T> T selectInferredOverload(List<T> candidates,
+                                         java.util.function.Function<T, List<MplType>> parameters,
+                                         java.util.function.Function<T, MplType> returnType,
+                                         List<MplType> arguments) {
+        List<T> applicable = candidates.stream()
+            .filter(candidate -> returnType.apply(candidate) != ValueType.ERROR)
+            .filter(candidate -> parameters.apply(candidate).size() == arguments.size())
+            .filter(candidate -> java.util.stream.IntStream.range(0, arguments.size())
+                .allMatch(index -> canAssign(parameters.apply(candidate).get(index), arguments.get(index))))
+            .toList();
+        if (applicable.size() == 1) return applicable.get(0);
+        List<T> mostSpecific = applicable.stream().filter(candidate -> applicable.stream().noneMatch(other ->
+            other != candidate && moreSpecific(parameters.apply(other), parameters.apply(candidate)))).toList();
+        return mostSpecific.size() == 1 ? mostSpecific.get(0) : null;
     }
 
     private MplType numericInferenceType(MplType left, MplType right) {
