@@ -47,8 +47,8 @@ public final class PhysicalMemoryLayoutExtender {
                 while (remaining > 0 && availableBlocks-- > 0) {
                     int index = segments.size();
                     int length = Math.min(remaining, capacity);
-                    String alias = (kind == RuntimePreferences.MemoryKind.CELL ? "cell" : "bank")
-                        + "__mpl_mem" + index;
+                    String alias = PhysicalMemoryLayout.automaticLinkAlias(kind,
+                        existing.merge(kind, 1, Integer::sum));
                     segments.add(new PhysicalMemoryLayout.Segment(alias, kind, capacity, length));
                     slices.add(new PhysicalMemoryLayout.Slice(index, 0, logicalStart, length));
                     logicalStart += length;

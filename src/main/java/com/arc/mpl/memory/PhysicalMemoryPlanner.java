@@ -119,9 +119,11 @@ public final class PhysicalMemoryPlanner {
             placed.put(entry.getKey(), new PhysicalMemoryLayout.Allocation(entry.getKey(), entry.getValue(), slices));
         }
         List<PhysicalMemoryLayout.Segment> segments = new ArrayList<>();
+        Map<RuntimePreferences.MemoryKind, Integer> aliases =
+            new java.util.EnumMap<>(RuntimePreferences.MemoryKind.class);
         for (int index = 0; index < segmentKinds.size(); index++) {
             RuntimePreferences.MemoryKind kind = segmentKinds.get(index);
-            String alias = (kind == RuntimePreferences.MemoryKind.CELL ? "cell" : "bank") + "__mpl_mem" + index;
+            String alias = PhysicalMemoryLayout.automaticLinkAlias(kind, aliases.merge(kind, 1, Integer::sum));
             segments.add(new PhysicalMemoryLayout.Segment(alias, kind, capacity(kind, profile), used.get(index)));
         }
         Map<String, PhysicalMemoryLayout.ObjectPool> objectPools = new LinkedHashMap<>();

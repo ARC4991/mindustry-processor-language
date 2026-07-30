@@ -1,11 +1,13 @@
 package com.arc.mpl.project;
 
+import com.arc.mpl.memory.PhysicalMemoryLayout;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.zip.DeflaterOutputStream;
 
@@ -37,6 +39,7 @@ public final class MindustrySchematicWriter {
             .map(ShardPlan::id).collect(java.util.stream.Collectors.toSet()))) {
             throw new IllegalArgumentException("mlog shard 集合与 Runtime 拓扑不一致");
         }
+        validateStableMemoryAliases(plan);
         List<Tile> tiles = new java.util.ArrayList<>();
         for (ShardPlan shard : plan.shards()) {
             BlueprintLayout.ShardPlacement placement = layout.shards().stream()
@@ -52,6 +55,19 @@ public final class MindustrySchematicWriter {
             tiles.add(new Tile(cell ? "memory-cell" : "memory-bank", memory.x(), memory.y(), null));
         }
         return schematic(tiles, layout.width(), layout.height(), name, buildHash);
+    }
+
+    private void validateStableMemoryAliases(RuntimeTopologyPlan plan) {
+        Map<RuntimePreferences.MemoryKind, Integer> ordinals =
+            new java.util.EnumMap<>(RuntimePreferences.MemoryKind.class);
+        for (PhysicalMemoryLayout.Segment segment : plan.physicalMemoryLayout().segments()) {
+            String expected = PhysicalMemoryLayout.automaticLinkAlias(segment.kind(),
+                ordinals.merge(segment.kind(), 1, Integer::sum));
+            if (!segment.alias().equals(expected)) {
+                throw new IllegalArgumentException("蓝图内部 Memory alias 必须为 " + expected + "，实际为 "
+                    + segment.alias() + "；否则处理器先于 Memory 完成时，Mindustry 会重命名链接并使 mlog 失去访问");
+            }
+        }
     }
 
     private String processorBlock(ShardPlan shard) {

@@ -118,6 +118,16 @@ public record PhysicalMemoryLayout(
         return EMPTY;
     }
 
+    /**
+     * Returns the alias Mindustry itself assigns when a Memory link becomes valid after processor placement.
+     * Keeping generated code on this name makes schematic construction order irrelevant.
+     */
+    public static String automaticLinkAlias(RuntimePreferences.MemoryKind kind, int ordinal) {
+        Objects.requireNonNull(kind, "kind");
+        if (ordinal < 1) throw new IllegalArgumentException("Memory link ordinal must be positive");
+        return (kind == RuntimePreferences.MemoryKind.CELL ? "cell" : "bank") + ordinal;
+    }
+
     public Optional<Allocation> allocation(String function, String variable) {
         StorageKey local = new StorageKey(function, variable);
         Allocation allocation = allocations.get(local);
