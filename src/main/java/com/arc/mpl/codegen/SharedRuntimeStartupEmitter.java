@@ -1,7 +1,9 @@
 package com.arc.mpl.codegen;
 
 import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.memory.SharedMailboxLayout;
 import com.arc.mpl.memory.SharedRuntimeLayout;
+import com.arc.mpl.project.RuntimePreferences;
 
 import java.util.Objects;
 
@@ -26,7 +28,12 @@ final class SharedRuntimeStartupEmitter {
     /** Main resets and announces the deployment; Workers acknowledge observing ready=0. */
     void emitPreparation() {
         context.sharedRuntime().ifPresent(shared -> {
-            if (context.main()) emitMainPreparation(shared);
+            if (context.main()) {
+                MlogProgramBuilder.Label wait = label("runtime_memory_wait");
+                output.label(wait);
+                verifyMemoryLinks(wait);
+                emitMainPreparation(shared);
+            }
             else emitWorkerStartup(shared);
         });
     }
@@ -65,6 +72,10 @@ final class SharedRuntimeStartupEmitter {
             String heartbeat = readConstant(shared.header(), shared.heartbeatIndex(worker));
             output.jump(wait, NOT_EQUAL, heartbeat, resetAck);
         }
+        for (SharedMailboxLayout mailbox : shared.mailboxes()) {
+            writeConstant(mailbox.allocation(), SharedMailboxLayout.VERSION_INDEX, "0");
+            writeConstant(mailbox.allocation(), SharedMailboxLayout.ACKNOWLEDGED_VERSION_INDEX, "0");
+        }
     }
 
     private void emitWorkerStartup(SharedRuntimeLayout shared) {
@@ -73,6 +84,7 @@ final class SharedRuntimeStartupEmitter {
         MlogProgramBuilder.Label resetAck = label("runtime_reset_ack");
         MlogProgramBuilder.Label readyDone = label("runtime_ready_done");
         output.label(resetWait);
+        verifyMemoryLinks(resetWait);
         verifyConstant(resetWait, shared.header(), SharedRuntimeLayout.MAGIC_INDEX,
             Integer.toString(SharedRuntimeLayout.MAGIC));
         verifyConstant(resetWait, shared.header(), SharedRuntimeLayout.ABI_INDEX,
@@ -89,6 +101,7 @@ final class SharedRuntimeStartupEmitter {
         String ready = readConstant(shared.header(), SharedRuntimeLayout.READY_INDEX);
         output.jump(resetAck, EQUAL, ready, "0");
         output.jump(readyWait, NOT_EQUAL, ready, "1");
+        verifyMemoryLinks(readyWait);
         verifyConstant(readyWait, shared.header(), SharedRuntimeLayout.MAGIC_INDEX,
             Integer.toString(SharedRuntimeLayout.MAGIC));
         verifyConstant(readyWait, shared.header(), SharedRuntimeLayout.ABI_INDEX,
@@ -106,6 +119,16 @@ final class SharedRuntimeStartupEmitter {
             Integer.toString(-shared.epoch()));
         output.jump(readyWait, ALWAYS, "0", "0");
         output.label(readyDone);
+    }
+
+    private void verifyMemoryLinks(MlogProgramBuilder.Label wait) {
+        for (PhysicalMemoryLayout.Segment segment : memoryLayout.segments()) {
+            String actualType = temporary();
+            output.sensor(actualType, segment.alias(), "@type");
+            String expected = segment.kind() == RuntimePreferences.MemoryKind.CELL
+                ? "@memory-cell" : "@memory-bank";
+            output.jump(wait, NOT_EQUAL, actualType, expected);
+        }
     }
 
     private void verifyConstant(MlogProgramBuilder.Label wait, PhysicalMemoryLayout.Allocation allocation,
