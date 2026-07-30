@@ -121,6 +121,16 @@ final class ObjectPoolRequirementAnalyzer {
             collect(binary.right(), owners, pooledAllocations);
         } else if (expression instanceof HirUnary unary) {
             collect(unary.operand(), owners, pooledAllocations);
+        } else if (expression instanceof HirStringConcat concat) {
+            collect(concat.left(), owners, pooledAllocations);
+            collect(concat.right(), owners, pooledAllocations);
+        } else if (expression instanceof HirStringLength length) {
+            collect(length.value(), owners, pooledAllocations);
+        } else if (expression instanceof HirStringComparison comparison) {
+            collect(comparison.left(), owners, pooledAllocations);
+            collect(comparison.right(), owners, pooledAllocations);
+        } else if (expression instanceof HirStringSnapshot snapshot) {
+            collect(snapshot.value(), owners, pooledAllocations);
         } else if (expression instanceof HirIntrinsicCall call) {
             call.arguments().forEach(value -> collect(value, owners, pooledAllocations));
         } else if (expression instanceof HirMemberAccess member) {

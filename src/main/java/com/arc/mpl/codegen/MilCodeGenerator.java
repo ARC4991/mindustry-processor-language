@@ -40,6 +40,10 @@ import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirStatement;
+import com.arc.mpl.hir.HirStringComparison;
+import com.arc.mpl.hir.HirStringConcat;
+import com.arc.mpl.hir.HirStringLength;
+import com.arc.mpl.hir.HirStringSnapshot;
 import com.arc.mpl.hir.HirText;
 import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
@@ -417,6 +421,15 @@ public final class MilCodeGenerator {
         }
         if (value instanceof HirUnary unary) {
             return "(" + unary.operator() + expression(unary.operand()) + ")";
+        }
+        if (value instanceof HirStringConcat concat) {
+            return "(" + expression(concat.left()) + " + " + expression(concat.right()) + ")";
+        }
+        if (value instanceof HirStringLength length) return expression(length.value()) + ".length";
+        if (value instanceof HirStringSnapshot snapshot) return expression(snapshot.value());
+        if (value instanceof HirStringComparison comparison) {
+            return "(" + expression(comparison.left()) + (comparison.equal() ? " == " : " != ")
+                + expression(comparison.right()) + ")";
         }
         if (value instanceof HirBinary binary) {
             return "(" + expression(binary.left()) + " " + binary.operator() + " " + expression(binary.right()) + ")";

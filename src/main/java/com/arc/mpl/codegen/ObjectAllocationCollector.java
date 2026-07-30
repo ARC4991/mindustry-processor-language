@@ -32,6 +32,10 @@ import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirStatement;
+import com.arc.mpl.hir.HirStringComparison;
+import com.arc.mpl.hir.HirStringConcat;
+import com.arc.mpl.hir.HirStringLength;
+import com.arc.mpl.hir.HirStringSnapshot;
 import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
@@ -125,6 +129,16 @@ final class ObjectAllocationCollector {
             collect(binary.right(), found);
         } else if (expression instanceof HirUnary unary) {
             collect(unary.operand(), found);
+        } else if (expression instanceof HirStringConcat concat) {
+            collect(concat.left(), found);
+            collect(concat.right(), found);
+        } else if (expression instanceof HirStringLength length) {
+            collect(length.value(), found);
+        } else if (expression instanceof HirStringComparison comparison) {
+            collect(comparison.left(), found);
+            collect(comparison.right(), found);
+        } else if (expression instanceof HirStringSnapshot snapshot) {
+            collect(snapshot.value(), found);
         } else if (expression instanceof HirIntrinsicCall call) {
             call.arguments().forEach(argument -> collect(argument, found));
         } else if (expression instanceof HirMemberAccess member) {

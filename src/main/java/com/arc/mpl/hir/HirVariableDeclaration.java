@@ -8,12 +8,16 @@ public record HirVariableDeclaration(
     MplType type,
     boolean mutable,
     HirExpression initializer,
-    boolean ownsPooledObject
+    boolean ownsPooledObject,
+    int stringCapacity
 ) implements HirStatement {
     public HirVariableDeclaration {
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(initializer, "initializer");
+        if (stringCapacity < 0 || type != ValueType.STRING && stringCapacity != 0) {
+            throw new IllegalArgumentException("stringCapacity 只适用于 String 且不能为负数");
+        }
     }
 
     /**
@@ -22,10 +26,15 @@ public record HirVariableDeclaration(
      * {@code val}.
      */
     public HirVariableDeclaration(String name, MplType type, HirExpression initializer) {
-        this(name, type, true, initializer, false);
+        this(name, type, true, initializer, false, 0);
     }
 
     public HirVariableDeclaration(String name, MplType type, boolean mutable, HirExpression initializer) {
-        this(name, type, mutable, initializer, false);
+        this(name, type, mutable, initializer, false, 0);
+    }
+
+    public HirVariableDeclaration(String name, MplType type, boolean mutable, HirExpression initializer,
+                                  boolean ownsPooledObject) {
+        this(name, type, mutable, initializer, ownsPooledObject, 0);
     }
 }

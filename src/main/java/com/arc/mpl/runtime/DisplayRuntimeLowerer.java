@@ -28,6 +28,10 @@ import com.arc.mpl.hir.HirObjectFieldAssignment;
 import com.arc.mpl.hir.HirObjectFieldRead;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirStatement;
+import com.arc.mpl.hir.HirStringComparison;
+import com.arc.mpl.hir.HirStringConcat;
+import com.arc.mpl.hir.HirStringLength;
+import com.arc.mpl.hir.HirStringSnapshot;
 import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitIteration;
@@ -275,6 +279,14 @@ public final class DisplayRuntimeLowerer {
             return containsFunctionCall(assignment.target()) || containsFunctionCall(assignment.value());
         }
         if (expression instanceof HirAssignment assignment) return containsFunctionCall(assignment.value());
+        if (expression instanceof HirStringConcat concat) {
+            return containsFunctionCall(concat.left()) || containsFunctionCall(concat.right());
+        }
+        if (expression instanceof HirStringLength length) return containsFunctionCall(length.value());
+        if (expression instanceof HirStringSnapshot snapshot) return containsFunctionCall(snapshot.value());
+        if (expression instanceof HirStringComparison comparison) {
+            return containsFunctionCall(comparison.left()) || containsFunctionCall(comparison.right());
+        }
         if (expression instanceof HirBinary binary) {
             return containsFunctionCall(binary.left()) || containsFunctionCall(binary.right());
         }

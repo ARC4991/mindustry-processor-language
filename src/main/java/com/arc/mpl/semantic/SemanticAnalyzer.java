@@ -81,6 +81,10 @@ import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirStatement;
+import com.arc.mpl.hir.HirStringComparison;
+import com.arc.mpl.hir.HirStringConcat;
+import com.arc.mpl.hir.HirStringLength;
+import com.arc.mpl.hir.HirStringSnapshot;
 import com.arc.mpl.hir.HirText;
 import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
@@ -139,6 +143,7 @@ public final class SemanticAnalyzer {
     private int unitIterationDepth;
     private int nextManagedQueryId;
     private int nextObjectAllocationId;
+    private int nextStringAllocationId;
     private int loopDepth;
     private String activeUnitBinding;
     private String activeBuildingBinding;
@@ -198,6 +203,7 @@ public final class SemanticAnalyzer {
         unitIterationDepth = 0;
         nextManagedQueryId = 0;
         nextObjectAllocationId = 1;
+        nextStringAllocationId = 1;
         loopDepth = 0;
         activeUnitBinding = null;
         activeBuildingBinding = null;
@@ -392,7 +398,9 @@ public final class SemanticAnalyzer {
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
                 MplType parameterType = method.parameterTypes().get(index);
-                declare(parameter.name(), new Symbol(parameterType, false, null, null, null, null, false, false,
+                declare(parameter.name(), new Symbol(parameterType, false,
+                    parameterType == ValueType.STRING ? profile.maxMessageUtf16CodeUnits() : null,
+                    null, null, null, false, false,
                     parameter.span()), parameter.span());
                 parameters.add(new HirFunctionParameter(parameter.name(), parameterType));
             }
@@ -577,7 +585,9 @@ public final class SemanticAnalyzer {
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
                 MplType type = signature.parameterTypes().get(index);
-                declare(parameter.name(), new Symbol(type, false, null, null, null, null, false, false, parameter.span()), parameter.span());
+                declare(parameter.name(), new Symbol(type, false,
+                    type == ValueType.STRING ? profile.maxMessageUtf16CodeUnits() : null,
+                    null, null, null, false, false, parameter.span()), parameter.span());
                 parameters.add(new HirFunctionParameter(parameter.name(), type));
             }
             List<HirStatement> body = analyzeBlock(function.body());
@@ -1693,7 +1703,7 @@ public final class SemanticAnalyzer {
             }
             arguments.add(value);
         }
-        int staticLength = arguments.stream().mapToInt(this::staticStringLength).sum();
+        int staticLength = arguments.stream().mapToInt(this::stringMaxLength).sum();
         if (staticLength > profile.maxMessageUtf16CodeUnits()) {
             error("MPL3202", "print 的静态文本上界为 " + staticLength + " 个 UTF-16 代码单元，超过 target "
                 + profile.id() + " 的 " + profile.maxMessageUtf16CodeUnits() + " 个上限", sourceArguments.get(0).span());
@@ -1796,9 +1806,6 @@ public final class SemanticAnalyzer {
             && !(initializer instanceof HirTupleLiteral) && !(initializer instanceof HirCollectionLiteral)) {
             error("MPL3601", "当前阶段不支持复制聚合值；请在声明处使用字面量或集合工厂", declaration.initializer().span());
         }
-        if (type == ValueType.STRING && declaration.mutable()) {
-            error("MPL3103", "当前阶段 String 仅支持 val 静态值；动态 String runtime 尚未启用", declaration.span());
-        }
         if (type instanceof UnitSetType && declaration.mutable()) {
             error("MPL3301", "Set<Unit<T>> 是不可变的惰性查询描述符，只能使用 val 声明", declaration.span());
         }
@@ -1825,8 +1832,17 @@ public final class SemanticAnalyzer {
         }
         boolean reusableLocalObject = declarationAllocationContext == ObjectAllocationContext.REUSABLE_LOCAL
             && initializer instanceof HirNewObject;
+        int initialStringMax = type == ValueType.STRING ? stringMaxLength(initializer) : 0;
+        int stringCapacity = type == ValueType.STRING
+            ? declaration.mutable() ? profile.maxMessageUtf16CodeUnits() : initialStringMax
+            : 0;
+        if (type == ValueType.STRING && stringCapacity > profile.maxMessageUtf16CodeUnits()) {
+            error("MPL3103", "String 的静态上界为 " + stringCapacity + " 个 UTF-16 代码单元，超过 target "
+                + profile.id() + " 的 " + profile.maxMessageUtf16CodeUnits() + " 个上限", declaration.span());
+        }
         boolean declared = declare(declaration.name(),
-            new Symbol(type, declaration.mutable(), staticStringLength(initializer), staticAggregateSize(initializer), unitQuery,
+            new Symbol(type, declaration.mutable(), type == ValueType.STRING ? initialStringMax : null,
+                staticAggregateSize(initializer), unitQuery,
                 buildingQuery, reusableLocalObject, ownsPooledObject, global, declaration.span()),
             declaration.span());
         if (declared && ownsPooledObject && type instanceof ObjectType object) {
@@ -1837,7 +1853,8 @@ public final class SemanticAnalyzer {
             // deliberately do not observe this variable as initialized.
             initializedGlobals.add(declaration.name());
         }
-        return new HirVariableDeclaration(declaration.name(), type, declaration.mutable(), initializer, ownsPooledObject);
+        return new HirVariableDeclaration(declaration.name(), type, declaration.mutable(), initializer,
+            ownsPooledObject, stringCapacity);
     }
 
     private FunctionSignature ownedFactory(Expression expression) {
@@ -1870,7 +1887,16 @@ public final class SemanticAnalyzer {
             }
             return new HirConstant(Double.toString(decimal.value()), ValueType.FLOAT);
         }
-        if (expression instanceof StringLiteral text) return new HirText(text.value());
+        if (expression instanceof StringLiteral text) {
+            if (hasUnpairedSurrogate(text.value())) {
+                error("MPL3103", "String 不能包含未配对的 UTF-16 代理代码单元", text.span());
+            }
+            if (text.value().length() > profile.maxMessageUtf16CodeUnits()) {
+                error("MPL3103", "String 字面量包含 " + text.value().length() + " 个 UTF-16 代码单元，超过 target "
+                    + profile.id() + " 的 " + profile.maxMessageUtf16CodeUnits() + " 个上限", text.span());
+            }
+            return new HirText(text.value());
+        }
         if (expression instanceof ArrayLiteral array) return analyzeArrayLiteral(array);
         if (expression instanceof TupleLiteral tuple) return analyzeTupleLiteral(tuple);
         if (expression instanceof BooleanLiteral bool) {
@@ -1937,8 +1963,30 @@ public final class SemanticAnalyzer {
                 ? analyzeBorrowedObjectExpression(binary.left()) : analyzeExpression(binary.left());
             HirExpression right = identityOrNullComparison
                 ? analyzeBorrowedObjectExpression(binary.right()) : analyzeExpression(binary.right());
-            if ("+".equals(binary.operator()) && left instanceof HirText leftText && right instanceof HirText rightText) {
-                return new HirText(leftText.value() + rightText.value());
+            if ("+".equals(binary.operator())
+                && (left.type() == ValueType.STRING || right.type() == ValueType.STRING)) {
+                if (left.type() != ValueType.STRING || right.type() != ValueType.STRING) {
+                    error("MPL3103", "String 拼接两侧都必须是 String", binary.span());
+                    return new HirConstant("0", ValueType.ERROR);
+                }
+                if (left instanceof HirText leftText && right instanceof HirText rightText) {
+                    return new HirText(leftText.value() + rightText.value());
+                }
+                int maxCodeUnits;
+                try {
+                    maxCodeUnits = Math.addExact(stringMaxLength(left), stringMaxLength(right));
+                } catch (ArithmeticException exception) {
+                    maxCodeUnits = Integer.MAX_VALUE;
+                }
+                if (maxCodeUnits > profile.maxMessageUtf16CodeUnits()) {
+                    error("MPL3103", "String 拼接的静态上界为 " + maxCodeUnits + " 个 UTF-16 代码单元，超过 target "
+                        + profile.id() + " 的 " + profile.maxMessageUtf16CodeUnits() + " 个上限", binary.span());
+                }
+                return new HirStringConcat(nextStringAllocationId++, left, right, maxCodeUnits);
+            }
+            if (("==".equals(binary.operator()) || "!=".equals(binary.operator()))
+                && left.type() == ValueType.STRING && right.type() == ValueType.STRING) {
+                return new HirStringComparison(left, right, "==".equals(binary.operator()));
             }
             ValueType type = binaryType(binary.operator(), left.type(), right.type(), binary.span());
             return new HirBinary(left, binary.operator(), right, type);
@@ -1967,7 +2015,22 @@ public final class SemanticAnalyzer {
             if (!target.type().canAssignFrom(value.type())) {
                 error("MPL3103", "不能将 " + display(value.type()) + " 赋给 " + display(target.type()), assignment.value().span());
             }
+            if (target.type() == ValueType.STRING) {
+                int assignedMax = stringMaxLength(value);
+                if (assignedMax > profile.maxMessageUtf16CodeUnits()) {
+                    error("MPL3103", "String 赋值的静态上界超过 target 容量 "
+                        + profile.maxMessageUtf16CodeUnits(), assignment.span());
+                }
+                if (loopDepth > 0 && referencesVariable(value, assignment.target().name())) {
+                    error("MPL3103", "循环中的 String 自引用赋值无法证明长度上界", assignment.span());
+                }
+                updateStringMax(assignment.target().name(), Math.max(target.staticStringCodeUnits(), assignedMax));
+            }
         } else {
+            if (target.type() == ValueType.STRING) {
+                error("MPL3103", "String 暂不支持复合赋值；请使用 message = message + suffix", assignment.span());
+                return new HirAssignment(assignment.target().name(), assignment.operator(), value, ValueType.ERROR);
+            }
             ValueType result = binaryType(assignment.operator().substring(0, 1), target.type(), value.type(), assignment.span());
             if (!target.type().canAssignFrom(result)) {
                 error("MPL3103", "复合赋值结果不能赋给 " + display(target.type()), assignment.span());
@@ -2029,6 +2092,9 @@ public final class SemanticAnalyzer {
             if (buildingQuery != null) return new HirBuildingQuerySize(buildingQuery);
         }
         HirExpression target = analyzeBorrowedObjectExpression(member.target());
+        if (target.type() == ValueType.STRING && "length".equals(member.member())) {
+            return new HirStringLength(target);
+        }
         if (target.type() instanceof ObjectType object) {
             if (object.nullable()) {
                 error("MPL3706", "可空 " + object.displayName() + " 必须先通过 != null 检查", member.span());
@@ -2172,13 +2238,15 @@ public final class SemanticAnalyzer {
                     error("MPL3503", "函数 " + functionName.name() + " 的第 " + (index + 1) + " 个参数类型不匹配",
                         source.span());
                 }
-                arguments.add(argument);
+                arguments.add(index < signature.parameterTypes().size()
+                    ? snapshotStringArgument(argument, signature.parameterTypes().get(index)) : argument);
             }
             if (currentFunction != null) callGraph.get(currentFunction).add(functionName.name());
             if (analyzingTopLevel) {
                 topLevelCalls.add(new TopLevelCall(functionName.name(), Set.copyOf(initializedGlobals), call.span()));
             }
-            return new HirFunctionCall(functionName.name(), arguments, signature.returnType());
+            return new HirFunctionCall(functionName.name(), arguments, signature.returnType(),
+                signature.returnType() == ValueType.STRING ? nextStringAllocationId++ : 0);
         }
         if (call.callee() instanceof MemberAccessExpression member
             && member.target() instanceof Identifier namespace) {
@@ -2312,7 +2380,8 @@ public final class SemanticAnalyzer {
         arguments.addAll(analyzeArguments(object.className() + "." + methodName, method.parameterTypes(),
             sourceArguments, span));
         recordCall(method.internalName(), span);
-        return new HirFunctionCall(method.internalName(), arguments, method.returnType());
+        return new HirFunctionCall(method.internalName(), arguments, method.returnType(),
+            method.returnType() == ValueType.STRING ? nextStringAllocationId++ : 0);
     }
 
     private List<HirExpression> analyzeArguments(String callable, List<MplType> parameterTypes,
@@ -2327,9 +2396,15 @@ public final class SemanticAnalyzer {
             if (index < parameterTypes.size() && !parameterTypes.get(index).canAssignFrom(argument.type())) {
                 error("MPL3503", callable + " 的第 " + (index + 1) + " 个参数类型不匹配", source.span());
             }
-            arguments.add(argument);
+            arguments.add(index < parameterTypes.size()
+                ? snapshotStringArgument(argument, parameterTypes.get(index)) : argument);
         }
         return List.copyOf(arguments);
+    }
+
+    private HirExpression snapshotStringArgument(HirExpression argument, MplType parameterType) {
+        if (parameterType != ValueType.STRING || argument.type() != ValueType.STRING) return argument;
+        return new HirStringSnapshot(nextStringAllocationId++, argument, stringMaxLength(argument));
     }
 
     private void recordCall(String function, SourceSpan span) {
@@ -2366,6 +2441,11 @@ public final class SemanticAnalyzer {
                     assignment.value().span());
             }
         } else {
+            if (field.type() == ValueType.STRING) {
+                error("MPL3103", "String 对象字段暂不支持复合赋值", assignment.span());
+                return new HirObjectFieldAssignment(target, object.className(), assignment.member(),
+                    assignment.operator(), value, ValueType.ERROR);
+            }
             ValueType result = binaryType(assignment.operator().substring(0, 1), field.type(), value.type(),
                 assignment.span());
             if (!field.type().canAssignFrom(result)) {
@@ -2432,7 +2512,8 @@ public final class SemanticAnalyzer {
     private ValueType binaryType(String operator, MplType left, MplType right, SourceSpan span) {
         return switch (operator) {
             case "+" -> left == ValueType.STRING || right == ValueType.STRING
-                ? typeError("String 拼接当前仅支持两个字符串字面量；动态拼接需要 String runtime", span)
+                ? left == ValueType.STRING && right == ValueType.STRING ? ValueType.STRING
+                    : typeError("String 拼接两侧都必须是 String", span)
                 : numericResult(left, right, span, "运算符 +");
             case "-", "*" -> numericResult(left, right, span, "运算符 " + operator);
             case "/" -> {
@@ -2900,6 +2981,34 @@ public final class SemanticAnalyzer {
         return null;
     }
 
+    private void updateStringMax(String name, int maxCodeUnits) {
+        for (Map<String, Symbol> scope : scopes) {
+            Symbol symbol = scope.get(name);
+            if (symbol != null) {
+                scope.put(name, symbol.withStringMax(maxCodeUnits));
+                return;
+            }
+        }
+    }
+
+    private boolean referencesVariable(HirExpression expression, String name) {
+        if (expression instanceof HirVariable variable) return variable.name().equals(name);
+        if (expression instanceof HirStringConcat concat) {
+            return referencesVariable(concat.left(), name) || referencesVariable(concat.right(), name);
+        }
+        if (expression instanceof HirStringLength length) return referencesVariable(length.value(), name);
+        if (expression instanceof HirStringSnapshot snapshot) return referencesVariable(snapshot.value(), name);
+        if (expression instanceof HirStringComparison comparison) {
+            return referencesVariable(comparison.left(), name) || referencesVariable(comparison.right(), name);
+        }
+        if (expression instanceof HirFunctionCall call) {
+            return call.arguments().stream().anyMatch(argument -> referencesVariable(argument, name));
+        }
+        if (expression instanceof HirObjectFieldRead read) return referencesVariable(read.target(), name);
+        if (expression instanceof HirIndexAccess access) return referencesVariable(access.target(), name);
+        return false;
+    }
+
     private void error(String code, String message, SourceSpan span) {
         diagnostics.add(new Diagnostic(Severity.ERROR, code, message, Optional.ofNullable(file), Optional.of(span)));
     }
@@ -2908,17 +3017,33 @@ public final class SemanticAnalyzer {
         return type.displayName();
     }
 
-    /** Static bound is known only for immutable literal-backed strings in the first String slice. */
-    private int staticStringLength(HirExpression expression) {
+    /** Conservative UTF-16 upper bound carried by every String expression. */
+    private int stringMaxLength(HirExpression expression) {
         if (expression instanceof HirText text) return text.value().length();
+        if (expression instanceof HirStringConcat concat) return concat.maxCodeUnits();
+        if (expression instanceof HirStringSnapshot snapshot) return snapshot.maxCodeUnits();
         if (expression instanceof HirBinary binary && binary.type() == ValueType.STRING && "+".equals(binary.operator())) {
-            return staticStringLength(binary.left()) + staticStringLength(binary.right());
+            return Math.addExact(stringMaxLength(binary.left()), stringMaxLength(binary.right()));
         }
         if (expression instanceof HirVariable variable && variable.type() == ValueType.STRING) {
             Symbol symbol = lookup(variable.name());
-            return symbol == null || symbol.staticStringCodeUnits() == null ? 0 : symbol.staticStringCodeUnits();
+            return symbol == null || symbol.staticStringCodeUnits() == null
+                ? profile.maxMessageUtf16CodeUnits() : symbol.staticStringCodeUnits();
         }
-        return 0;
+        return expression.type() == ValueType.STRING ? profile.maxMessageUtf16CodeUnits() : 0;
+    }
+
+    private boolean hasUnpairedSurrogate(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            char unit = value.charAt(index);
+            if (Character.isHighSurrogate(unit)) {
+                if (index + 1 >= value.length() || !Character.isLowSurrogate(value.charAt(index + 1))) return true;
+                index++;
+            } else if (Character.isLowSurrogate(unit)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Integer staticAggregateSize(HirExpression expression) {
@@ -2942,6 +3067,12 @@ public final class SemanticAnalyzer {
 
         private Symbol withType(MplType narrowedType) {
             return new Symbol(narrowedType, mutable, staticStringCodeUnits, staticAggregateSize, unitQuery, buildingQuery,
+                reusableLocalObject, ownsPooledObject, global, declarationSpan);
+        }
+
+
+        private Symbol withStringMax(int maxCodeUnits) {
+            return new Symbol(type, mutable, maxCodeUnits, staticAggregateSize, unitQuery, buildingQuery,
                 reusableLocalObject, ownsPooledObject, global, declarationSpan);
         }
     }

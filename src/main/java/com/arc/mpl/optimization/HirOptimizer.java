@@ -37,6 +37,10 @@ import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirStatement;
+import com.arc.mpl.hir.HirStringComparison;
+import com.arc.mpl.hir.HirStringConcat;
+import com.arc.mpl.hir.HirStringLength;
+import com.arc.mpl.hir.HirStringSnapshot;
 import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
@@ -108,7 +112,7 @@ public final class HirOptimizer {
     private List<HirStatement> optimizeStatement(HirStatement statement) {
         if (statement instanceof HirVariableDeclaration declaration) {
             return List.of(new HirVariableDeclaration(declaration.name(), declaration.type(), declaration.mutable(),
-                optimizeExpression(declaration.initializer()), declaration.ownsPooledObject()));
+                optimizeExpression(declaration.initializer()), declaration.ownsPooledObject(), declaration.stringCapacity()));
         }
         if (statement instanceof HirExpressionStatement expression) {
             return List.of(new HirExpressionStatement(optimizeExpression(expression.expression())));
@@ -129,7 +133,7 @@ public final class HirOptimizer {
         if (statement instanceof HirFor loop) {
             Optional<HirVariableDeclaration> declaration = loop.declarationInitializer()
                 .map(value -> new HirVariableDeclaration(value.name(), value.type(), value.mutable(),
-                    optimizeExpression(value.initializer()), value.ownsPooledObject()));
+                    optimizeExpression(value.initializer()), value.ownsPooledObject(), value.stringCapacity()));
             return List.of(new HirFor(declaration, loop.expressionInitializer().map(this::optimizeExpression),
                 optimizeExpression(loop.condition()), loop.update().map(this::optimizeExpression), optimizeStatements(loop.body())));
         }
@@ -214,6 +218,39 @@ public final class HirOptimizer {
             HirExpression operand = optimizeExpression(unary.operand());
             return foldUnary(unary.operator(), operand, unary.type()).orElse(new HirUnary(unary.operator(), operand, unary.type()));
         }
+        if (expression instanceof HirStringConcat concat) {
+            HirExpression left = optimizeExpression(concat.left());
+            HirExpression right = optimizeExpression(concat.right());
+            if (left instanceof com.arc.mpl.hir.HirText leftText
+                && right instanceof com.arc.mpl.hir.HirText rightText) {
+                constantFolds++;
+                return new com.arc.mpl.hir.HirText(leftText.value() + rightText.value());
+            }
+            return new HirStringConcat(concat.allocationId(), left, right, concat.maxCodeUnits());
+        }
+        if (expression instanceof HirStringLength length) {
+            HirExpression value = optimizeExpression(length.value());
+            if (value instanceof com.arc.mpl.hir.HirText text) {
+                constantFolds++;
+                return new HirConstant(Integer.toString(text.value().length()), ValueType.INT);
+            }
+            return new HirStringLength(value);
+        }
+        if (expression instanceof HirStringSnapshot snapshot) {
+            return new HirStringSnapshot(snapshot.allocationId(), optimizeExpression(snapshot.value()),
+                snapshot.maxCodeUnits());
+        }
+        if (expression instanceof HirStringComparison comparison) {
+            HirExpression left = optimizeExpression(comparison.left());
+            HirExpression right = optimizeExpression(comparison.right());
+            if (left instanceof com.arc.mpl.hir.HirText leftText
+                && right instanceof com.arc.mpl.hir.HirText rightText) {
+                constantFolds++;
+                boolean equal = leftText.value().equals(rightText.value());
+                return new HirConstant(comparison.equal() == equal ? "1" : "0", ValueType.BOOL);
+            }
+            return new HirStringComparison(left, right, comparison.equal());
+        }
         if (expression instanceof HirBinary binary) return optimizeBinary(binary);
         if (expression instanceof HirAssignment assignment) {
             return new HirAssignment(assignment.target(), assignment.operator(), optimizeExpression(assignment.value()), assignment.type());
@@ -225,7 +262,8 @@ public final class HirOptimizer {
             return new HirIntrinsicCall(call.namespace(), call.name(), optimizeExpressions(call.arguments()), call.type());
         }
         if (expression instanceof HirFunctionCall call) {
-            return new HirFunctionCall(call.function(), optimizeExpressions(call.arguments()), call.type());
+            return new HirFunctionCall(call.function(), optimizeExpressions(call.arguments()), call.type(),
+                call.stringResultAllocationId());
         }
         if (expression instanceof HirNewObject allocation) {
             return new HirNewObject(allocation.allocationId(), allocation.className(), allocation.constructorFunction(),

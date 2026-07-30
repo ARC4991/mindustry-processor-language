@@ -4,6 +4,6 @@ public sealed interface HirExpression permits HirConstant, HirText, HirVariable,
     HirAssignment, HirMemberAccess, HirIntrinsicCall, HirFunctionCall, HirArrayLiteral, HirTupleLiteral, HirIndexAccess,
     HirDynamicIndexAccess, HirCollectionLiteral, HirCollectionContains, HirUnitQuery, HirUnitQuerySize, HirUnitQueryGet,
     HirBuildingQuery, HirBuildingQuerySize, HirBuildingQueryGet, HirNewObject, HirObjectFieldRead,
-    HirObjectFieldAssignment {
+    HirObjectFieldAssignment, HirStringConcat, HirStringLength, HirStringComparison, HirStringSnapshot {
     MplType type();
 }
