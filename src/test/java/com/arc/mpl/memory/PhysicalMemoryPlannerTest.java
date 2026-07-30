@@ -48,7 +48,7 @@ class PhysicalMemoryPlannerTest {
         assertEquals(3, layout.physicalSlots());
         assertEquals(1, layout.memoryBanks());
         assertEquals(0, layout.memoryCells());
-        assertEquals(new PhysicalMemoryLayout.Segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 3),
+        assertEquals(new PhysicalMemoryLayout.Segment("bank1", RuntimePreferences.MemoryKind.BANK, 512, 3),
             layout.segments().get(0));
         assertEquals(List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 3)), allocation(layout, "values").slices());
     }
@@ -89,6 +89,8 @@ class PhysicalMemoryPlannerTest {
             RuntimePreferences.MemoryKind.CELL,
             RuntimePreferences.MemoryKind.CELL
         ), layout.segments().stream().map(PhysicalMemoryLayout.Segment::kind).toList());
+        assertEquals(List.of("bank1", "cell1", "cell2"),
+            layout.segments().stream().map(PhysicalMemoryLayout.Segment::alias).toList());
         assertEquals(List.of(
             new PhysicalMemoryLayout.Slice(0, 0, 0, 512),
             new PhysicalMemoryLayout.Slice(1, 0, 512, 64),

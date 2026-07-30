@@ -146,7 +146,7 @@ class MplCliTest {
         assertEquals(2, task.path("parameterSlots").asInt());
         assertEquals("Int", task.path("parameterTypes").get(0).asText());
         assertEquals("Int", task.path("returnType").asText());
-        assertEquals("bank__mpl_mem0", deployment.path("runtimeTopology").path("memorySegments").get(0)
+        assertEquals("bank1", deployment.path("runtimeTopology").path("memorySegments").get(0)
             .path("bindings").get(1).path("alias").asText());
     }
 
@@ -217,7 +217,7 @@ class MplCliTest {
         assertTrue(mlog.contains("read "));
         assertTrue(mlog.contains("write "));
         assertEquals(3, report.path("totals").path("physicalSlots").asInt());
-        assertEquals("bank__mpl_mem0",
+        assertEquals("bank1",
             deployment.path("runtimeTopology").path("memorySegments").get(0).path("id").asText());
         assertEquals("bank",
             deployment.path("runtimeTopology").path("memorySegments").get(0).path("kind").asText());

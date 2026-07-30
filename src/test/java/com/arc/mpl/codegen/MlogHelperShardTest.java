@@ -54,10 +54,10 @@ class MlogHelperShardTest {
         String main = generator("Main", prepared, helpers).generate(program);
         String worker = generator("Worker-0", prepared, helpers).generate(program);
 
-        assertTrue(main.contains("write 1 bank__mpl_mem0 9\n"), main);
-        assertTrue(main.contains("write __mpl_tmp0 bank__mpl_mem0 10\n"), main);
-        assertTrue(main.contains("write __mpl_tmp1 bank__mpl_mem0 11\n"), main);
-        assertTrue(main.contains("write 0 bank__mpl_mem0 9\n"), main);
+        assertTrue(main.contains("write 1 bank1 9\n"), main);
+        assertTrue(main.contains("write __mpl_tmp0 bank1 10\n"), main);
+        assertTrue(main.contains("write __mpl_tmp1 bank1 11\n"), main);
+        assertTrue(main.contains("write 0 bank1 9\n"), main);
         assertFalse(main.contains("mpl_function_add"), main);
         assertTrue(worker.contains("op add __mpl_tmp"), worker);
         assertTrue(worker.contains("jump mpl_runtime_task_shutdown"), worker);

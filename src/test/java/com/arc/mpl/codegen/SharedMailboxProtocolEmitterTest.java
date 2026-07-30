@@ -33,10 +33,10 @@ class SharedMailboxProtocolEmitterTest {
         assertEquals("""
             _0:
             set __mpl_mailbox0 null
-            read __mpl_mailbox0 bank__mpl_mem0 7
+            read __mpl_mailbox0 bank1 7
             jump _0 strictEqual __mpl_mailbox0 null
             set __mpl_mailbox1 null
-            read __mpl_mailbox1 bank__mpl_mem0 8
+            read __mpl_mailbox1 bank1 8
             jump _0 strictEqual __mpl_mailbox1 null
             jump _0 notEqual __mpl_mailbox0 __mpl_mailbox1
             jump _0 lessThan __mpl_mailbox0 0
@@ -49,11 +49,11 @@ class SharedMailboxProtocolEmitterTest {
             op add __mpl_mailbox3 __mpl_mailbox0 2
             _2:
             op sub __mpl_mailbox4 __mpl_mailbox3 1
-            write __mpl_mailbox4 bank__mpl_mem0 7
-            write 7 bank__mpl_mem0 9
-            write 11 bank__mpl_mem0 10
-            write 13 bank__mpl_mem0 11
-            write __mpl_mailbox3 bank__mpl_mem0 7
+            write __mpl_mailbox4 bank1 7
+            write 7 bank1 9
+            write 11 bank1 10
+            write 13 bank1 11
+            write __mpl_mailbox3 bank1 7
             stop
             """, mlog);
         assertTrue(new MlogOutputValidator().validate(mlog, profile).isEmpty());
@@ -74,8 +74,8 @@ class SharedMailboxProtocolEmitterTest {
         assertEquals(List.of("__mpl_mailbox4", "__mpl_mailbox5"), message.payload());
         assertTrue(mlog.contains("op mod __mpl_mailbox1 __mpl_mailbox0 2"));
         assertTrue(mlog.contains("jump _0 notEqual __mpl_mailbox0 __mpl_mailbox6"));
-        assertTrue(mlog.contains("write __mpl_mailbox6 bank__mpl_mem0 8"));
-        assertTrue(mlog.contains("read __mpl_mailbox7 bank__mpl_mem0 8"));
+        assertTrue(mlog.contains("write __mpl_mailbox6 bank1 8"));
+        assertTrue(mlog.contains("read __mpl_mailbox7 bank1 8"));
         assertTrue(mlog.contains("jump _0 notEqual __mpl_mailbox7 __mpl_mailbox6"));
         assertEquals(7, count(mlog, " null\nread "));
         assertTrue(new MlogOutputValidator().validate(mlog, profile).isEmpty());
@@ -95,7 +95,7 @@ class SharedMailboxProtocolEmitterTest {
 
         assertEquals(1, count(mlog, "set sendIdle 1\n"));
         assertEquals(1, count(mlog, "set ackIdle 1\n"));
-        assertTrue(mlog.contains("read __mpl_mailbox5 bank__mpl_mem0 8\n"));
+        assertTrue(mlog.contains("read __mpl_mailbox5 bank1 8\n"));
         assertTrue(mlog.contains("jump _3 notEqual __mpl_mailbox5 __mpl_mailbox3\n"));
         assertTrue(new MlogOutputValidator().validate(mlog, profile).isEmpty());
     }

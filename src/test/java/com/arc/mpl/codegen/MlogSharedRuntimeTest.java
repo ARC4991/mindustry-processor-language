@@ -44,8 +44,8 @@ class MlogSharedRuntimeTest {
         String heartbeatZero = constantWrite(prepared.physicalMemoryLayout(), shared.header(),
             shared.heartbeatIndex("Worker-0"), "0");
 
-        assertTrue(mlog.contains("sensor __mpl_runtime0 bank__mpl_mem0 @type\n"));
-        assertTrue(mlog.indexOf("sensor __mpl_runtime0 bank__mpl_mem0 @type") < mlog.indexOf(readyZero));
+        assertTrue(mlog.contains("sensor __mpl_runtime0 bank1 @type\n"));
+        assertTrue(mlog.indexOf("sensor __mpl_runtime0 bank1 @type") < mlog.indexOf(readyZero));
         assertTrue(mlog.indexOf(readyZero) >= 0);
         assertTrue(mlog.indexOf(magic) > mlog.indexOf(readyZero));
         assertTrue(mlog.indexOf(heartbeatZero) < mlog.indexOf(readyOne));
@@ -64,21 +64,21 @@ class MlogSharedRuntimeTest {
         PhysicalMemoryLayout.Allocation existing = new PhysicalMemoryLayout.Allocation(existingKey, 63,
             List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 63)));
         PhysicalMemoryLayout base = new PhysicalMemoryLayout(List.of(
-            new PhysicalMemoryLayout.Segment("cell__mpl_mem0", RuntimePreferences.MemoryKind.CELL, 64, 63)
+            new PhysicalMemoryLayout.Segment("cell1", RuntimePreferences.MemoryKind.CELL, 64, 63)
         ), Map.of(existingKey, existing), 63);
         SharedRuntimeLayoutPlanner.Result prepared = prepare(base, preferences);
         SharedRuntimeLayout shared = prepared.sharedRuntime();
 
         String mlog = generator("Worker-0", prepared).generate(new HirProgram(List.of()));
 
-        assertTrue(mlog.startsWith("_0:\nsensor __mpl_runtime0 cell__mpl_mem0 @type\n"
+        assertTrue(mlog.startsWith("_0:\nsensor __mpl_runtime0 cell1 @type\n"
             + "jump _0 notEqual __mpl_runtime0 @memory-cell\n"
-            + "sensor __mpl_runtime1 cell__mpl_mem1 @type\n"
+            + "sensor __mpl_runtime1 cell2 @type\n"
             + "jump _0 notEqual __mpl_runtime1 @memory-cell\n"));
         assertEquals(11, count(mlog, " null\nread "));
-        assertTrue(mlog.contains("cell__mpl_mem0 63"));
-        assertTrue(mlog.contains("cell__mpl_mem1 0"));
-        assertTrue(mlog.contains("cell__mpl_mem1 3"));
+        assertTrue(mlog.contains("cell1 63"));
+        assertTrue(mlog.contains("cell2 0"));
+        assertTrue(mlog.contains("cell2 3"));
         String resetAck = constantWrite(prepared.physicalMemoryLayout(), shared.header(),
             shared.acknowledgementIndex("Worker-0"), Integer.toString(-shared.epoch()));
         String readyAck = constantWrite(prepared.physicalMemoryLayout(), shared.header(),

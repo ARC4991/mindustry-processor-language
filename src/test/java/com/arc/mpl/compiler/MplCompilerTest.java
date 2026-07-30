@@ -449,7 +449,7 @@ class MplCompilerTest {
         assertEquals(2, pool.occupancy().size());
         assertEquals(2, pool.field("value").allocation().size());
         String mlog = result.mlog().orElseThrow();
-        assertTrue(mlog.contains("write 0 bank__mpl_mem0"), mlog);
+        assertTrue(mlog.contains("write 0 bank1"), mlog);
         assertTrue(mlog.contains("set __mpl_tmp"), mlog);
         assertTrue(mlog.contains(" -1"), mlog);
         String mil = result.mil().orElseThrow();
@@ -2059,9 +2059,9 @@ class MplCompilerTest {
         assertEquals(1, result.physicalMemoryLayout().memoryBanks());
         assertTrue(result.mil().orElseThrow().contains("values.set(i, (values[i] + 1));"));
         String mlog = result.mlog().orElseThrow();
-        assertTrue(mlog.contains("write 1 bank__mpl_mem0 0"));
-        assertTrue(mlog.lines().anyMatch(line -> line.matches("read __mpl_tmp\\d+ bank__mpl_mem0 mpl_i")));
-        assertTrue(mlog.lines().anyMatch(line -> line.matches("write __mpl_tmp\\d+ bank__mpl_mem0 __mpl_tmp\\d+")));
+        assertTrue(mlog.contains("write 1 bank1 0"));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("read __mpl_tmp\\d+ bank1 mpl_i")));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("write __mpl_tmp\\d+ bank1 __mpl_tmp\\d+")));
         assertFalse(mlog.contains("mpl_values_e"));
     }
 

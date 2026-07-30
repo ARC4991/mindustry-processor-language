@@ -23,7 +23,7 @@ class PhysicalMemoryLayoutExtenderTest {
         PhysicalMemoryLayout.Allocation existing = new PhysicalMemoryLayout.Allocation(existingKey, 500,
             List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 500)));
         PhysicalMemoryLayout base = new PhysicalMemoryLayout(List.of(
-            new PhysicalMemoryLayout.Segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 500)
+            new PhysicalMemoryLayout.Segment("bank1", RuntimePreferences.MemoryKind.BANK, 512, 500)
         ), Map.of(existingKey, existing), 500);
         PhysicalMemoryLayout.StorageKey runtimeKey = new PhysicalMemoryLayout.StorageKey("@runtime:test", "header");
 
@@ -46,8 +46,8 @@ class PhysicalMemoryLayoutExtenderTest {
             preferences(Map.of(RuntimePreferences.MemoryKind.CELL, 2)));
 
         assertEquals(List.of(
-            new PhysicalMemoryLayout.Segment("cell__mpl_mem0", RuntimePreferences.MemoryKind.CELL, 64, 64),
-            new PhysicalMemoryLayout.Segment("cell__mpl_mem1", RuntimePreferences.MemoryKind.CELL, 64, 6)
+            new PhysicalMemoryLayout.Segment("cell1", RuntimePreferences.MemoryKind.CELL, 64, 64),
+            new PhysicalMemoryLayout.Segment("cell2", RuntimePreferences.MemoryKind.CELL, 64, 6)
         ), result.segments());
         assertEquals(List.of(
             new PhysicalMemoryLayout.Slice(0, 0, 0, 64),

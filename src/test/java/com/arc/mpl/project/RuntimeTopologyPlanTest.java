@@ -20,7 +20,7 @@ class RuntimeTopologyPlanTest {
     void aggregatesShardResourcesWithoutDuplicatingSharedMemory() {
         PhysicalMemoryLayout.StorageKey key = new PhysicalMemoryLayout.StorageKey(null, "shared");
         PhysicalMemoryLayout memory = new PhysicalMemoryLayout(List.of(
-            new PhysicalMemoryLayout.Segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 9)
+            new PhysicalMemoryLayout.Segment("bank1", RuntimePreferences.MemoryKind.BANK, 512, 9)
         ), java.util.Map.of(key, new PhysicalMemoryLayout.Allocation(key, 9,
             List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 9)))), 9);
         RuntimeTopologyPlan plan = new RuntimeTopologyPlan(List.of(

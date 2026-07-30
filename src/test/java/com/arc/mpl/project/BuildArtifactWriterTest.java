@@ -135,10 +135,10 @@ class BuildArtifactWriterTest {
         TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
         PhysicalMemoryLayout.StorageKey key = new PhysicalMemoryLayout.StorageKey(null, "values");
         PhysicalMemoryLayout layout = new PhysicalMemoryLayout(
-            List.of(new PhysicalMemoryLayout.Segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 3)),
+            List.of(new PhysicalMemoryLayout.Segment("bank1", RuntimePreferences.MemoryKind.BANK, 512, 3)),
             Map.of(key, new PhysicalMemoryLayout.Allocation(key, 3,
                 List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 3)))), 3);
-        String mlog = "write 1 bank__mpl_mem0 0\nstop\n";
+        String mlog = "write 1 bank1 0\nstop\n";
         RuntimePlan plan = new RuntimePlanner().plan(mlog, profile, RuntimePreferences.defaults(), layout);
 
         new BuildArtifactWriter().write(temporaryDirectory, mlog, "val values: Int[] = [1, 2, 3];\n", profile,
@@ -149,15 +149,15 @@ class BuildArtifactWriterTest {
             java.nio.file.Files.readString(temporaryDirectory.resolve("deployment.json")));
         JsonNode segment = deployment.path("runtimeTopology").path("memorySegments").get(0);
         assertEquals(3, report.path("totals").path("physicalSlots").asInt());
-        assertEquals("bank__mpl_mem0", segment.path("id").asText());
+        assertEquals("bank1", segment.path("id").asText());
         assertEquals("bank", segment.path("kind").asText());
         assertEquals(512, segment.path("capacity").asInt());
         assertEquals(3, segment.path("usedSlots").asInt());
         assertEquals(1, segment.path("blueprintPosition").path("x").asInt());
         assertEquals(0, segment.path("blueprintPosition").path("y").asInt());
-        assertEquals("bank__mpl_mem0", segment.path("bindings").get(0).path("alias").asText());
+        assertEquals("bank1", segment.path("bindings").get(0).path("alias").asText());
         assertTrue(segment.path("bindings").get(0).path("autoConnected").asBoolean());
-        assertEquals(List.of(new LogicLink("bank__mpl_mem0", 1, 0)),
+        assertEquals(List.of(new LogicLink("bank1", 1, 0)),
             readProcessorConfig(temporaryDirectory.resolve("runtime.msch")).links());
         assertEquals(List.of(new TilePlacement("micro-processor", 0, 0),
                 new TilePlacement("memory-bank", 1, 0)),
@@ -171,7 +171,7 @@ class BuildArtifactWriterTest {
         TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
         PhysicalMemoryLayout.StorageKey key = new PhysicalMemoryLayout.StorageKey(null, "shared");
         PhysicalMemoryLayout layout = new PhysicalMemoryLayout(
-            List.of(new PhysicalMemoryLayout.Segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 1)),
+            List.of(new PhysicalMemoryLayout.Segment("bank1", RuntimePreferences.MemoryKind.BANK, 512, 1)),
             Map.of(key, new PhysicalMemoryLayout.Allocation(key, 1,
                 List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 1)))), 1);
         List<RuntimePlanner.ShardSource> seeds = List.of(
@@ -226,9 +226,9 @@ class BuildArtifactWriterTest {
             .contains("Runtime Memory 已自动连接到所有 shard"));
         assertEquals(List.of(
             new ProcessorPlacement("micro-processor", 0, 0,
-                List.of(new LogicLink("bank__mpl_mem0", 0, 1))),
+                List.of(new LogicLink("bank1", 0, 1))),
             new ProcessorPlacement("micro-processor", 1, 0,
-                List.of(new LogicLink("bank__mpl_mem0", -1, 1)))
+                List.of(new LogicLink("bank1", -1, 1)))
         ), readProcessorPlacements(temporaryDirectory.resolve("runtime.msch")));
     }
 
@@ -247,6 +247,25 @@ class BuildArtifactWriterTest {
     }
 
     @Test
+    void rejectsAnInternalAliasThatMindustryWouldRenameAfterDelayedMemoryConstruction() {
+        TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
+        PhysicalMemoryLayout.StorageKey key = new PhysicalMemoryLayout.StorageKey(null, "shared");
+        PhysicalMemoryLayout layout = new PhysicalMemoryLayout(
+            List.of(new PhysicalMemoryLayout.Segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512, 1)),
+            Map.of(key, new PhysicalMemoryLayout.Allocation(key, 1,
+                List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 1)))), 1);
+        RuntimePlan plan = new RuntimePlanner().plan("write 1 bank__mpl_mem0 0\nstop\n", profile,
+            RuntimePreferences.defaults(), layout);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> new MindustrySchematicWriter().write("write 1 bank__mpl_mem0 0\nstop\n", plan,
+                "unsafe-memory-alias", "0".repeat(64)));
+
+        assertTrue(error.getMessage().contains("必须为 bank1"));
+        assertTrue(error.getMessage().contains("处理器先于 Memory 完成"));
+    }
+
+    @Test
     void reportsRealObjectPoolSlotsInsteadOfAPlaceholder() throws Exception {
         TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
         PhysicalMemoryLayout.StorageKey occupancyKey = PhysicalMemoryLayout.objectPoolOccupancyKey("Counter");
@@ -261,12 +280,12 @@ class BuildArtifactWriterTest {
         PhysicalMemoryLayout.ObjectPool pool = new PhysicalMemoryLayout.ObjectPool("Counter", 1, 0, occupancy,
             Map.of("value", new PhysicalMemoryLayout.PoolField("value", ValueType.INT, 1, field)));
         PhysicalMemoryLayout layout = new PhysicalMemoryLayout(
-            List.of(new PhysicalMemoryLayout.Segment("__mpl_mem0", RuntimePreferences.MemoryKind.CELL, 64, 2)),
+            List.of(new PhysicalMemoryLayout.Segment("cell1", RuntimePreferences.MemoryKind.CELL, 64, 2)),
             allocations, Map.of("Counter", pool), 2, 2);
-        RuntimePlan plan = new RuntimePlanner().plan("write 0 __mpl_mem0 0\nstop\n", profile,
+        RuntimePlan plan = new RuntimePlanner().plan("write 0 cell1 0\nstop\n", profile,
             RuntimePreferences.defaults(), layout);
 
-        new BuildArtifactWriter().write(temporaryDirectory, "write 0 __mpl_mem0 0\nstop\n", "", profile,
+        new BuildArtifactWriter().write(temporaryDirectory, "write 0 cell1 0\nstop\n", "", profile,
             new HardwareContract(List.of(), Map.of()), plan, new ProjectMetadata("pool-demo", "1.0.0"));
 
         JsonNode report = new ObjectMapper().readTree(java.nio.file.Files.readString(temporaryDirectory.resolve("report.json")));

@@ -51,7 +51,7 @@ class SharedRuntimeLayoutPlannerTest {
         PhysicalMemoryLayout.Allocation existing = new PhysicalMemoryLayout.Allocation(existingKey, 63,
             List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 63)));
         PhysicalMemoryLayout base = new PhysicalMemoryLayout(List.of(
-            new PhysicalMemoryLayout.Segment("cell__mpl_mem0", RuntimePreferences.MemoryKind.CELL, 64, 63)
+            new PhysicalMemoryLayout.Segment("cell1", RuntimePreferences.MemoryKind.CELL, 64, 63)
         ), Map.of(existingKey, existing), 63);
         RuntimePreferences preferences = new RuntimePreferences(RuntimePreferences.Goal.MIN_RESOURCES,
             RuntimePreferences.defaults().processors(), Map.of(RuntimePreferences.MemoryKind.CELL, 2));

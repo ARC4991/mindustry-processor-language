@@ -16,11 +16,11 @@ class BlueprintLayoutTest {
     @Test
     void keepsAStringRuntimeProcessorAndBanksInOneTightStrip() {
         PhysicalMemoryLayout memory = new PhysicalMemoryLayout(List.of(
-            segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512),
-            segment("bank__mpl_mem1", RuntimePreferences.MemoryKind.BANK, 512),
-            segment("bank__mpl_mem2", RuntimePreferences.MemoryKind.BANK, 512),
-            segment("bank__mpl_mem3", RuntimePreferences.MemoryKind.BANK, 512),
-            segment("bank__mpl_mem4", RuntimePreferences.MemoryKind.BANK, 512)
+            segment("bank1", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("bank2", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("bank3", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("bank4", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("bank5", RuntimePreferences.MemoryKind.BANK, 512)
         ), Map.of(), 0);
         RuntimePlan plan = new RuntimePlan(TargetProfile.ProcessorKind.MICRO, 1, 0, 3, 0, memory);
 
@@ -38,10 +38,10 @@ class BlueprintLayoutTest {
     @Test
     void packsProcessorBanksAndCellsWithoutDecorativeGaps() {
         PhysicalMemoryLayout memory = new PhysicalMemoryLayout(List.of(
-            segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512),
-            segment("bank__mpl_mem1", RuntimePreferences.MemoryKind.BANK, 512),
-            segment("cell__mpl_mem2", RuntimePreferences.MemoryKind.CELL, 64),
-            segment("cell__mpl_mem3", RuntimePreferences.MemoryKind.CELL, 64)
+            segment("bank1", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("bank2", RuntimePreferences.MemoryKind.BANK, 512),
+            segment("cell1", RuntimePreferences.MemoryKind.CELL, 64),
+            segment("cell2", RuntimePreferences.MemoryKind.CELL, 64)
         ), Map.of(), 0);
         RuntimePlan plan = new RuntimePlan(TargetProfile.ProcessorKind.HYPER, 1, 0, 3, 0, memory);
 
@@ -59,7 +59,7 @@ class BlueprintLayoutTest {
     @Test
     void packsMultipleShardsBesideOneSharedBank() {
         PhysicalMemoryLayout memory = new PhysicalMemoryLayout(List.of(
-            segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512)
+            segment("bank1", RuntimePreferences.MemoryKind.BANK, 512)
         ), Map.of(), 0);
         RuntimeTopologyPlan plan = new RuntimeTopologyPlan(List.of(
             new ShardPlan("Main", List.of("main"), TargetProfile.ProcessorKind.MICRO, 2, 0, 4, 0),
@@ -79,7 +79,7 @@ class BlueprintLayoutTest {
     @Test
     void rejectsAConfiguredMemoryLinkOutsideTheProcessorRange() {
         PhysicalMemoryLayout memory = new PhysicalMemoryLayout(List.of(
-            segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512)
+            segment("bank1", RuntimePreferences.MemoryKind.BANK, 512)
         ), Map.of(), 0);
         RuntimeTopologyPlan plan = new RuntimeTopologyPlan(List.of(
             new ShardPlan("Main", List.of("main"), TargetProfile.ProcessorKind.MICRO, 1, 0, 2, 0)

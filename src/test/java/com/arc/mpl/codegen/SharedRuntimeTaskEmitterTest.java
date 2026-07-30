@@ -35,8 +35,8 @@ class SharedRuntimeTaskEmitterTest {
         assertTrue(mlog.contains("jump _1 equal __mpl_mailbox3 0\n"));
         assertTrue(mlog.contains("jump _2 equal __mpl_mailbox3 7\n"));
         assertTrue(mlog.contains("op add __sum __mpl_mailbox4 __mpl_mailbox5\n"));
-        assertTrue(mlog.contains("write __mpl_task1 bank__mpl_mem0 6\n"));
-        assertTrue(mlog.contains("write __mpl_task3 bank__mpl_mem0 6\n"));
+        assertTrue(mlog.contains("write __mpl_task1 bank1 6\n"));
+        assertTrue(mlog.contains("write __mpl_task3 bank1 6\n"));
         assertEquals(1, count(mlog, "stop\n"));
         assertTrue(mlog.endsWith("stop\n"));
         assertTrue(new MlogOutputValidator().validate(mlog, profile).isEmpty());
@@ -52,10 +52,10 @@ class SharedRuntimeTaskEmitterTest {
         output.stop();
         String mlog = output.render();
 
-        assertTrue(mlog.contains("write 0 bank__mpl_mem0 9\n"));
-        assertTrue(mlog.contains("write 0 bank__mpl_mem0 10\n"));
-        assertTrue(mlog.contains("write 0 bank__mpl_mem0 11\n"));
-        assertTrue(mlog.contains("read __mpl_mailbox5 bank__mpl_mem0 8\n"));
+        assertTrue(mlog.contains("write 0 bank1 9\n"));
+        assertTrue(mlog.contains("write 0 bank1 10\n"));
+        assertTrue(mlog.contains("write 0 bank1 11\n"));
+        assertTrue(mlog.contains("read __mpl_mailbox5 bank1 8\n"));
         assertTrue(mlog.contains("jump _3 notEqual __mpl_mailbox5 __mpl_mailbox3\n"));
         assertTrue(mlog.endsWith("stop\n"));
         assertTrue(new MlogOutputValidator().validate(mlog, profile).isEmpty());
