@@ -23,7 +23,7 @@ public record HirBuildingQuery(
     }
 
     @Override
-    public LinkedBuildingSetType type() {
-        return new LinkedBuildingSetType(buildingType);
+    public CollectionType type() {
+        return new CollectionType(CollectionType.Kind.SET, new BuildingType(buildingType, false));
     }
 }

@@ -100,9 +100,7 @@ import com.arc.mpl.hir.MplType;
 import com.arc.mpl.hir.ObjectType;
 import com.arc.mpl.hir.BuildingType;
 import com.arc.mpl.hir.CollectionType;
-import com.arc.mpl.hir.LinkedBuildingSetType;
 import com.arc.mpl.hir.TupleType;
-import com.arc.mpl.hir.UnitSetType;
 import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.hir.ValueType;
 import com.arc.mpl.profile.KnownProfiles;
@@ -364,8 +362,8 @@ public final class SemanticAnalyzer {
             error("MPL3503", "函数参数不能使用 Void 类型", function.span());
         }
         MplType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.VOID);
-        if (parameters.stream().anyMatch(type -> isAggregate(type) || type instanceof UnitSetType || type instanceof UnitType)
-            || isAggregate(returnType) || returnType instanceof UnitSetType || returnType instanceof UnitType) {
+        if (parameters.stream().anyMatch(type -> isAggregate(type) || type instanceof UnitType)
+            || isAggregate(returnType) || returnType instanceof UnitType) {
             error("MPL3602", "第一版函数 ABI 尚不支持聚合、Set<Unit<T>> 或 UnitRef 参数及返回值", function.span());
         }
         boolean returnsOwnedObject = returnType instanceof ObjectType object && !object.nullable()
@@ -1181,7 +1179,7 @@ public final class SemanticAnalyzer {
         for (int index = modifiers.size() - 1; index >= 0; index--) {
             CallExpression modifier = modifiers.get(index);
             if (modifier.arguments().size() != 1) {
-                error("MPL3201", "LinkedBuildingSet<T>.where(...) 需要恰好一个过滤 lambda", modifier.span());
+                error("MPL3201", "Set<Building<T>>.where(...) 需要恰好一个过滤 lambda", modifier.span());
                 continue;
             }
             filters.add(analyzeBuildingFilter(modifier.arguments().get(0), bindingName, base.buildingType()));
@@ -1214,7 +1212,7 @@ public final class SemanticAnalyzer {
     private HirExpression analyzeBuildingQueryGet(HirBuildingQuery query, Expression sourceIndex, SourceSpan span) {
         HirExpression index = analyzeExpression(sourceIndex);
         if (index.type() != ValueType.INT && index.type() != ValueType.ERROR) {
-            error("MPL3210", "LinkedBuildingSet<T>.get(index) 的 index 必须是 Int", sourceIndex.span());
+            error("MPL3210", "Set<Building<T>>.get(index) 的 index 必须是 Int", sourceIndex.span());
         }
         return new HirBuildingQueryGet(query, index);
     }
@@ -1432,11 +1430,11 @@ public final class SemanticAnalyzer {
         if (value.type() == ValueType.BUILDING) {
             error("MPL3201", "硬件常量只能读取字段或调用控制方法，不能作为普通表达式", expression.span());
         }
-        if (value.type() instanceof UnitSetType) {
+        if (isUnitSet(value.type())) {
             error("MPL3301", "Set<Unit<T>> 查询只能保存为 val、读取 size 或作为 for 遍历目标", expression.span());
         }
-        if (value.type() instanceof LinkedBuildingSetType) {
-            error("MPL3201", "LinkedBuildingSet<T> 查询只能保存为 val、读取 size/get 或作为 for 遍历目标",
+        if (isBuildingSet(value.type())) {
+            error("MPL3201", "Set<Building<T>> 查询只能保存为 val、读取 size/get 或作为 for 遍历目标",
                 expression.span());
         }
         return new HirExpressionStatement(value);
@@ -1802,31 +1800,31 @@ public final class SemanticAnalyzer {
         if (!type.canAssignFrom(initializer.type())) {
             error("MPL3103", "不能将 " + display(initializer.type()) + " 赋给 " + display(type), declaration.initializer().span());
         }
-        if (isAggregate(type) && !(initializer instanceof HirArrayLiteral)
+        if (isAggregate(type) && unitQuery == null && buildingQuery == null && !(initializer instanceof HirArrayLiteral)
             && !(initializer instanceof HirTupleLiteral) && !(initializer instanceof HirCollectionLiteral)) {
             error("MPL3601", "当前阶段不支持复制聚合值；请在声明处使用字面量或集合工厂", declaration.initializer().span());
         }
-        if (type instanceof UnitSetType && declaration.mutable()) {
+        if (unitQuery != null && declaration.mutable()) {
             error("MPL3301", "Set<Unit<T>> 是不可变的惰性查询描述符，只能使用 val 声明", declaration.span());
         }
-        if (type instanceof UnitSetType && currentFunction != null) {
+        if (unitQuery != null && currentFunction != null) {
             error("MPL3508", "第一版函数不能声明 Set<Unit<T>> 查询", declaration.span());
         }
-        if (type instanceof UnitSetType && unitQuery == null) {
+        if (isUnitSet(type) && unitQuery == null) {
             error("MPL3301", "Set<Unit<T>> 变量必须由 Unit.getAll类型(...) 查询初始化", declaration.initializer().span());
         }
-        if (type instanceof LinkedBuildingSetType && declaration.mutable()) {
-            error("MPL3201", "LinkedBuildingSet<T> 是不可变的惰性查询描述符，只能使用 val 声明", declaration.span());
+        if (buildingQuery != null && declaration.mutable()) {
+            error("MPL3201", "Set<Building<T>> 查询是不可变的惰性查询描述符，只能使用 val 声明", declaration.span());
         }
-        if (type instanceof LinkedBuildingSetType && buildingQuery == null) {
-            error("MPL3201", "LinkedBuildingSet<T> 变量必须由 Building.getAll类型(...) 查询初始化",
+        if (isBuildingSet(type) && buildingQuery == null) {
+            error("MPL3201", "Set<Building<T>> 变量必须由 Building.getAll类型(...) 查询初始化",
                 declaration.initializer().span());
         }
         if (type instanceof BuildingType && declaration.mutable()) {
             error("MPL3212", "保存的 Building<T> 引用具有稳定链接身份，只能使用 val 声明", declaration.span());
         }
         if (type instanceof BuildingType && !(initializer instanceof HirBuildingQueryGet)) {
-            error("MPL3212", "Building<T> 引用必须由 LinkedBuildingSet<T>.get(index) 初始化",
+            error("MPL3212", "Building<T> 引用必须由 Set<Building<T>>.get(index) 初始化",
                 declaration.initializer().span());
         }
         boolean global = currentFunction == null && scopes.size() == 1;
@@ -2208,7 +2206,7 @@ public final class SemanticAnalyzer {
             }
             HirBuildingQuery buildingQuery = resolveBuildingQuery(member.target(), "_");
             if (buildingQuery != null) {
-                error("MPL3210", "LinkedBuildingSet<T>.get(index) 需要恰好一个 Int 参数", call.span());
+                error("MPL3210", "Set<Building<T>>.get(index) 需要恰好一个 Int 参数", call.span());
                 return new HirConstant("null", ValueType.ERROR);
             }
         }
@@ -2625,19 +2623,8 @@ public final class SemanticAnalyzer {
     }
 
     private MplType parseType(String name, SourceSpan span) {
-        if (name.startsWith("LinkedBuildingSet<") && name.endsWith(">")) {
-            String buildingType = name.substring("LinkedBuildingSet<".length(), name.length() - 1);
-            if (profile.buildingType(buildingType).isEmpty()) {
-                return typeError("当前 target 不支持 Building 类型：" + buildingType, span);
-            }
-            return new LinkedBuildingSetType(buildingType);
-        }
-        if (name.startsWith("Set<Unit<") && name.endsWith(">>")) {
-            String unitType = name.substring("Set<Unit<".length(), name.length() - 2);
-            if (profile.unitType(unitType).filter(TargetProfile.UnitType::logicControllable).isEmpty()) {
-                return typeError("当前 target 不支持 Unit 类型：" + unitType, span);
-            }
-            return new UnitSetType(unitType);
+        if (name.startsWith("LinkedBuildingSet<")) {
+            return typeError("LinkedBuildingSet<T> 已移除；请使用 Set<Building<T>>", span);
         }
         boolean nullable = name.endsWith("?");
         String nonNullableName = nullable ? name.substring(0, name.length() - 1) : name;
@@ -2699,9 +2686,16 @@ public final class SemanticAnalyzer {
 
     private MplType collectionType(CollectionType.Kind kind, MplType element, SourceSpan span) {
         if (element == ValueType.ERROR || element == ValueType.VOID) return ValueType.ERROR;
-        if (element == ValueType.NULL || element instanceof UnitType || element instanceof UnitSetType
-            || element instanceof BuildingType || element instanceof LinkedBuildingSetType) {
+        if (element == ValueType.NULL) {
             return typeError("当前阶段聚合类型不能存储可空值、游戏对象引用或对象查询", span);
+        }
+        if (element instanceof UnitType unit) {
+            if (kind == CollectionType.Kind.SET && !unit.nullable()) return new CollectionType(kind, element);
+            return typeError("Unit<T> 只能作为 Unit.getAll类型(...) 返回的 Set 元素类型", span);
+        }
+        if (element instanceof BuildingType building) {
+            if (kind == CollectionType.Kind.SET && !building.nullable()) return new CollectionType(kind, element);
+            return typeError("Building<T> 只能作为 Building.getAll类型(...) 返回的 Set 元素类型", span);
         }
         if (isAggregate(element)) return typeError("当前阶段不支持嵌套聚合类型；需要 Memory runtime", span);
         return new CollectionType(kind, element);
@@ -2885,6 +2879,20 @@ public final class SemanticAnalyzer {
 
     private boolean isAggregate(MplType type) {
         return type instanceof TupleType || type instanceof CollectionType;
+    }
+
+    private boolean isUnitSet(MplType type) {
+        return type instanceof CollectionType collection
+            && collection.kind() == CollectionType.Kind.SET
+            && collection.elementType() instanceof UnitType unit
+            && !unit.nullable();
+    }
+
+    private boolean isBuildingSet(MplType type) {
+        return type instanceof CollectionType collection
+            && collection.kind() == CollectionType.Kind.SET
+            && collection.elementType() instanceof BuildingType building
+            && !building.nullable();
     }
 
     private MplType aggregateIterationElementType(MplType type, SourceSpan span) {

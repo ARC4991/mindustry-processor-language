@@ -3,7 +3,7 @@ package com.arc.mpl.hir;
 import java.util.List;
 import java.util.Objects;
 
-/** A lazy UnitSet descriptor; evaluating the descriptor itself emits no target instruction. */
+/** A private lazy Unit query descriptor; evaluating the descriptor itself emits no target instruction. */
 public record HirUnitQuery(
     String bindingName,
     String unitType,
@@ -29,8 +29,8 @@ public record HirUnitQuery(
     }
 
     @Override
-    public UnitSetType type() {
-        return new UnitSetType(unitType);
+    public CollectionType type() {
+        return new CollectionType(CollectionType.Kind.SET, new UnitType(unitType, false));
     }
 
     public boolean hasManagedLimit() {

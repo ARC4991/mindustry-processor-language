@@ -1077,7 +1077,7 @@ public final class MlogCodeGenerator {
         if (expression instanceof HirBuildingQuerySize size) return emitBuildingQuerySize(size.query());
         if (expression instanceof HirBuildingQueryGet get) return emitBuildingQueryGet(get);
         if (expression instanceof HirBuildingQuery) {
-            throw new IllegalArgumentException("LinkedBuildingSet<T> 描述符只能保存、读取 size/get 或作为 for 遍历目标");
+            throw new IllegalArgumentException("Set<Building<T>> 查询描述符只能保存、读取 size/get 或作为 for 遍历目标");
         }
         if (expression instanceof HirUnary unary) return emitUnary(unary);
         if (expression instanceof HirStringConcat concat) return emitStringConcat(concat);

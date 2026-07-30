@@ -13,7 +13,8 @@ import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirUnitQuery;
 import com.arc.mpl.hir.HirUnitQueryGet;
 import com.arc.mpl.hir.HirUnitQuerySize;
-import com.arc.mpl.hir.UnitSetType;
+import com.arc.mpl.hir.CollectionType;
+import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.syntax.MplSyntaxParser;
 import org.junit.jupiter.api.Test;
@@ -399,7 +400,7 @@ class SemanticAnalyzerTest {
             result.program().orElseThrow().statements().get(1));
         HirVariableDeclaration count = assertInstanceOf(HirVariableDeclaration.class,
             result.program().orElseThrow().statements().get(2));
-        assertEquals(new UnitSetType("Dagger"), active.type());
+        assertEquals(new CollectionType(CollectionType.Kind.SET, new UnitType("Dagger", false)), active.type());
         assertEquals(active.type(), same.type());
         assertInstanceOf(HirUnitQuery.class, active.initializer());
         assertInstanceOf(HirUnitQuerySize.class, count.initializer());
@@ -456,7 +457,7 @@ class SemanticAnalyzerTest {
             assertInstanceOf(HirVariableDeclaration.class,
                 result.program().orElseThrow().statements().get(4)).initializer());
 
-        assertEquals(new UnitSetType("Dagger"), squad.type());
+        assertEquals(new CollectionType(CollectionType.Kind.SET, new UnitType("Dagger", false)), squad.type());
         assertEquals(squad.managedId(), size.query().managedId());
         assertEquals(squad.managedId(), get.query().managedId());
         assertEquals(squad.managedId(), iteration.managedId());

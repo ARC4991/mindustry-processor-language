@@ -1323,14 +1323,14 @@ class MplCompilerTest {
     }
 
     @Test
-    void savesCountsGetsAndControlsLinkedBuildingSets(@TempDir Path project) throws IOException {
+    void savesCountsGetsAndControlsBuildingSets(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"), """
             const NorthTurret: Duo = link("duo1");
             const SouthTurret: Duo = link("duo2");
             """);
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
-            val turrets: LinkedBuildingSet<Duo> = Building.getAllDuo().where(_.enabled);
+            val turrets: Set<Building<Duo>> = Building.getAllDuo().where(_.enabled);
             val count: Int = turrets.size;
             val first: Building<Duo>? = turrets.get(0);
             if (first != null) {
@@ -1347,7 +1347,7 @@ class MplCompilerTest {
         assertTrue(result.succeeded(), () -> result.diagnostics().toString());
         String mil = result.mil().orElseThrow();
         assertTrue(mil.contains(
-            "val turrets: LinkedBuildingSet<Duo> = Building.getAllDuo().where(_ => @building.read(_, enabled));"));
+            "val turrets: Set<Building<Duo>> = Building.getAllDuo().where(_ => @building.read(_, enabled));"));
         assertTrue(mil.contains("val count: Int = @building.count(@duo, _, @building.read(_, enabled));"));
         assertTrue(mil.contains("val first: Building<Duo>? = @building.get(@duo, _, 0, @building.read(_, enabled));"));
         assertTrue(mil.contains("@building.read(first, health)"));
@@ -1373,7 +1373,7 @@ class MplCompilerTest {
     }
 
     @Test
-    void rejectsUnsafeLinkedBuildingSetUses(@TempDir Path project) throws IOException {
+    void rejectsUnsafeBuildingSetUses(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
             "const Turret: Duo = link(\"duo1\");");

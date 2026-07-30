@@ -2,13 +2,13 @@ package com.arc.mpl.semantic;
 
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.hir.BuildingType;
+import com.arc.mpl.hir.CollectionType;
 import com.arc.mpl.hir.HirBuildingIteration;
 import com.arc.mpl.hir.HirBuildingQuery;
 import com.arc.mpl.hir.HirBuildingQueryGet;
 import com.arc.mpl.hir.HirBuildingQuerySize;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirVariableDeclaration;
-import com.arc.mpl.hir.LinkedBuildingSetType;
 import com.arc.mpl.project.HardwareContract;
 import com.arc.mpl.syntax.MplSyntaxParser;
 import org.junit.jupiter.api.Test;
@@ -26,9 +26,9 @@ class BuildingSetSemanticAnalyzerTest {
     private final SemanticAnalyzer analyzer = new SemanticAnalyzer();
 
     @Test
-    void savesCountsGetsAndReusesATypedLinkedBuildingSet() {
+    void savesCountsGetsAndReusesATypedBuildingSet() {
         Program program = parser.parse("""
-            val turrets: LinkedBuildingSet<Duo> = Building.getAllDuo().where(_.enabled);
+            val turrets: Set<Building<Duo>> = Building.getAllDuo().where(_.enabled);
             val count = turrets.size;
             val first: Building<Duo>? = turrets.get(0);
             if (first != null) {
@@ -46,7 +46,7 @@ class BuildingSetSemanticAnalyzerTest {
         HirVariableDeclaration turrets = assertInstanceOf(HirVariableDeclaration.class,
             result.program().orElseThrow().statements().get(0));
         HirBuildingQuery query = assertInstanceOf(HirBuildingQuery.class, turrets.initializer());
-        assertEquals(new LinkedBuildingSetType("Duo"), turrets.type());
+        assertEquals(new CollectionType(CollectionType.Kind.SET, new BuildingType("Duo", false)), turrets.type());
         assertEquals(List.of("duo1", "duo2"), query.buildings().stream().map(link -> link.gameAlias()).toList());
 
         HirBuildingQuerySize size = assertInstanceOf(HirBuildingQuerySize.class,
@@ -66,6 +66,30 @@ class BuildingSetSemanticAnalyzerTest {
         HirBuildingIteration iteration = assertInstanceOf(HirBuildingIteration.class,
             result.program().orElseThrow().statements().get(4));
         assertEquals(2, iteration.filters().size());
+    }
+
+    @Test
+    void infersTheGeneralSetTypeAndRejectsTheRemovedSpecialType() {
+        Program inferredProgram = parser.parse("""
+            val turrets = Building.getAllDuo();
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult inferred = analyzer.analyze(inferredProgram, Path.of("main.mpl"), hardware());
+
+        assertTrue(inferred.diagnostics().isEmpty(), () -> inferred.diagnostics().toString());
+        HirVariableDeclaration turrets = assertInstanceOf(HirVariableDeclaration.class,
+            inferred.program().orElseThrow().statements().get(0));
+        assertEquals(new CollectionType(CollectionType.Kind.SET, new BuildingType("Duo", false)), turrets.type());
+
+        Program legacyProgram = parser.parse("""
+            val turrets: LinkedBuildingSet<Duo> = Building.getAllDuo();
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult legacy = analyzer.analyze(legacyProgram, Path.of("main.mpl"), hardware());
+
+        assertTrue(legacy.program().isEmpty());
+        assertTrue(legacy.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3103")
+            && diagnostic.message().contains("Set<Building<T>>")));
     }
 
     private HardwareContract hardware() {

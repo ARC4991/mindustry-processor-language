@@ -114,7 +114,7 @@ class MilSyntaxParserTest {
     }
 
     @Test
-    void acceptsLinkedBuildingSetMacros() {
+    void acceptsBuildingQueryMacros() {
         MilParseResult result = parser.parse("""
             val count: Int = @building.count(@duo, building, @building.read(building, enabled));
             val first: Building<Duo>? = @building.get(@duo, building, 0, @building.read(building, enabled));
