@@ -1,0 +1,2 @@
+const PrimaryTurret: Duo = link("duo1");
+const BackupTurret: Duo = link("duo2");

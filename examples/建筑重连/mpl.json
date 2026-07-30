@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "building-reconnect-example",
+  "version": "0.1.0",
+  "target": {
+    "mindustry": "v146"
+  },
+  "entry": "src/main.mpl",
+  "hardware": "src/hardware.mplh",
+  "dependencies": {}
+}
