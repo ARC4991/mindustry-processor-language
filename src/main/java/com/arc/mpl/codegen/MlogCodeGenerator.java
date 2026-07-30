@@ -40,6 +40,10 @@ import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirStatement;
+import com.arc.mpl.hir.HirStringComparison;
+import com.arc.mpl.hir.HirStringConcat;
+import com.arc.mpl.hir.HirStringLength;
+import com.arc.mpl.hir.HirStringSnapshot;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirText;
 import com.arc.mpl.hir.HirTupleLiteral;
@@ -56,6 +60,7 @@ import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.hir.TupleType;
 import com.arc.mpl.hir.MplType;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.memory.StringRuntimeLayout;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -86,6 +91,7 @@ public final class MlogCodeGenerator {
     private Map<String, Integer> functionIndexes;
     private Map<String, HirClass> classes;
     private Map<String, List<Integer>> objectAllocations;
+    private Map<String, MlogProgramBuilder.Label> stringOutputLabels;
     private Set<String> globalVariables;
     private Map<String, HirHardwareLink> activeBuildingBindings;
     private String activeDrawTarget;
@@ -129,6 +135,8 @@ public final class MlogCodeGenerator {
         classes = program.classes().stream().collect(java.util.stream.Collectors.toMap(
             HirClass::name, value -> value, (left, right) -> left, java.util.LinkedHashMap::new));
         objectAllocations = new ObjectAllocationCollector().collect(program);
+        stringOutputLabels = new java.util.LinkedHashMap<>();
+        prepareStringOutputLabels();
         globalVariables = new HashSet<>();
         activeBuildingBindings = new HashMap<>();
         activeDrawTarget = null;
@@ -139,6 +147,7 @@ public final class MlogCodeGenerator {
             functionEntries.put(function.name(), label("function_" + function.name()));
         }
         currentFunction = null;
+        emitStringRuntimeInitialization();
         emitObjectPoolInitialization();
         emitHardwareStartupGate();
         for (HirStatement statement : program.statements()) {
@@ -148,6 +157,7 @@ public final class MlogCodeGenerator {
         // MPL 程序默认只执行一次；持续逻辑必须由用户显式写 while。
         output.stop();
         for (HirFunction function : program.functions()) emitFunction(function);
+        emitStringOutputBlocks();
         return output.render();
     }
 
@@ -196,15 +206,22 @@ public final class MlogCodeGenerator {
             if (declaration.initializer() instanceof HirUnitQuery
                 || declaration.initializer() instanceof HirBuildingQuery) return;
             if (declaration.initializer() instanceof HirArrayLiteral array) {
-                emitAggregateDeclaration(declaration.name(), array.elements());
+                emitAggregateDeclaration(declaration, array.elements());
                 return;
             }
             if (declaration.initializer() instanceof HirTupleLiteral tuple) {
-                emitAggregateDeclaration(declaration.name(), tuple.elements());
+                emitAggregateDeclaration(declaration, tuple.elements());
                 return;
             }
             if (declaration.initializer() instanceof HirCollectionLiteral collection) {
-                emitAggregateDeclaration(declaration.name(), collection.elements());
+                emitAggregateDeclaration(declaration, collection.elements());
+                return;
+            }
+            if (declaration.type() == com.arc.mpl.hir.ValueType.STRING) {
+                StringRuntimeLayout.Entry target = stringVariable(declaration.name());
+                String source = emitExpression(declaration.initializer());
+                emitStringCopy(source, target);
+                output.set(variable(declaration.name()), Integer.toString(target.handle()));
                 return;
             }
             output.set(variable(declaration.name()), emitExpression(declaration.initializer()));
@@ -264,7 +281,13 @@ public final class MlogCodeGenerator {
             return;
         }
         if (statement instanceof HirCollectionSet update) {
-            storeAggregateElement(update.target(), update.index(), emitExpression(update.value()));
+            String value = emitExpression(update.value());
+            if (update.value().type() == com.arc.mpl.hir.ValueType.STRING) {
+                StringRuntimeLayout.Entry target = stringAggregateElement(update.target(), update.index());
+                emitStringCopy(value, target);
+                value = Integer.toString(target.handle());
+            }
+            storeAggregateElement(update.target(), update.index(), value);
             return;
         }
         if (statement instanceof HirDynamicCollectionSet update) {
@@ -302,9 +325,75 @@ public final class MlogCodeGenerator {
 
     private void emitReturn(HirReturn returned) {
         if (currentFunction == null) throw new IllegalStateException("return 缺少函数上下文");
-        returned.value().ifPresent(value -> output.set(functionResultSlot(currentFunction), emitExpression(value)));
+        returned.value().ifPresent(value -> {
+            if (value.type() == com.arc.mpl.hir.ValueType.STRING) {
+                StringRuntimeLayout.Entry target = memoryLayout.stringRuntime().functionResult(currentFunction)
+                    .orElseThrow(() -> new IllegalArgumentException("String 函数缺少返回缓冲：" + currentFunction));
+                emitStringCopy(emitExpression(value), target);
+                output.set(functionResultSlot(currentFunction), Integer.toString(target.handle()));
+            } else {
+                output.set(functionResultSlot(currentFunction), emitExpression(value));
+            }
+        });
         returned.cleanup().forEach(this::emitObjectRelease);
         output.set("@counter", functionReturnSlot(currentFunction));
+    }
+
+    private void prepareStringOutputLabels() {
+        for (StringRuntimeLayout.Entry entry : memoryLayout.stringRuntime().entries()) {
+            if (!entry.isLiteral()) continue;
+            for (String token : stringTokens(entry.literal())) {
+                stringOutputLabels.computeIfAbsent(token, ignored -> label("string_unit"));
+            }
+        }
+    }
+
+    /** Initializes literal address sequences before user code can observe a String handle. */
+    private void emitStringRuntimeInitialization() {
+        for (StringRuntimeLayout.Entry entry : memoryLayout.stringRuntime().entries()) {
+            writePhysicalConstant(memoryLayout.stringRuntime().bases(), entry.handle() - 1,
+                Integer.toString(globalAddress(entry.allocation())));
+            writePhysicalConstant(memoryLayout.stringRuntime().lengths(), entry.handle() - 1,
+                Integer.toString(entry.isLiteral() ? entry.fixedLength() : 0));
+            if (!entry.isLiteral()) continue;
+            List<String> tokens = stringTokens(entry.literal());
+            for (int index = 0; index < tokens.size(); index++) {
+                PhysicalMemoryLayout.Slice slice = constantSlice(entry.allocation(), index);
+                output.writeAddress(stringOutputLabels.get(tokens.get(index)), segment(slice).alias(),
+                    Integer.toString(slice.offset() + index - slice.logicalStart()));
+            }
+        }
+    }
+
+    /** Emits one shared output block per transport-safe UTF-16 runtime token. */
+    private void emitStringOutputBlocks() {
+        for (Map.Entry<String, MlogProgramBuilder.Label> entry : stringOutputLabels.entrySet()) {
+            emitLabel(entry.getValue());
+            if (!entry.getKey().isEmpty()) output.print(quote(entry.getKey()));
+            output.set("@counter", "__mpl_string_return");
+        }
+    }
+
+    /**
+     * Keeps one physical slot per UTF-16 code unit. A supplementary code point
+     * prints from its high-surrogate slot; its low-surrogate slot is a no-op.
+     * This preserves Java/Mindustry length semantics without serializing an
+     * isolated surrogate into the UTF-8 mlog artifact.
+     */
+    private List<String> stringTokens(String value) {
+        List<String> tokens = new java.util.ArrayList<>(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char unit = value.charAt(index);
+            if (Character.isHighSurrogate(unit) && index + 1 < value.length()
+                && Character.isLowSurrogate(value.charAt(index + 1))) {
+                tokens.add(value.substring(index, index + 2));
+                tokens.add("");
+                index++;
+            } else {
+                tokens.add(String.valueOf(unit));
+            }
+        }
+        return List.copyOf(tokens);
     }
 
     private void emitObjectPoolInitialization() {
@@ -672,12 +761,37 @@ public final class MlogCodeGenerator {
                 output.print(quote(pendingText.toString()));
                 pendingText.setLength(0);
             }
-            output.print(emitExpression(leaf));
+            if (leaf.type() == com.arc.mpl.hir.ValueType.STRING) {
+                emitDynamicStringPrint(emitExpression(leaf));
+            } else {
+                output.print(emitExpression(leaf));
+            }
         }
         if (!pendingText.isEmpty()) output.print(quote(pendingText.toString()));
     }
 
+    private void emitDynamicStringPrint(String handle) {
+        String length = emitStringLength(handle);
+        String index = temporary();
+        output.set(index, "0");
+        MlogProgramBuilder.Label end = label("string_print_end");
+        MlogProgramBuilder.Label loop = label("string_print_loop");
+        emitJump(end, JumpCondition.GREATER_THAN_EQ, index, length);
+        emitLabel(loop);
+        String address = emitStringUnitRead(handle, index);
+        output.operation(Operation.ADD, "__mpl_string_return", "@counter", "1");
+        output.set("@counter", address);
+        output.operation(Operation.ADD, index, index, "1");
+        emitJump(loop, JumpCondition.LESS_THAN, index, length);
+        emitLabel(end);
+    }
+
     private void collectPrintLeaves(HirExpression expression, List<HirExpression> leaves) {
+        if (expression instanceof HirStringConcat concat) {
+            collectPrintLeaves(concat.left(), leaves);
+            collectPrintLeaves(concat.right(), leaves);
+            return;
+        }
         if (expression instanceof HirBinary binary && binary.type() == com.arc.mpl.hir.ValueType.STRING
             && "+".equals(binary.operator())) {
             collectPrintLeaves(binary.left(), leaves);
@@ -803,7 +917,9 @@ public final class MlogCodeGenerator {
 
     private String emitExpression(HirExpression expression) {
         if (expression instanceof HirConstant constant) return constant.mlogLiteral();
-        if (expression instanceof HirText text) return quote(text.value());
+        if (expression instanceof HirText text) {
+            return Integer.toString(memoryLayout.stringRuntime().literal(text).handle());
+        }
         if (expression instanceof HirArrayLiteral || expression instanceof HirTupleLiteral || expression instanceof HirCollectionLiteral) {
             throw new IllegalArgumentException("aggregate literal must be assigned before target lowering");
         }
@@ -822,6 +938,10 @@ public final class MlogCodeGenerator {
             throw new IllegalArgumentException("LinkedBuildingSet<T> 描述符只能保存、读取 size/get 或作为 for 遍历目标");
         }
         if (expression instanceof HirUnary unary) return emitUnary(unary);
+        if (expression instanceof HirStringConcat concat) return emitStringConcat(concat);
+        if (expression instanceof HirStringLength length) return emitStringLength(emitExpression(length.value()));
+        if (expression instanceof HirStringSnapshot snapshot) return emitStringSnapshot(snapshot);
+        if (expression instanceof HirStringComparison comparison) return emitStringComparison(comparison);
         if (expression instanceof HirBinary binary) return emitBinary(binary);
         if (expression instanceof HirMemberAccess member) return emitMemberAccess(member);
         if (expression instanceof HirIntrinsicCall call) return emitIntrinsicCall(call);
@@ -832,10 +952,126 @@ public final class MlogCodeGenerator {
         return emitAssignment((HirAssignment) expression);
     }
 
-    private void emitAggregateDeclaration(String name, List<HirExpression> elements) {
+    private void emitAggregateDeclaration(HirVariableDeclaration declaration, List<HirExpression> elements) {
         for (int index = 0; index < elements.size(); index++) {
-            storeAggregateElement(name, index, emitExpression(elements.get(index)));
+            HirExpression element = elements.get(index);
+            String value = emitExpression(element);
+            if (element.type() == com.arc.mpl.hir.ValueType.STRING) {
+                StringRuntimeLayout.Entry target = stringAggregateElement(declaration.name(), index);
+                emitStringCopy(value, target);
+                value = Integer.toString(target.handle());
+            }
+            storeAggregateElement(declaration.name(), index, value);
         }
+    }
+
+    private String emitStringConcat(HirStringConcat concat) {
+        // Evaluate both sides before mutating the reusable concatenation buffer.
+        String left = temporary();
+        output.set(left, emitExpression(concat.left()));
+        String right = temporary();
+        output.set(right, emitExpression(concat.right()));
+        StringRuntimeLayout.Entry target = memoryLayout.stringRuntime().concatenation(concat);
+        String outputIndex = temporary();
+        output.set(outputIndex, "0");
+        emitStringAppend(left, target, outputIndex);
+        emitStringAppend(right, target, outputIndex);
+        emitStringLengthWrite(target, outputIndex);
+        return Integer.toString(target.handle());
+    }
+
+    private String emitStringSnapshot(HirStringSnapshot snapshot) {
+        String source = emitExpression(snapshot.value());
+        StringRuntimeLayout.Entry target = memoryLayout.stringRuntime().snapshot(snapshot);
+        emitStringCopy(source, target);
+        return Integer.toString(target.handle());
+    }
+
+    private void emitStringCopy(String source, StringRuntimeLayout.Entry target) {
+        if (target.isLiteral()) throw new IllegalArgumentException("不能覆写 String 字面量描述符");
+        String outputIndex = temporary();
+        output.set(outputIndex, "0");
+        emitStringAppend(source, target, outputIndex);
+        emitStringLengthWrite(target, outputIndex);
+    }
+
+    private void emitStringAppend(String source, StringRuntimeLayout.Entry target, String outputIndex) {
+        String length = emitStringLength(source);
+        String sourceIndex = temporary();
+        output.set(sourceIndex, "0");
+        MlogProgramBuilder.Label end = label("string_copy_end");
+        MlogProgramBuilder.Label loop = label("string_copy_loop");
+        emitJump(end, JumpCondition.GREATER_THAN_EQ, sourceIndex, length);
+        emitLabel(loop);
+        String unit = emitStringUnitRead(source, sourceIndex);
+        emitPhysicalWrite(target.allocation(), outputIndex, unit);
+        output.operation(Operation.ADD, sourceIndex, sourceIndex, "1");
+        output.operation(Operation.ADD, outputIndex, outputIndex, "1");
+        emitJump(loop, JumpCondition.LESS_THAN, sourceIndex, length);
+        emitLabel(end);
+    }
+
+    private String emitStringLength(String handle) {
+        String descriptorIndex = temporary();
+        output.operation(Operation.SUB, descriptorIndex, handle, "1");
+        return emitPhysicalRead(memoryLayout.stringRuntime().lengths(), descriptorIndex);
+    }
+
+    private String emitStringUnitRead(String handle, String index) {
+        String descriptorIndex = temporary();
+        output.operation(Operation.SUB, descriptorIndex, handle, "1");
+        String base = emitPhysicalRead(memoryLayout.stringRuntime().bases(), descriptorIndex);
+        String address = temporary();
+        output.operation(Operation.ADD, address, base, index);
+        return emitGlobalPhysicalRead(address);
+    }
+
+    private void emitStringLengthWrite(StringRuntimeLayout.Entry entry, String length) {
+        writePhysicalConstant(memoryLayout.stringRuntime().lengths(), entry.handle() - 1, length);
+    }
+
+    private String emitStringComparison(HirStringComparison comparison) {
+        String left = temporary();
+        output.set(left, emitExpression(comparison.left()));
+        String right = temporary();
+        output.set(right, emitExpression(comparison.right()));
+        return emitStringComparison(left, right, comparison.equal());
+    }
+
+    private String emitStringComparison(String left, String right, boolean equal) {
+        String leftLength = emitStringLength(left);
+        String rightLength = emitStringLength(right);
+        String result = temporary();
+        output.set(result, equal ? "1" : "0");
+        MlogProgramBuilder.Label mismatch = label("string_compare_mismatch");
+        MlogProgramBuilder.Label end = label("string_compare_end");
+        emitJump(end, JumpCondition.STRICT_EQUAL, left, right);
+        emitJump(mismatch, JumpCondition.NOT_EQUAL, leftLength, rightLength);
+        String index = temporary();
+        output.set(index, "0");
+        MlogProgramBuilder.Label loop = label("string_compare_loop");
+        emitJump(end, JumpCondition.GREATER_THAN_EQ, index, leftLength);
+        emitLabel(loop);
+        String leftUnit = emitStringUnitRead(left, index);
+        String rightUnit = emitStringUnitRead(right, index);
+        emitJump(mismatch, JumpCondition.NOT_EQUAL, leftUnit, rightUnit);
+        output.operation(Operation.ADD, index, index, "1");
+        emitJump(loop, JumpCondition.LESS_THAN, index, leftLength);
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(mismatch);
+        output.set(result, equal ? "0" : "1");
+        emitLabel(end);
+        return result;
+    }
+
+    private StringRuntimeLayout.Entry stringVariable(String name) {
+        return memoryLayout.stringRuntime().variable(currentFunction, name)
+            .orElseThrow(() -> new IllegalArgumentException("String 变量缺少 runtime 缓冲：" + name));
+    }
+
+    private StringRuntimeLayout.Entry stringAggregateElement(String name, int index) {
+        return memoryLayout.stringRuntime().aggregateElement(currentFunction, name, index)
+            .orElseThrow(() -> new IllegalArgumentException("String 聚合元素缺少 runtime 缓冲：" + name + "[" + index + "]"));
     }
 
     private String emitUnitQuerySize(HirUnitQuery query) {
@@ -978,6 +1214,46 @@ public final class MlogCodeGenerator {
         return result;
     }
 
+    private String emitGlobalPhysicalRead(String address) {
+        String result = temporary();
+        MlogProgramBuilder.Label end = memoryLayout.segments().size() > 1 ? label("memory_global_read_end") : null;
+        int globalStart = 0;
+        for (int segmentIndex = 0; segmentIndex < memoryLayout.segments().size(); segmentIndex++) {
+            PhysicalMemoryLayout.Segment segment = memoryLayout.segments().get(segmentIndex);
+            boolean last = segmentIndex == memoryLayout.segments().size() - 1;
+            MlogProgramBuilder.Label next = last ? null : label("memory_global_read_next");
+            if (!last) {
+                emitJump(next, JumpCondition.GREATER_THAN_EQ, address,
+                    Integer.toString(globalStart + segment.capacity()));
+            }
+            String local = address;
+            if (globalStart != 0) {
+                local = temporary();
+                output.operation(Operation.SUB, local, address, Integer.toString(globalStart));
+            }
+            output.read(result, segment.alias(), local);
+            if (!last) emitJump(end, JumpCondition.ALWAYS, "0", "0");
+            if (next != null) emitLabel(next);
+            globalStart = Math.addExact(globalStart, segment.capacity());
+        }
+        if (end != null) emitLabel(end);
+        return result;
+    }
+
+    private int globalAddress(PhysicalMemoryLayout.Allocation allocation) {
+        PhysicalMemoryLayout.Slice first = allocation.slices().get(0);
+        int address = first.offset();
+        for (int index = 0; index < first.segmentIndex(); index++) {
+            address = Math.addExact(address, memoryLayout.segments().get(index).capacity());
+        }
+        return address;
+    }
+
+    private void writePhysicalConstant(PhysicalMemoryLayout.Allocation allocation, int index, String value) {
+        PhysicalMemoryLayout.Slice slice = constantSlice(allocation, index);
+        output.write(value, segment(slice).alias(), Integer.toString(slice.offset() + index - slice.logicalStart()));
+    }
+
     private void emitDynamicCollectionSet(HirDynamicCollectionSet update) {
         PhysicalMemoryLayout.Allocation allocation = allocation(update.target());
         String index = temporary();
@@ -1055,8 +1331,13 @@ public final class MlogCodeGenerator {
         String result = temporary();
         output.set(result, "0");
         for (int index = 0; index < contains.size(); index++) {
-            String equal = temporary();
-            output.operation(Operation.EQUAL, equal, loadAggregateElement(variable.name(), index), candidate);
+            String equal;
+            if (contains.candidate().type() == com.arc.mpl.hir.ValueType.STRING) {
+                equal = emitStringComparison(loadAggregateElement(variable.name(), index), candidate, true);
+            } else {
+                equal = temporary();
+                output.operation(Operation.EQUAL, equal, loadAggregateElement(variable.name(), index), candidate);
+            }
             output.operation(Operation.OR, result, result, equal);
         }
         return result;
@@ -1069,14 +1350,28 @@ public final class MlogCodeGenerator {
             output.set(saved, emitExpression(argument));
             savedArguments.add(saved);
         }
-        return emitPreparedFunctionCall(call.function(), savedArguments, call.type());
+        String result = emitPreparedFunctionCall(call.function(), savedArguments, call.type());
+        if (call.type() != com.arc.mpl.hir.ValueType.STRING) return result;
+        StringRuntimeLayout.Entry target = memoryLayout.stringRuntime().callResult(call);
+        emitStringCopy(result, target);
+        return Integer.toString(target.handle());
     }
 
     private String emitPreparedFunctionCall(String functionName, List<String> savedArguments, MplType returnType) {
         HirFunction function = functions.get(functionName);
         if (function == null) throw new IllegalArgumentException("unknown HIR function: " + functionName);
         for (int index = 0; index < savedArguments.size() && index < function.parameters().size(); index++) {
-            output.set(functionParameterSlot(function.name(), function.parameters().get(index).name()), savedArguments.get(index));
+            var parameter = function.parameters().get(index);
+            if (parameter.type() == com.arc.mpl.hir.ValueType.STRING) {
+                StringRuntimeLayout.Entry target = memoryLayout.stringRuntime()
+                    .variable(function.name(), parameter.name())
+                    .orElseThrow(() -> new IllegalArgumentException("String 参数缺少 runtime 缓冲："
+                        + function.name() + "." + parameter.name()));
+                emitStringCopy(savedArguments.get(index), target);
+                output.set(functionParameterSlot(function.name(), parameter.name()), Integer.toString(target.handle()));
+            } else {
+                output.set(functionParameterSlot(function.name(), parameter.name()), savedArguments.get(index));
+            }
         }
         output.operation(Operation.ADD, functionReturnSlot(function.name()), "@counter", "1");
         output.setCounter(functionEntries.get(function.name()));
@@ -1189,13 +1484,19 @@ public final class MlogCodeGenerator {
                 output.set(saved, emitExpression(element));
                 values.add(saved);
             }
-            emitObjectTupleWrite(target, assignment.className(), assignment.field(), values);
+            emitObjectTupleWrite(target, assignment.className(), assignment.field(), tuple, values);
             return "0";
         }
         String target = temporary();
         output.set(target, emitExpression(assignment.target()));
         String value = temporary();
         output.set(value, emitExpression(assignment.value()));
+        if (field.type() == com.arc.mpl.hir.ValueType.STRING) {
+            if (!"=".equals(assignment.operator())) {
+                throw new IllegalArgumentException("String 对象字段不支持复合赋值");
+            }
+            return emitStringObjectFieldWrite(target, assignment.className(), assignment.field(), null, value);
+        }
         String result = value;
         if (!"=".equals(assignment.operator())) {
             String operator = assignment.operator().substring(0, 1);
@@ -1213,10 +1514,36 @@ public final class MlogCodeGenerator {
         return result;
     }
 
-    private void emitObjectTupleWrite(String target, String className, String field, List<String> values) {
+    private void emitObjectTupleWrite(String target, String className, String field, TupleType type, List<String> values) {
         for (int index = 0; index < values.size(); index++) {
-            emitObjectSlotWrite(target, className, field, index, values.get(index));
+            if (type.elementTypes().get(index) == com.arc.mpl.hir.ValueType.STRING) {
+                emitStringObjectFieldWrite(target, className, field, index, values.get(index));
+            } else {
+                emitObjectSlotWrite(target, className, field, index, values.get(index));
+            }
         }
+    }
+
+    private String emitStringObjectFieldWrite(String objectHandle, String className, String field,
+                                              Integer element, String source) {
+        String result = temporary();
+        output.set(result, "0");
+        MlogProgramBuilder.Label end = label("object_string_write_end");
+        for (int allocationId : allocations(className)) {
+            MlogProgramBuilder.Label next = label("object_string_write_next");
+            emitJump(next, JumpCondition.NOT_EQUAL, objectHandle, Integer.toString(allocationId));
+            StringRuntimeLayout.Entry target = memoryLayout.stringRuntime()
+                .objectField(allocationId, field, element)
+                .orElseThrow(() -> new IllegalArgumentException("对象 String 字段缺少 runtime 缓冲："
+                    + className + "." + field));
+            emitStringCopy(source, target);
+            output.set(objectFieldSlot(allocationId, field, element), Integer.toString(target.handle()));
+            output.set(result, Integer.toString(target.handle()));
+            emitJump(end, JumpCondition.ALWAYS, "0", "0");
+            emitLabel(next);
+        }
+        emitLabel(end);
+        return result;
     }
 
     private void emitObjectSlotWrite(String target, String className, String field, Integer element, String value) {
@@ -1439,6 +1766,15 @@ public final class MlogCodeGenerator {
     private String emitAssignment(HirAssignment assignment) {
         String target = variable(assignment.target());
         String value = emitExpression(assignment.value());
+        if (assignment.type() == com.arc.mpl.hir.ValueType.STRING) {
+            if (!"=".equals(assignment.operator())) {
+                throw new IllegalArgumentException("String 复合赋值必须在语义层被拒绝");
+            }
+            StringRuntimeLayout.Entry storage = stringVariable(assignment.target());
+            emitStringCopy(value, storage);
+            output.set(target, Integer.toString(storage.handle()));
+            return target;
+        }
         if ("=".equals(assignment.operator())) {
             output.set(target, value);
         } else {

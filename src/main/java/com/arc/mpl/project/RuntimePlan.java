@@ -32,6 +32,10 @@ public record RuntimePlan(
         return physicalMemoryLayout.objectPoolSlots();
     }
 
+    public int stringSlots() {
+        return physicalMemoryLayout.stringRuntime().slots();
+    }
+
     public int memoryCells() {
         return Math.toIntExact(physicalMemoryLayout.memoryCells());
     }

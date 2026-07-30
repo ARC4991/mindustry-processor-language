@@ -15,13 +15,20 @@ public record PhysicalMemoryLayout(
     List<Segment> segments,
     Map<StorageKey, Allocation> allocations,
     Map<String, ObjectPool> objectPools,
+    StringRuntimeLayout stringRuntime,
     int physicalSlots,
     int objectPoolSlots
 ) {
-    private static final PhysicalMemoryLayout EMPTY = new PhysicalMemoryLayout(List.of(), Map.of(), Map.of(), 0, 0);
+    private static final PhysicalMemoryLayout EMPTY = new PhysicalMemoryLayout(
+        List.of(), Map.of(), Map.of(), StringRuntimeLayout.empty(), 0, 0);
 
     public PhysicalMemoryLayout(List<Segment> segments, Map<StorageKey, Allocation> allocations, int physicalSlots) {
-        this(segments, allocations, Map.of(), physicalSlots, 0);
+        this(segments, allocations, Map.of(), StringRuntimeLayout.empty(), physicalSlots, 0);
+    }
+
+    public PhysicalMemoryLayout(List<Segment> segments, Map<StorageKey, Allocation> allocations,
+                                Map<String, ObjectPool> objectPools, int physicalSlots, int objectPoolSlots) {
+        this(segments, allocations, objectPools, StringRuntimeLayout.empty(), physicalSlots, objectPoolSlots);
     }
 
     public PhysicalMemoryLayout {
@@ -30,6 +37,7 @@ public record PhysicalMemoryLayout(
             new java.util.LinkedHashMap<>(Objects.requireNonNull(allocations, "allocations")));
         objectPools = java.util.Collections.unmodifiableMap(
             new java.util.LinkedHashMap<>(Objects.requireNonNull(objectPools, "objectPools")));
+        Objects.requireNonNull(stringRuntime, "stringRuntime");
         if (physicalSlots < 0 || objectPoolSlots < 0 || objectPoolSlots > physicalSlots) {
             throw new IllegalArgumentException("invalid physical/object-pool slot counts");
         }
@@ -43,6 +51,16 @@ public record PhysicalMemoryLayout(
         int pooledSlots = objectPools.values().stream().mapToInt(ObjectPool::slots).sum();
         if (pooledSlots != objectPoolSlots) {
             throw new IllegalArgumentException("objectPoolSlots must equal the object-pool allocation count");
+        }
+        for (StringRuntimeLayout.Entry entry : stringRuntime.entries()) {
+            if (!entry.allocation().equals(allocations.get(entry.allocation().key()))) {
+                throw new IllegalArgumentException("String runtime allocation is not part of the physical layout");
+            }
+        }
+        if (stringRuntime.enabled()
+            && (!stringRuntime.bases().equals(allocations.get(StringRuntimeLayout.basesKey()))
+                || !stringRuntime.lengths().equals(allocations.get(StringRuntimeLayout.lengthsKey())))) {
+            throw new IllegalArgumentException("String runtime 描述符表不属于物理布局");
         }
         for (Map.Entry<String, ObjectPool> entry : objectPools.entrySet()) {
             ObjectPool pool = entry.getValue();

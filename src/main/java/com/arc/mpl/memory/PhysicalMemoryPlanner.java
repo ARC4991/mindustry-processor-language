@@ -31,6 +31,10 @@ import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirStatement;
+import com.arc.mpl.hir.HirStringComparison;
+import com.arc.mpl.hir.HirStringConcat;
+import com.arc.mpl.hir.HirStringLength;
+import com.arc.mpl.hir.HirStringSnapshot;
 import com.arc.mpl.hir.HirTupleLiteral;
 import com.arc.mpl.hir.HirUnary;
 import com.arc.mpl.hir.HirUnitControl;
@@ -73,6 +77,19 @@ public final class PhysicalMemoryPlanner {
                 required.add(field.key());
             }
         }
+        StringRuntimeRequirementAnalyzer.Result stringRequirements =
+            new StringRuntimeRequirementAnalyzer().analyze(program, profile.maxMessageUtf16CodeUnits());
+        for (StringRuntimeRequirementAnalyzer.Requirement string : stringRequirements.requirements()) {
+            declarations.put(string.storage(), string.physicalSlots());
+            required.add(string.storage());
+        }
+        if (!stringRequirements.requirements().isEmpty()) {
+            int descriptors = stringRequirements.requirements().size();
+            declarations.put(StringRuntimeLayout.basesKey(), descriptors);
+            declarations.put(StringRuntimeLayout.lengthsKey(), descriptors);
+            required.add(StringRuntimeLayout.basesKey());
+            required.add(StringRuntimeLayout.lengthsKey());
+        }
 
         List<Map.Entry<PhysicalMemoryLayout.StorageKey, Integer>> allocations = required.stream()
             .map(key -> Map.entry(key, requireDeclaration(key, declarations)))
@@ -104,7 +121,8 @@ public final class PhysicalMemoryPlanner {
         List<PhysicalMemoryLayout.Segment> segments = new ArrayList<>();
         for (int index = 0; index < segmentKinds.size(); index++) {
             RuntimePreferences.MemoryKind kind = segmentKinds.get(index);
-            segments.add(new PhysicalMemoryLayout.Segment("__mpl_mem" + index, kind, capacity(kind, profile), used.get(index)));
+            String alias = (kind == RuntimePreferences.MemoryKind.CELL ? "cell" : "bank") + "__mpl_mem" + index;
+            segments.add(new PhysicalMemoryLayout.Segment(alias, kind, capacity(kind, profile), used.get(index)));
         }
         Map<String, PhysicalMemoryLayout.ObjectPool> objectPools = new LinkedHashMap<>();
         for (ObjectPoolRequirementAnalyzer.Requirement requirement : poolRequirements) {
@@ -117,7 +135,36 @@ public final class PhysicalMemoryPlanner {
                 requirement.capacity(), requirement.handleBase(), placed.get(requirement.occupancy()), fields));
         }
         int objectPoolSlots = poolRequirements.stream().mapToInt(ObjectPoolRequirementAnalyzer.Requirement::slots).sum();
-        return new PhysicalMemoryLayout(segments, placed, objectPools, slots, objectPoolSlots);
+        List<StringRuntimeLayout.Entry> stringEntries = new ArrayList<>();
+        Map<String, StringRuntimeLayout.Entry> stringLiterals = new LinkedHashMap<>();
+        Map<Integer, StringRuntimeLayout.Entry> stringConcatenations = new LinkedHashMap<>();
+        Map<Integer, StringRuntimeLayout.Entry> stringSnapshots = new LinkedHashMap<>();
+        Map<Integer, StringRuntimeLayout.Entry> stringCallResults = new LinkedHashMap<>();
+        Map<PhysicalMemoryLayout.StorageKey, StringRuntimeLayout.Entry> stringVariables = new LinkedHashMap<>();
+        Map<String, StringRuntimeLayout.Entry> stringResults = new LinkedHashMap<>();
+        Map<StringRuntimeLayout.ObjectFieldKey, StringRuntimeLayout.Entry> stringObjectFields = new LinkedHashMap<>();
+        Map<StringRuntimeLayout.AggregateElementKey, StringRuntimeLayout.Entry> stringAggregateElements = new LinkedHashMap<>();
+        for (StringRuntimeRequirementAnalyzer.Requirement requirement : stringRequirements.requirements()) {
+            StringRuntimeLayout.Entry entry = new StringRuntimeLayout.Entry(requirement.handle(), requirement.capacity(),
+                requirement.fixedLength(), requirement.literal(), placed.get(requirement.storage()));
+            stringEntries.add(entry);
+            switch (requirement.kind()) {
+                case LITERAL -> stringLiterals.put(requirement.literal(), entry);
+                case CONCATENATION -> stringConcatenations.put(requirement.concatenationId(), entry);
+                case SNAPSHOT -> stringSnapshots.put(requirement.concatenationId(), entry);
+                case CALL_RESULT -> stringCallResults.put(requirement.concatenationId(), entry);
+                case VARIABLE -> stringVariables.put(requirement.variable(), entry);
+                case FUNCTION_RESULT -> stringResults.put(requirement.functionResult(), entry);
+                case OBJECT_FIELD -> stringObjectFields.put(requirement.objectField(), entry);
+                case AGGREGATE_ELEMENT -> stringAggregateElements.put(requirement.aggregateElement(), entry);
+            }
+        }
+        StringRuntimeLayout stringRuntime = new StringRuntimeLayout(stringEntries, stringLiterals,
+            stringConcatenations, stringSnapshots, stringCallResults, stringVariables, stringResults,
+            stringObjectFields, stringAggregateElements,
+            placed.get(StringRuntimeLayout.basesKey()), placed.get(StringRuntimeLayout.lengthsKey()),
+            stringRequirements.slots());
+        return new PhysicalMemoryLayout(segments, placed, objectPools, stringRuntime, slots, objectPoolSlots);
     }
 
     private void collect(String function, List<HirStatement> statements,
@@ -198,6 +245,20 @@ public final class PhysicalMemoryPlanner {
             throw new IllegalArgumentException("动态数组访问必须以具名 Array 变量为目标");
         }
         if (expression instanceof HirUnary unary) collectExpression(function, unary.operand(), declarations, required);
+        if (expression instanceof HirStringConcat concat) {
+            collectExpression(function, concat.left(), declarations, required);
+            collectExpression(function, concat.right(), declarations, required);
+        }
+        if (expression instanceof HirStringLength length) {
+            collectExpression(function, length.value(), declarations, required);
+        }
+        if (expression instanceof HirStringSnapshot snapshot) {
+            collectExpression(function, snapshot.value(), declarations, required);
+        }
+        if (expression instanceof HirStringComparison comparison) {
+            collectExpression(function, comparison.left(), declarations, required);
+            collectExpression(function, comparison.right(), declarations, required);
+        }
         if (expression instanceof com.arc.mpl.hir.HirBinary binary) {
             collectExpression(function, binary.left(), declarations, required);
             collectExpression(function, binary.right(), declarations, required);
