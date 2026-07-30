@@ -116,6 +116,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -786,12 +787,24 @@ public final class SemanticAnalyzer {
             return ValueType.FLOAT;
         }
         if (left instanceof ObjectType leftObject && right instanceof ObjectType rightObject) {
-            if (canAssign(left, right)) return left;
-            if (canAssign(right, left)) return right;
+            String commonClass = commonObjectSupertype(leftObject.className(), rightObject.className());
+            if (commonClass != null) return new ObjectType(commonClass, leftObject.nullable() || rightObject.nullable());
         }
         if (left == ValueType.NULL && right instanceof ObjectType object) return new ObjectType(object.className(), true);
         if (right == ValueType.NULL && left instanceof ObjectType object) return new ObjectType(object.className(), true);
         return ValueType.ERROR;
+    }
+
+    private String commonObjectSupertype(String left, String right) {
+        Set<String> leftAncestors = new LinkedHashSet<>();
+        ClassInfo current = classes.get(left);
+        while (current != null && leftAncestors.add(current.name())) current = current.parent();
+        current = classes.get(right);
+        while (current != null) {
+            if (leftAncestors.contains(current.name())) return current.name();
+            current = current.parent();
+        }
+        return null;
     }
 
     private HirFunction analyzeMethod(ClassInfo type, MethodInfo method) {
