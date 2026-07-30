@@ -51,6 +51,17 @@
             { "memory": "bank__mpl_mem0", "offset": 129, "logicalStart": 0, "length": 5 }
           ]
         }
+      ],
+      "tasks": [
+        {
+          "function": "computeScore",
+          "worker": "Worker-0",
+          "kind": 1,
+          "parameterSlots": 2,
+          "returnSlots": 1,
+          "parameterTypes": ["Int", "Int"],
+          "returnType": "Int"
+        }
       ]
     }
   },

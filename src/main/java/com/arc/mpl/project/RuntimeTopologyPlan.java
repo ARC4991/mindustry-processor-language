@@ -12,15 +12,22 @@ import java.util.Set;
 
 /** Deployment-wide processors and compiler-owned shared physical Memory. */
 public record RuntimeTopologyPlan(List<ShardPlan> shards, PhysicalMemoryLayout physicalMemoryLayout,
-                                  Optional<SharedRuntimeLayout> sharedRuntime) {
+                                  Optional<SharedRuntimeLayout> sharedRuntime,
+                                  Optional<RuntimeHelperPlan> helperPlan) {
     public RuntimeTopologyPlan(List<ShardPlan> shards, PhysicalMemoryLayout physicalMemoryLayout) {
-        this(shards, physicalMemoryLayout, Optional.empty());
+        this(shards, physicalMemoryLayout, Optional.empty(), Optional.empty());
+    }
+
+    public RuntimeTopologyPlan(List<ShardPlan> shards, PhysicalMemoryLayout physicalMemoryLayout,
+                               Optional<SharedRuntimeLayout> sharedRuntime) {
+        this(shards, physicalMemoryLayout, sharedRuntime, Optional.empty());
     }
 
     public RuntimeTopologyPlan {
         shards = List.copyOf(Objects.requireNonNull(shards, "shards"));
         physicalMemoryLayout = Objects.requireNonNull(physicalMemoryLayout, "physicalMemoryLayout");
         sharedRuntime = sharedRuntime == null ? Optional.empty() : sharedRuntime;
+        helperPlan = helperPlan == null ? Optional.empty() : helperPlan;
         if (shards.isEmpty()) throw new IllegalArgumentException("Runtime 拓扑至少需要一个 shard");
         Set<String> ids = new LinkedHashSet<>();
         for (ShardPlan shard : shards) {
@@ -50,11 +57,22 @@ public record RuntimeTopologyPlan(List<ShardPlan> shards, PhysicalMemoryLayout p
                 }
             }
         }
+        if (helperPlan.isPresent()) {
+            RuntimeHelperPlan helpers = helperPlan.orElseThrow();
+            if (!helpers.enabled() || sharedRuntime.isEmpty()) {
+                throw new IllegalArgumentException("helper 计划需要启用共享 Runtime");
+            }
+            List<String> plannedWorkers = helpers.workers().stream().map(RuntimeHelperPlan.Worker::id).toList();
+            if (!plannedWorkers.equals(sharedRuntime.orElseThrow().workers())) {
+                throw new IllegalArgumentException("helper Worker 与 Runtime 拓扑不一致");
+            }
+        }
     }
 
     public static RuntimeTopologyPlan singleShard(RuntimePlan plan) {
         Objects.requireNonNull(plan, "plan");
-        return new RuntimeTopologyPlan(List.of(ShardPlan.main(plan)), plan.physicalMemoryLayout(), Optional.empty());
+        return new RuntimeTopologyPlan(List.of(ShardPlan.main(plan)), plan.physicalMemoryLayout(), Optional.empty(),
+            Optional.empty());
     }
 
     public ShardPlan main() {

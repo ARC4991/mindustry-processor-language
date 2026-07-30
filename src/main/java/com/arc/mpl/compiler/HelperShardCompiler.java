@@ -58,6 +58,8 @@ final class HelperShardCompiler {
         List<RuntimePlanner.ShardSource> generated = shards.stream().map(shard ->
             new RuntimePlanner.ShardSource(shard.id(), shard.roles(), shard.mlog())).toList();
         RuntimeTopologyPlan topology = planner.planTopology(generated, profile, preferences, prepared);
+        topology = new RuntimeTopologyPlan(topology.shards(), topology.physicalMemoryLayout(),
+            topology.sharedRuntime(), Optional.of(helpers));
         return Optional.of(new Result(new MultiShardCompilation(shards, topology, helpers),
             prepared.physicalMemoryLayout()));
     }

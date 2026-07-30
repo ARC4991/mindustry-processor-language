@@ -139,6 +139,13 @@ class MplCliTest {
         JsonNode deployment = new ObjectMapper().readTree(Files.readString(outputDirectory.resolve("deployment.json")));
         assertEquals(2, deployment.path("runtimeTopology").path("shards").size());
         assertEquals(2, deployment.path("runtimeTopology").path("sharedRuntime").path("mailboxes").size());
+        JsonNode task = deployment.path("runtimeTopology").path("sharedRuntime").path("tasks").get(0);
+        assertEquals("add", task.path("function").asText());
+        assertEquals("Worker-0", task.path("worker").asText());
+        assertEquals(1, task.path("kind").asInt());
+        assertEquals(2, task.path("parameterSlots").asInt());
+        assertEquals("Int", task.path("parameterTypes").get(0).asText());
+        assertEquals("Int", task.path("returnType").asText());
         assertEquals("bank__mpl_mem0", deployment.path("runtimeTopology").path("memorySegments").get(0)
             .path("bindings").get(1).path("alias").asText());
     }

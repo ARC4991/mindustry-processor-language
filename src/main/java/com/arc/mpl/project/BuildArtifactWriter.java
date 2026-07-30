@@ -195,6 +195,18 @@ public final class BuildArtifactWriter {
                     part.put("length", slice.length());
                 });
             });
+            ArrayNode tasks = runtime.putArray("tasks");
+            plan.helperPlan().ifPresent(helpers -> helpers.tasks().values().forEach(task -> {
+                ObjectNode item = tasks.addObject();
+                item.put("function", task.function());
+                item.put("worker", task.worker());
+                item.put("kind", task.kind());
+                item.put("parameterSlots", task.parameterTypes().size());
+                item.put("returnSlots", 1);
+                ArrayNode parameterTypes = item.putArray("parameterTypes");
+                task.parameterTypes().forEach(type -> parameterTypes.add(type.displayName()));
+                item.put("returnType", task.returnType().displayName());
+            }));
         });
 
         ObjectNode deployment = artifactHeader(profile, digest);

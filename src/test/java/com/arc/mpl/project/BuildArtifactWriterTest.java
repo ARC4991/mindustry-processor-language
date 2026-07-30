@@ -221,6 +221,7 @@ class BuildArtifactWriterTest {
         assertEquals(6, sharedRuntime.path("heartbeatIndexes").path("Worker-0").asInt());
         assertEquals("MainToWorker", sharedRuntime.path("mailboxes").get(0).path("id").asText());
         assertEquals(1, sharedRuntime.path("mailboxes").get(0).path("payloadSlots").asInt());
+        assertEquals(0, sharedRuntime.path("tasks").size());
         assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("连接说明.txt"))
             .contains("Runtime Memory 已自动连接到所有 shard"));
         assertEquals(List.of(
