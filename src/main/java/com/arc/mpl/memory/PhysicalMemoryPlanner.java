@@ -63,6 +63,16 @@ public final class PhysicalMemoryPlanner {
         Set<PhysicalMemoryLayout.StorageKey> required = new LinkedHashSet<>();
         collect(null, program.statements(), declarations, required);
         for (HirFunction function : program.functions()) collect(function.name(), function.body(), declarations, required);
+        List<ObjectPoolRequirementAnalyzer.Requirement> poolRequirements =
+            new ObjectPoolRequirementAnalyzer().analyze(program);
+        for (ObjectPoolRequirementAnalyzer.Requirement pool : poolRequirements) {
+            declarations.put(pool.occupancy(), pool.capacity());
+            required.add(pool.occupancy());
+            for (ObjectPoolRequirementAnalyzer.FieldRequirement field : pool.fields()) {
+                declarations.put(field.key(), field.slots(pool.capacity()));
+                required.add(field.key());
+            }
+        }
 
         List<Map.Entry<PhysicalMemoryLayout.StorageKey, Integer>> allocations = required.stream()
             .map(key -> Map.entry(key, requireDeclaration(key, declarations)))
@@ -96,7 +106,18 @@ public final class PhysicalMemoryPlanner {
             RuntimePreferences.MemoryKind kind = segmentKinds.get(index);
             segments.add(new PhysicalMemoryLayout.Segment("__mpl_mem" + index, kind, capacity(kind, profile), used.get(index)));
         }
-        return new PhysicalMemoryLayout(segments, placed, slots);
+        Map<String, PhysicalMemoryLayout.ObjectPool> objectPools = new LinkedHashMap<>();
+        for (ObjectPoolRequirementAnalyzer.Requirement requirement : poolRequirements) {
+            Map<String, PhysicalMemoryLayout.PoolField> fields = new LinkedHashMap<>();
+            for (ObjectPoolRequirementAnalyzer.FieldRequirement field : requirement.fields()) {
+                fields.put(field.name(), new PhysicalMemoryLayout.PoolField(field.name(), field.type(), field.width(),
+                    placed.get(field.key())));
+            }
+            objectPools.put(requirement.className(), new PhysicalMemoryLayout.ObjectPool(requirement.className(),
+                requirement.capacity(), requirement.handleBase(), placed.get(requirement.occupancy()), fields));
+        }
+        int objectPoolSlots = poolRequirements.stream().mapToInt(ObjectPoolRequirementAnalyzer.Requirement::slots).sum();
+        return new PhysicalMemoryLayout(segments, placed, objectPools, slots, objectPoolSlots);
     }
 
     private void collect(String function, List<HirStatement> statements,

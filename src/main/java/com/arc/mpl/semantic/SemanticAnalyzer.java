@@ -76,6 +76,7 @@ import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirNewObject;
 import com.arc.mpl.hir.HirObjectFieldAssignment;
 import com.arc.mpl.hir.HirObjectFieldRead;
+import com.arc.mpl.hir.HirObjectRelease;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
@@ -129,6 +130,8 @@ public final class SemanticAnalyzer {
     private final Set<String> initializedGlobals = new HashSet<>();
     private final Deque<ArrayBoundsProof> arrayBoundsProofs = new ArrayDeque<>();
     private final ObjectReceiverEscapeAnalyzer objectReceiverEscapeAnalyzer = new ObjectReceiverEscapeAnalyzer();
+    private final OwnedObjectFactoryAnalyzer ownedObjectFactoryAnalyzer = new OwnedObjectFactoryAnalyzer();
+    private final Deque<List<PooledOwner>> pooledOwnerScopes = new ArrayDeque<>();
     private Path file;
     private Map<String, String> messages = Map.of();
     private Map<String, HardwareContract.LinkDeclaration> hardwareLinks = Map.of();
@@ -146,6 +149,8 @@ public final class SemanticAnalyzer {
     private boolean analyzingTopLevel;
     private ObjectAllocationContext objectAllocationContext;
     private boolean borrowedObjectUse;
+    private Expression allowedOwnedFactoryCall;
+    private boolean currentReturnsOwnedObject;
 
     /** Uses the v146 baseline when semantic analysis is invoked outside a compiler request. */
     public SemanticAnalyzer() {
@@ -188,6 +193,8 @@ public final class SemanticAnalyzer {
         topLevelCalls.clear();
         initializedGlobals.clear();
         arrayBoundsProofs.clear();
+        pooledOwnerScopes.clear();
+        pooledOwnerScopes.push(new ArrayList<>());
         unitIterationDepth = 0;
         nextManagedQueryId = 0;
         nextObjectAllocationId = 1;
@@ -201,6 +208,8 @@ public final class SemanticAnalyzer {
         analyzingTopLevel = true;
         objectAllocationContext = ObjectAllocationContext.DISALLOWED;
         borrowedObjectUse = false;
+        allowedOwnedFactoryCall = null;
+        currentReturnsOwnedObject = false;
 
         if (!program.imports().isEmpty() || !program.exports().isEmpty()) {
             SourceSpan span = !program.imports().isEmpty()
@@ -291,14 +300,15 @@ public final class SemanticAnalyzer {
         List<MplType> hiddenParameters = new ArrayList<>();
         hiddenParameters.add(new ObjectType(type.name(), false));
         hiddenParameters.addAll(sourceParameters);
-        functions.put(internalName, new FunctionSignature(function, hiddenParameters, returnType));
+        functions.put(internalName, new FunctionSignature(function, hiddenParameters, returnType, false));
         callGraph.put(internalName, new HashSet<>());
         directGlobalDependencies.put(internalName, new HashSet<>());
     }
 
     private boolean supportedObjectField(MplType type) {
         if (type == ValueType.INT || type == ValueType.FLOAT || type == ValueType.BOOL || type == ValueType.STRING) return true;
-        return type instanceof TupleType tuple && tuple.elementTypes().stream().allMatch(this::supportedObjectField);
+        return type instanceof TupleType tuple && tuple.elementTypes().stream().allMatch(element ->
+            element == ValueType.INT || element == ValueType.FLOAT || element == ValueType.BOOL || element == ValueType.STRING);
     }
 
     private HirStatement analyzeStatement(Statement statement) {
@@ -328,11 +338,11 @@ public final class SemanticAnalyzer {
         }
         if (statement instanceof BreakStatement jump) {
             if (loopDepth == 0) error("MPL3401", "break 只能出现在循环内", jump.span());
-            return new HirBreak();
+            return withLoopCleanup(new HirBreak());
         }
         if (statement instanceof ContinueStatement jump) {
             if (loopDepth == 0) error("MPL3402", "continue 只能出现在循环内", jump.span());
-            return new HirContinue();
+            return withLoopCleanup(new HirContinue());
         }
         if (statement instanceof ReturnStatement returned) {
             return analyzeReturn(returned);
@@ -352,7 +362,9 @@ public final class SemanticAnalyzer {
             || isAggregate(returnType) || returnType instanceof UnitSetType || returnType instanceof UnitType) {
             error("MPL3602", "第一版函数 ABI 尚不支持聚合、Set<Unit<T>> 或 UnitRef 参数及返回值", function.span());
         }
-        FunctionSignature signature = new FunctionSignature(function, parameters, returnType);
+        boolean returnsOwnedObject = returnType instanceof ObjectType object && !object.nullable()
+            && ownedObjectFactoryAnalyzer.returnsFreshObject(function.body());
+        FunctionSignature signature = new FunctionSignature(function, parameters, returnType, returnsOwnedObject);
         if (hardwareLinks.containsKey(function.name()) || classes.containsKey(function.name())
             || functions.putIfAbsent(function.name(), signature) != null) {
             error("MPL3501", "函数已声明：" + function.name(), function.span());
@@ -366,9 +378,11 @@ public final class SemanticAnalyzer {
         String previousFunction = currentFunction;
         String previousClass = currentClass;
         MplType previousReturnType = currentReturnType;
+        boolean previousReturnsOwnedObject = currentReturnsOwnedObject;
         currentFunction = method.internalName();
         currentClass = type.name();
         currentReturnType = method.returnType();
+        currentReturnsOwnedObject = false;
         scopes.push(new HashMap<>());
         try {
             ObjectType thisType = new ObjectType(type.name(), false);
@@ -394,6 +408,7 @@ public final class SemanticAnalyzer {
             currentFunction = previousFunction;
             currentClass = previousClass;
             currentReturnType = previousReturnType;
+            currentReturnsOwnedObject = previousReturnsOwnedObject;
         }
     }
 
@@ -552,8 +567,10 @@ public final class SemanticAnalyzer {
         }
         String previousFunction = currentFunction;
         MplType previousReturnType = currentReturnType;
+        boolean previousReturnsOwnedObject = currentReturnsOwnedObject;
         currentFunction = function.name();
         currentReturnType = signature.returnType();
+        currentReturnsOwnedObject = signature.returnsOwnedObject();
         scopes.push(new HashMap<>());
         try {
             List<HirFunctionParameter> parameters = new ArrayList<>();
@@ -573,6 +590,7 @@ public final class SemanticAnalyzer {
             scopes.pop();
             currentFunction = previousFunction;
             currentReturnType = previousReturnType;
+            currentReturnsOwnedObject = previousReturnsOwnedObject;
         }
     }
 
@@ -581,7 +599,13 @@ public final class SemanticAnalyzer {
             error("MPL3502", "return 只能出现在函数内", returned.span());
             return new HirReturn(Optional.empty());
         }
-        Optional<HirExpression> value = returned.value().map(this::analyzeExpression);
+        Optional<HirExpression> value;
+        if (returned.value().orElse(null) instanceof NewExpression && currentReturnsOwnedObject) {
+            value = returned.value().map(expression -> analyzeWithObjectAllocationContext(
+                ObjectAllocationContext.POOLED_RETURN, () -> analyzeExpression(expression)));
+        } else {
+            value = returned.value().map(this::analyzeExpression);
+        }
         if (currentReturnType == ValueType.VOID && value.isPresent()) {
             error("MPL3503", "无返回值函数不能 return 表达式", returned.span());
         } else if (currentReturnType != ValueType.VOID && value.isEmpty()) {
@@ -589,7 +613,7 @@ public final class SemanticAnalyzer {
         } else if (value.isPresent() && !currentReturnType.canAssignFrom(value.orElseThrow().type())) {
             error("MPL3503", "函数 " + currentFunction + " 不能返回 " + display(value.orElseThrow().type()), returned.span());
         }
-        return new HirReturn(value);
+        return new HirReturn(value, activeOwnerReleases(owner -> !owner.global()));
     }
 
     private boolean guaranteesReturn(List<HirStatement> statements) {
@@ -624,14 +648,44 @@ public final class SemanticAnalyzer {
 
     private List<HirStatement> analyzeBlock(BlockStatement block) {
         scopes.push(new HashMap<>());
+        List<PooledOwner> owners = new ArrayList<>();
+        pooledOwnerScopes.push(owners);
         try {
             List<HirStatement> statements = new ArrayList<>();
             for (Statement statement : block.statements()) {
                 statements.add(analyzeStatement(statement));
             }
+            appendOwnerReleases(statements, owners);
             return List.copyOf(statements);
         } finally {
+            pooledOwnerScopes.pop();
             scopes.pop();
+        }
+    }
+
+    private HirStatement withLoopCleanup(HirStatement jump) {
+        List<HirObjectRelease> releases = activeOwnerReleases(owner -> owner.loopDepth() == loopDepth);
+        if (releases.isEmpty()) return jump;
+        List<HirStatement> statements = new ArrayList<>(releases);
+        statements.add(jump);
+        return new HirBlock(statements);
+    }
+
+    private List<HirObjectRelease> activeOwnerReleases(java.util.function.Predicate<PooledOwner> predicate) {
+        List<HirObjectRelease> releases = new ArrayList<>();
+        for (List<PooledOwner> scope : pooledOwnerScopes) {
+            for (int index = scope.size() - 1; index >= 0; index--) {
+                PooledOwner owner = scope.get(index);
+                if (predicate.test(owner)) releases.add(new HirObjectRelease(owner.variable(), owner.className()));
+            }
+        }
+        return List.copyOf(releases);
+    }
+
+    private void appendOwnerReleases(List<HirStatement> statements, List<PooledOwner> owners) {
+        for (int index = owners.size() - 1; index >= 0; index--) {
+            PooledOwner owner = owners.get(index);
+            if (!owner.global()) statements.add(new HirObjectRelease(owner.variable(), owner.className()));
         }
     }
 
@@ -713,6 +767,8 @@ public final class SemanticAnalyzer {
 
     private HirStatement analyzeFor(ForStatement loop) {
         scopes.push(new HashMap<>());
+        List<PooledOwner> owners = new ArrayList<>();
+        pooledOwnerScopes.push(owners);
         try {
             Optional<HirVariableDeclaration> declarationInitializer = loop.declarationInitializer()
                 .map(value -> (HirVariableDeclaration) analyzeDeclaration(value));
@@ -729,8 +785,14 @@ public final class SemanticAnalyzer {
             } finally {
                 boundsProof.ifPresent(ignored -> arrayBoundsProofs.pop());
             }
-            return new HirFor(declarationInitializer, expressionInitializer, condition, update, body);
+            HirFor analyzed = new HirFor(declarationInitializer, expressionInitializer, condition, update, body);
+            if (owners.isEmpty()) return analyzed;
+            List<HirStatement> statements = new ArrayList<>();
+            statements.add(analyzed);
+            appendOwnerReleases(statements, owners);
+            return new HirBlock(statements);
         } finally {
+            pooledOwnerScopes.pop();
             scopes.pop();
         }
     }
@@ -1699,6 +1761,7 @@ public final class SemanticAnalyzer {
                 .orElse(null);
         }
         boolean staticAllocationContext = analyzingTopLevel && currentFunction == null && scopes.size() == 1;
+        FunctionSignature ownedFactory = ownedFactory(declaration.initializer());
         ObjectAllocationContext previousAllocationContext = objectAllocationContext;
         ObjectAllocationContext declarationAllocationContext = staticAllocationContext
             ? ObjectAllocationContext.STATIC
@@ -1706,13 +1769,16 @@ public final class SemanticAnalyzer {
                 ? ObjectAllocationContext.REUSABLE_LOCAL
                 : ObjectAllocationContext.DISALLOWED;
         HirExpression initializer;
+        Expression previousAllowedOwnedFactoryCall = allowedOwnedFactoryCall;
         try {
             objectAllocationContext = declarationAllocationContext;
+            allowedOwnedFactoryCall = ownedFactory == null ? previousAllowedOwnedFactoryCall : declaration.initializer();
             initializer = unitQuery != null ? unitQuery
                 : buildingQuery != null ? buildingQuery
                 : analyzeInitializer(declaration.initializer(), declaredType);
         } finally {
             objectAllocationContext = previousAllocationContext;
+            allowedOwnedFactoryCall = previousAllowedOwnedFactoryCall;
         }
         if (initializer.type() == ValueType.BUILDING) {
             error("MPL3201", "硬件常量不能赋给普通变量；请直接读取字段或调用控制方法", declaration.initializer().span());
@@ -1750,17 +1816,34 @@ public final class SemanticAnalyzer {
                 declaration.initializer().span());
         }
         boolean global = currentFunction == null && scopes.size() == 1;
+        boolean ownsPooledObject = ownedFactory != null;
+        if (ownsPooledObject && declaration.mutable()) {
+            error("MPL3708", "对象工厂结果必须由 val 直接接收，以维持唯一所有权", declaration.span());
+        }
+        if (ownsPooledObject && (!(type instanceof ObjectType object) || object.nullable())) {
+            error("MPL3708", "对象池所有者必须是不可空对象 val", declaration.span());
+        }
         boolean reusableLocalObject = declarationAllocationContext == ObjectAllocationContext.REUSABLE_LOCAL
             && initializer instanceof HirNewObject;
-        if (declare(declaration.name(),
+        boolean declared = declare(declaration.name(),
             new Symbol(type, declaration.mutable(), staticStringLength(initializer), staticAggregateSize(initializer), unitQuery,
-                buildingQuery, reusableLocalObject, global, declaration.span()),
-            declaration.span()) && global) {
+                buildingQuery, reusableLocalObject, ownsPooledObject, global, declaration.span()),
+            declaration.span());
+        if (declared && ownsPooledObject && type instanceof ObjectType object) {
+            pooledOwnerScopes.peek().add(new PooledOwner(declaration.name(), object.className(), loopDepth, global));
+        }
+        if (declared && global) {
             // The initializer has already been analyzed, so calls inside it
             // deliberately do not observe this variable as initialized.
             initializedGlobals.add(declaration.name());
         }
-        return new HirVariableDeclaration(declaration.name(), type, declaration.mutable(), initializer);
+        return new HirVariableDeclaration(declaration.name(), type, declaration.mutable(), initializer, ownsPooledObject);
+    }
+
+    private FunctionSignature ownedFactory(Expression expression) {
+        if (!(expression instanceof CallExpression call) || !(call.callee() instanceof Identifier identifier)) return null;
+        FunctionSignature signature = functions.get(identifier.name());
+        return signature != null && signature.returnsOwnedObject() ? signature : null;
     }
 
     /** Resolves empty aggregate literals from an explicit declaration type. */
@@ -1808,9 +1891,10 @@ public final class SemanticAnalyzer {
             if (currentFunction != null && symbol.type() instanceof UnitType) {
                 error("MPL3508", "第一版函数不能访问已保存的 UnitRef", identifier.span());
             }
-            if (symbol.reusableLocalObject() && !borrowedObjectUse) {
-                error("MPL3708", "局部对象 " + identifier.name()
-                    + " 的引用不能逃逸分配点；只能访问字段、比较身份或调用不泄露接收者的方法", identifier.span());
+            if ((symbol.reusableLocalObject() || symbol.ownsPooledObject()) && !borrowedObjectUse) {
+                error("MPL3708", "受管对象 " + identifier.name()
+                    + " 不能建立别名或转移已有引用；只能访问字段、比较身份或调用不泄露接收者的方法",
+                    identifier.span());
             }
             recordGlobalAccess(identifier.name(), symbol, identifier.span());
             return new HirVariable(identifier.name(), symbol.type());
@@ -2072,6 +2156,10 @@ public final class SemanticAnalyzer {
                 error("MPL3501", "未声明的函数：" + functionName.name(), call.span());
                 return new HirConstant("0", ValueType.ERROR);
             }
+            if (signature.returnsOwnedObject() && call != allowedOwnedFactoryCall) {
+                error("MPL3708", "对象工厂 " + functionName.name()
+                    + "() 的结果必须直接初始化一个不可空 val", call.span());
+            }
             if (call.arguments().size() != signature.parameterTypes().size()) {
                 error("MPL3503", "函数 " + functionName.name() + " 的参数数量不匹配", call.span());
             }
@@ -2121,10 +2209,10 @@ public final class SemanticAnalyzer {
         return symbol != null && symbol.type() instanceof ObjectType;
     }
 
-    private boolean isReusableLocalObject(Expression expression) {
+    private boolean isRestrictedLocalObject(Expression expression) {
         if (!(expression instanceof Identifier identifier)) return false;
         Symbol symbol = lookup(identifier.name());
-        return symbol != null && symbol.reusableLocalObject();
+        return symbol != null && (symbol.reusableLocalObject() || symbol.ownsPooledObject());
     }
 
     private HirExpression analyzeBorrowedObjectExpression(Expression expression) {
@@ -2167,16 +2255,35 @@ public final class SemanticAnalyzer {
         if (!constructor.publicAccess() && !type.name().equals(currentClass)) {
             error("MPL3707", "构造器 " + type.name() + " 是 private", allocation.span());
         }
-        if (objectAllocationContext == ObjectAllocationContext.REUSABLE_LOCAL && constructor.receiverEscapes()) {
-            error("MPL3708", "构造器 " + type.name() + " 会泄露 this，不能用于可复用的局部分配点", allocation.span());
+        if ((objectAllocationContext == ObjectAllocationContext.REUSABLE_LOCAL
+            || objectAllocationContext == ObjectAllocationContext.POOLED_RETURN) && constructor.receiverEscapes()) {
+            error("MPL3708", "构造器 " + type.name() + " 会泄露 this，不能用于编译器管理的对象生命周期",
+                allocation.span());
+        }
+        if (objectAllocationContext == ObjectAllocationContext.POOLED_RETURN) {
+            for (FieldInfo field : type.fields().values()) {
+                if (!supportedPooledObjectField(field.type())) {
+                    error("MPL3708", "对象池字段只支持 Int、Float、Bool 及其单层元组："
+                        + type.name() + "." + field.name(), allocation.span());
+                }
+            }
         }
         ObjectAllocationContext argumentContext = objectAllocationContext == ObjectAllocationContext.REUSABLE_LOCAL
+            || objectAllocationContext == ObjectAllocationContext.POOLED_RETURN
             ? ObjectAllocationContext.DISALLOWED : objectAllocationContext;
         List<HirExpression> arguments = analyzeWithObjectAllocationContext(argumentContext,
             () -> analyzeArguments(type.name(), constructor.parameterTypes(), allocation.arguments(), allocation.span()));
         recordCall(constructor.internalName(), allocation.span());
+        HirNewObject.AllocationKind allocationKind = objectAllocationContext == ObjectAllocationContext.POOLED_RETURN
+            ? HirNewObject.AllocationKind.POOLED : HirNewObject.AllocationKind.FIXED;
         return new HirNewObject(nextObjectAllocationId++, type.name(), constructor.internalName(), arguments,
-            new ObjectType(type.name(), false));
+            new ObjectType(type.name(), false), allocationKind);
+    }
+
+    private boolean supportedPooledObjectField(MplType type) {
+        if (type == ValueType.INT || type == ValueType.FLOAT || type == ValueType.BOOL) return true;
+        return type instanceof TupleType tuple && tuple.elementTypes().stream()
+            .allMatch(element -> element == ValueType.INT || element == ValueType.FLOAT || element == ValueType.BOOL);
     }
 
     private HirExpression analyzeObjectMethodCall(HirExpression target, Expression sourceTarget, ObjectType object, String methodName,
@@ -2196,9 +2303,9 @@ public final class SemanticAnalyzer {
         if (!method.publicAccess() && !object.className().equals(currentClass)) {
             error("MPL3707", "方法 " + object.className() + "." + methodName + " 是 private", span);
         }
-        if (isReusableLocalObject(sourceTarget) && method.receiverEscapes()) {
+        if (isRestrictedLocalObject(sourceTarget) && method.receiverEscapes()) {
             error("MPL3708", "方法 " + object.className() + "." + methodName
-                + " 会泄露接收者，不能对可复用的局部对象调用", span);
+                + " 会泄露接收者，不能对编译器管理的对象调用", span);
         }
         List<HirExpression> arguments = new ArrayList<>();
         arguments.add(target);
@@ -2823,25 +2930,37 @@ public final class SemanticAnalyzer {
 
     private record Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
                           HirUnitQuery unitQuery, HirBuildingQuery buildingQuery, boolean reusableLocalObject,
+                          boolean ownsPooledObject,
                           boolean global,
                           SourceSpan declarationSpan) {
+        private Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
+                       HirUnitQuery unitQuery, HirBuildingQuery buildingQuery, boolean reusableLocalObject,
+                       boolean global, SourceSpan declarationSpan) {
+            this(type, mutable, staticStringCodeUnits, staticAggregateSize, unitQuery, buildingQuery,
+                reusableLocalObject, false, global, declarationSpan);
+        }
+
         private Symbol withType(MplType narrowedType) {
             return new Symbol(narrowedType, mutable, staticStringCodeUnits, staticAggregateSize, unitQuery, buildingQuery,
-                reusableLocalObject, global, declarationSpan);
+                reusableLocalObject, ownsPooledObject, global, declarationSpan);
         }
     }
 
     private enum ObjectAllocationContext {
         DISALLOWED,
         STATIC,
-        REUSABLE_LOCAL
+        REUSABLE_LOCAL,
+        POOLED_RETURN
     }
 
     private record FunctionSignature(FunctionDeclaration declaration, List<MplType> parameterTypes,
-                                     MplType returnType) {
+                                     MplType returnType, boolean returnsOwnedObject) {
         private FunctionSignature {
             parameterTypes = List.copyOf(parameterTypes);
         }
+    }
+
+    private record PooledOwner(String variable, String className, int loopDepth, boolean global) {
     }
 
     private record TopLevelCall(String function, Set<String> initializedGlobals, SourceSpan span) {

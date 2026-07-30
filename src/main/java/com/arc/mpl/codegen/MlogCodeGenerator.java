@@ -35,6 +35,7 @@ import com.arc.mpl.hir.HirClass;
 import com.arc.mpl.hir.HirNewObject;
 import com.arc.mpl.hir.HirObjectFieldAssignment;
 import com.arc.mpl.hir.HirObjectFieldRead;
+import com.arc.mpl.hir.HirObjectRelease;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirPrintStatement;
@@ -53,6 +54,7 @@ import com.arc.mpl.hir.HirWhile;
 import com.arc.mpl.hir.BuildingType;
 import com.arc.mpl.hir.UnitType;
 import com.arc.mpl.hir.TupleType;
+import com.arc.mpl.hir.MplType;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 
 import java.util.ArrayDeque;
@@ -137,6 +139,7 @@ public final class MlogCodeGenerator {
             functionEntries.put(function.name(), label("function_" + function.name()));
         }
         currentFunction = null;
+        emitObjectPoolInitialization();
         emitHardwareStartupGate();
         for (HirStatement statement : program.statements()) {
             emitStatement(statement);
@@ -280,6 +283,10 @@ public final class MlogCodeGenerator {
             emitReturn(returned);
             return;
         }
+        if (statement instanceof HirObjectRelease release) {
+            emitObjectRelease(release);
+            return;
+        }
         emitExpression(((HirExpressionStatement) statement).expression());
     }
 
@@ -296,7 +303,28 @@ public final class MlogCodeGenerator {
     private void emitReturn(HirReturn returned) {
         if (currentFunction == null) throw new IllegalStateException("return 缺少函数上下文");
         returned.value().ifPresent(value -> output.set(functionResultSlot(currentFunction), emitExpression(value)));
+        returned.cleanup().forEach(this::emitObjectRelease);
         output.set("@counter", functionReturnSlot(currentFunction));
+    }
+
+    private void emitObjectPoolInitialization() {
+        for (PhysicalMemoryLayout.ObjectPool pool : memoryLayout.objectPools().values()) {
+            String slot = temporary();
+            output.set(slot, "0");
+            MlogProgramBuilder.Label clear = label("object_pool_clear");
+            emitLabel(clear);
+            emitPhysicalWrite(pool.occupancy(), slot, "0");
+            output.operation(Operation.ADD, slot, slot, "1");
+            emitJump(clear, JumpCondition.LESS_THAN, slot, Integer.toString(pool.capacity()));
+        }
+    }
+
+    private void emitObjectRelease(HirObjectRelease release) {
+        PhysicalMemoryLayout.ObjectPool pool = memoryLayout.objectPool(release.className())
+            .orElseThrow(() -> new IllegalArgumentException("对象释放缺少物理池：" + release.className()));
+        String handle = variable(release.variable());
+        String slot = pooledSlot(handle, pool);
+        emitPhysicalWrite(pool.occupancy(), slot, "0");
     }
 
     private void emitWhile(HirWhile loop) {
@@ -927,6 +955,10 @@ public final class MlogCodeGenerator {
         }
         PhysicalMemoryLayout.Allocation allocation = allocation(variable.name());
         String index = emitExpression(access.index());
+        return emitPhysicalRead(allocation, index);
+    }
+
+    private String emitPhysicalRead(PhysicalMemoryLayout.Allocation allocation, String index) {
         String result = temporary();
         List<PhysicalMemoryLayout.Slice> slices = allocation.slices();
         MlogProgramBuilder.Label end = slices.size() > 1 ? label("memory_read_end") : null;
@@ -951,6 +983,10 @@ public final class MlogCodeGenerator {
         String index = temporary();
         output.set(index, emitExpression(update.index()));
         String value = emitExpression(update.value());
+        emitPhysicalWrite(allocation, index, value);
+    }
+
+    private void emitPhysicalWrite(PhysicalMemoryLayout.Allocation allocation, String index, String value) {
         List<PhysicalMemoryLayout.Slice> slices = allocation.slices();
         MlogProgramBuilder.Label end = slices.size() > 1 ? label("memory_write_end") : null;
         for (int sliceIndex = 0; sliceIndex < slices.size(); sliceIndex++) {
@@ -994,7 +1030,8 @@ public final class MlogCodeGenerator {
 
     private PhysicalMemoryLayout.Slice constantSlice(PhysicalMemoryLayout.Allocation allocation, int index) {
         return allocation.slices().stream().filter(slice -> slice.contains(index)).findFirst()
-            .orElseThrow(() -> new IllegalArgumentException("Array index lies outside its physical Memory allocation: " + index));
+            .orElseThrow(() -> new IllegalArgumentException(
+                "index lies outside its physical Memory allocation: " + index));
     }
 
     private PhysicalMemoryLayout.Segment segment(PhysicalMemoryLayout.Slice slice) {
@@ -1026,32 +1063,71 @@ public final class MlogCodeGenerator {
     }
 
     private String emitFunctionCall(HirFunctionCall call) {
-        HirFunction function = functions.get(call.function());
-        if (function == null) throw new IllegalArgumentException("unknown HIR function: " + call.function());
         List<String> savedArguments = new java.util.ArrayList<>();
         for (HirExpression argument : call.arguments()) {
             String saved = temporary();
             output.set(saved, emitExpression(argument));
             savedArguments.add(saved);
         }
+        return emitPreparedFunctionCall(call.function(), savedArguments, call.type());
+    }
+
+    private String emitPreparedFunctionCall(String functionName, List<String> savedArguments, MplType returnType) {
+        HirFunction function = functions.get(functionName);
+        if (function == null) throw new IllegalArgumentException("unknown HIR function: " + functionName);
         for (int index = 0; index < savedArguments.size() && index < function.parameters().size(); index++) {
             output.set(functionParameterSlot(function.name(), function.parameters().get(index).name()), savedArguments.get(index));
         }
         output.operation(Operation.ADD, functionReturnSlot(function.name()), "@counter", "1");
         output.setCounter(functionEntries.get(function.name()));
-        if (call.type() == com.arc.mpl.hir.ValueType.VOID) return "0";
+        if (returnType == com.arc.mpl.hir.ValueType.VOID) return "0";
         String result = temporary();
         output.set(result, functionResultSlot(function.name()));
         return result;
     }
 
     private String emitNewObject(HirNewObject allocation) {
+        if (allocation.allocationKind() == HirNewObject.AllocationKind.POOLED) {
+            return emitPooledNewObject(allocation);
+        }
         List<HirExpression> arguments = new java.util.ArrayList<>();
         arguments.add(new HirConstant(Integer.toString(allocation.allocationId()), com.arc.mpl.hir.ValueType.INT));
         arguments.addAll(allocation.arguments());
         emitFunctionCall(new HirFunctionCall(allocation.constructorFunction(), arguments,
             com.arc.mpl.hir.ValueType.VOID));
         return Integer.toString(allocation.allocationId());
+    }
+
+    private String emitPooledNewObject(HirNewObject allocation) {
+        PhysicalMemoryLayout.ObjectPool pool = memoryLayout.objectPool(allocation.className())
+            .orElseThrow(() -> new IllegalArgumentException("池分配缺少物理布局：" + allocation.className()));
+        String handle = temporary();
+        output.set(handle, "0");
+        String slot = temporary();
+        output.set(slot, "0");
+        MlogProgramBuilder.Label scan = label("object_pool_allocate_scan");
+        MlogProgramBuilder.Label found = label("object_pool_allocate_found");
+        MlogProgramBuilder.Label end = label("object_pool_allocate_end");
+        emitLabel(scan);
+        String occupied = emitPhysicalRead(pool.occupancy(), slot);
+        emitJump(found, JumpCondition.EQUAL, occupied, "0");
+        output.operation(Operation.ADD, slot, slot, "1");
+        emitJump(scan, JumpCondition.LESS_THAN, slot, Integer.toString(pool.capacity()));
+        emitJump(end, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(found);
+        emitPhysicalWrite(pool.occupancy(), slot, "1");
+        output.operation(Operation.ADD, handle, slot, Long.toString((long) pool.handleBase() + 1L));
+        output.operation(Operation.MUL, handle, handle, "-1");
+        emitLabel(end);
+        List<String> savedArguments = new java.util.ArrayList<>();
+        savedArguments.add(handle);
+        for (HirExpression argument : allocation.arguments()) {
+            String saved = temporary();
+            output.set(saved, emitExpression(argument));
+            savedArguments.add(saved);
+        }
+        emitPreparedFunctionCall(allocation.constructorFunction(), savedArguments, com.arc.mpl.hir.ValueType.VOID);
+        return handle;
     }
 
     private String emitObjectFieldRead(HirObjectFieldRead read) {
@@ -1069,9 +1145,23 @@ public final class MlogCodeGenerator {
     private String emitObjectSlotRead(HirExpression sourceTarget, String className, String field, Integer element) {
         String target = temporary();
         output.set(target, emitExpression(sourceTarget));
+        return emitObjectSlotRead(target, className, field, element);
+    }
+
+    private String emitObjectSlotRead(String target, String className, String field, Integer element) {
         String result = temporary();
         output.set(result, "0");
         MlogProgramBuilder.Label end = label("object_field_read_end");
+        java.util.Optional<PhysicalMemoryLayout.ObjectPool> pooled = memoryLayout.objectPool(className);
+        MlogProgramBuilder.Label fixed = pooled.isPresent() ? label("object_field_read_fixed") : null;
+        if (pooled.isPresent()) {
+            emitJump(fixed, JumpCondition.GREATER_THAN_EQ, target, "0");
+            PhysicalMemoryLayout.ObjectPool pool = pooled.orElseThrow();
+            PhysicalMemoryLayout.PoolField poolField = pool.field(field);
+            output.set(result, emitPhysicalRead(poolField.allocation(), pooledFieldIndex(target, pool, poolField, element)));
+            emitJump(end, JumpCondition.ALWAYS, "0", "0");
+            emitLabel(fixed);
+        }
         for (int allocationId : allocations(className)) {
             MlogProgramBuilder.Label next = label("object_field_read_next");
             emitJump(next, JumpCondition.NOT_EQUAL, target, Integer.toString(allocationId));
@@ -1106,49 +1196,67 @@ public final class MlogCodeGenerator {
         output.set(target, emitExpression(assignment.target()));
         String value = temporary();
         output.set(value, emitExpression(assignment.value()));
-        String result = temporary();
-        output.set(result, "0");
-        MlogProgramBuilder.Label end = label("object_field_write_end");
-        for (int allocationId : allocations(assignment.className())) {
-            MlogProgramBuilder.Label next = label("object_field_write_next");
-            emitJump(next, JumpCondition.NOT_EQUAL, target, Integer.toString(allocationId));
-            String slot = objectFieldSlot(allocationId, assignment.field(), null);
-            if ("=".equals(assignment.operator())) {
-                output.set(slot, value);
-                output.set(result, value);
+        String result = value;
+        if (!"=".equals(assignment.operator())) {
+            String operator = assignment.operator().substring(0, 1);
+            String current = emitObjectSlotRead(target, assignment.className(), assignment.field(), null);
+            if (field.type() == com.arc.mpl.hir.ValueType.INT) {
+                result = emitIntBinary(operator, current, value);
+            } else if (field.type() == com.arc.mpl.hir.ValueType.FLOAT && isFloatArithmetic(operator)) {
+                result = emitFloatBinary(operator, current, value);
             } else {
-                String operator = assignment.operator().substring(0, 1);
-                String updated;
-                if (field.type() == com.arc.mpl.hir.ValueType.INT) {
-                    updated = emitIntBinary(operator, slot, value);
-                } else if (field.type() == com.arc.mpl.hir.ValueType.FLOAT && isFloatArithmetic(operator)) {
-                    updated = emitFloatBinary(operator, slot, value);
-                } else {
-                    updated = temporary();
-                    output.operation(operation(operator), updated, slot, value);
-                }
-                output.set(slot, updated);
-                output.set(result, updated);
+                result = temporary();
+                output.operation(operation(operator), result, current, value);
             }
-            emitJump(end, JumpCondition.ALWAYS, "0", "0");
-            emitLabel(next);
         }
-        emitLabel(end);
+        emitObjectSlotWrite(target, assignment.className(), assignment.field(), null, result);
         return result;
     }
 
     private void emitObjectTupleWrite(String target, String className, String field, List<String> values) {
-        MlogProgramBuilder.Label end = label("object_tuple_write_end");
+        for (int index = 0; index < values.size(); index++) {
+            emitObjectSlotWrite(target, className, field, index, values.get(index));
+        }
+    }
+
+    private void emitObjectSlotWrite(String target, String className, String field, Integer element, String value) {
+        MlogProgramBuilder.Label end = label("object_field_write_end");
+        java.util.Optional<PhysicalMemoryLayout.ObjectPool> pooled = memoryLayout.objectPool(className);
+        MlogProgramBuilder.Label fixed = pooled.isPresent() ? label("object_field_write_fixed") : null;
+        if (pooled.isPresent()) {
+            emitJump(fixed, JumpCondition.GREATER_THAN_EQ, target, "0");
+            PhysicalMemoryLayout.ObjectPool pool = pooled.orElseThrow();
+            PhysicalMemoryLayout.PoolField poolField = pool.field(field);
+            emitPhysicalWrite(poolField.allocation(), pooledFieldIndex(target, pool, poolField, element), value);
+            emitJump(end, JumpCondition.ALWAYS, "0", "0");
+            emitLabel(fixed);
+        }
         for (int allocationId : allocations(className)) {
-            MlogProgramBuilder.Label next = label("object_tuple_write_next");
+            MlogProgramBuilder.Label next = label("object_field_write_next");
             emitJump(next, JumpCondition.NOT_EQUAL, target, Integer.toString(allocationId));
-            for (int index = 0; index < values.size(); index++) {
-                output.set(objectFieldSlot(allocationId, field, index), values.get(index));
-            }
+            output.set(objectFieldSlot(allocationId, field, element), value);
             emitJump(end, JumpCondition.ALWAYS, "0", "0");
             emitLabel(next);
         }
         emitLabel(end);
+    }
+
+    private String pooledFieldIndex(String handle, PhysicalMemoryLayout.ObjectPool pool,
+                                    PhysicalMemoryLayout.PoolField field, Integer element) {
+        String slot = pooledSlot(handle, pool);
+        if (field.width() == 1) return slot;
+        String index = temporary();
+        output.operation(Operation.MUL, index, slot, Integer.toString(field.width()));
+        if (element == null || element == 0) return index;
+        output.operation(Operation.ADD, index, index, Integer.toString(element));
+        return index;
+    }
+
+    private String pooledSlot(String handle, PhysicalMemoryLayout.ObjectPool pool) {
+        String slot = temporary();
+        output.operation(Operation.MUL, slot, handle, "-1");
+        output.operation(Operation.SUB, slot, slot, Long.toString((long) pool.handleBase() + 1L));
+        return slot;
     }
 
     private int objectTupleIndex(HirObjectFieldRead read, HirConstant index) {

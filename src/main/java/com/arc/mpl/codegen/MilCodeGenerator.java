@@ -35,6 +35,7 @@ import com.arc.mpl.hir.HirClass;
 import com.arc.mpl.hir.HirNewObject;
 import com.arc.mpl.hir.HirObjectFieldAssignment;
 import com.arc.mpl.hir.HirObjectFieldRead;
+import com.arc.mpl.hir.HirObjectRelease;
 import com.arc.mpl.hir.HirPrintStatement;
 import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.hir.HirReturn;
@@ -271,6 +272,9 @@ public final class MilCodeGenerator {
             writer.line(returned.value().map(value -> "return " + expression(value) + ";").orElse("return;"));
             return;
         }
+        // Ownership cleanup is reconstructed by semantic analysis when this
+        // structured MIL is compiled again; it is never a user-visible macro.
+        if (statement instanceof HirObjectRelease) return;
         throw new IllegalArgumentException("MIL 尚不能序列化 HIR 语句：" + statement.getClass().getSimpleName());
     }
 

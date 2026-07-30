@@ -110,7 +110,9 @@ final class ObjectAllocationCollector {
 
     private void collect(HirExpression expression, Map<String, List<Integer>> found) {
         if (expression instanceof HirNewObject allocation) {
-            found.computeIfAbsent(allocation.className(), ignored -> new ArrayList<>()).add(allocation.allocationId());
+            if (allocation.allocationKind() == HirNewObject.AllocationKind.FIXED) {
+                found.computeIfAbsent(allocation.className(), ignored -> new ArrayList<>()).add(allocation.allocationId());
+            }
             allocation.arguments().forEach(argument -> collect(argument, found));
             return;
         }

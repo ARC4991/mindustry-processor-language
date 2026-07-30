@@ -100,13 +100,15 @@ public final class HirOptimizer {
     }
 
     private boolean isTerminal(HirStatement statement) {
-        return statement instanceof HirReturn || statement instanceof HirBreak || statement instanceof HirContinue;
+        if (statement instanceof HirReturn || statement instanceof HirBreak || statement instanceof HirContinue) return true;
+        return statement instanceof HirBlock block && !block.statements().isEmpty()
+            && isTerminal(block.statements().get(block.statements().size() - 1));
     }
 
     private List<HirStatement> optimizeStatement(HirStatement statement) {
         if (statement instanceof HirVariableDeclaration declaration) {
             return List.of(new HirVariableDeclaration(declaration.name(), declaration.type(), declaration.mutable(),
-                optimizeExpression(declaration.initializer())));
+                optimizeExpression(declaration.initializer()), declaration.ownsPooledObject()));
         }
         if (statement instanceof HirExpressionStatement expression) {
             return List.of(new HirExpressionStatement(optimizeExpression(expression.expression())));
@@ -126,7 +128,8 @@ public final class HirOptimizer {
         }
         if (statement instanceof HirFor loop) {
             Optional<HirVariableDeclaration> declaration = loop.declarationInitializer()
-                .map(value -> new HirVariableDeclaration(value.name(), value.type(), value.mutable(), optimizeExpression(value.initializer())));
+                .map(value -> new HirVariableDeclaration(value.name(), value.type(), value.mutable(),
+                    optimizeExpression(value.initializer()), value.ownsPooledObject()));
             return List.of(new HirFor(declaration, loop.expressionInitializer().map(this::optimizeExpression),
                 optimizeExpression(loop.condition()), loop.update().map(this::optimizeExpression), optimizeStatements(loop.body())));
         }
@@ -169,7 +172,7 @@ public final class HirOptimizer {
                 optimizeExpression(update.value())));
         }
         if (statement instanceof HirReturn returned) {
-            return List.of(new HirReturn(returned.value().map(this::optimizeExpression)));
+            return List.of(new HirReturn(returned.value().map(this::optimizeExpression), returned.cleanup()));
         }
         return List.of(statement);
     }
@@ -226,7 +229,7 @@ public final class HirOptimizer {
         }
         if (expression instanceof HirNewObject allocation) {
             return new HirNewObject(allocation.allocationId(), allocation.className(), allocation.constructorFunction(),
-                optimizeExpressions(allocation.arguments()), allocation.type());
+                optimizeExpressions(allocation.arguments()), allocation.type(), allocation.allocationKind());
         }
         if (expression instanceof HirObjectFieldRead read) {
             return new HirObjectFieldRead(optimizeExpression(read.target()), read.className(), read.field(), read.type());

@@ -196,7 +196,7 @@ public final class BuildArtifactWriter {
         resources.put("labels", plan.labels());
         resources.put("virtualSlots", plan.virtualSlots());
         resources.put("physicalSlots", plan.physicalSlots());
-        resources.put("objectPoolSlots", 0);
+        resources.put("objectPoolSlots", plan.objectPoolSlots());
         resources.put("stringSlots", 0);
         resources.put("runtimeSlots", 0);
         return resources;

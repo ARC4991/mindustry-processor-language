@@ -7,7 +7,8 @@ public record HirVariableDeclaration(
     String name,
     MplType type,
     boolean mutable,
-    HirExpression initializer
+    HirExpression initializer,
+    boolean ownsPooledObject
 ) implements HirStatement {
     public HirVariableDeclaration {
         Objects.requireNonNull(name, "name");
@@ -21,6 +22,10 @@ public record HirVariableDeclaration(
      * {@code val}.
      */
     public HirVariableDeclaration(String name, MplType type, HirExpression initializer) {
-        this(name, type, true, initializer);
+        this(name, type, true, initializer, false);
+    }
+
+    public HirVariableDeclaration(String name, MplType type, boolean mutable, HirExpression initializer) {
+        this(name, type, mutable, initializer, false);
     }
 }

@@ -44,8 +44,9 @@ public final class RuntimePlanner {
         TargetProfile.ProcessorKind processor = chooseProcessor(instructions, profile, preferences);
         validateMemoryLimits(memoryLayout, preferences);
         RuntimePlan plan = new RuntimePlan(processor, instructions, labels, maximumTokens, variables.size(), memoryLayout);
-        log.info("自动运行时规划：processor={}, instructions={}, labels={}, virtualSlots={}, physicalSlots={}",
-            plan.processorId(), plan.instructions(), plan.labels(), plan.virtualSlots(), plan.physicalSlots());
+        log.info("自动运行时规划：processor={}, instructions={}, labels={}, virtualSlots={}, physicalSlots={}, objectPoolSlots={}",
+            plan.processorId(), plan.instructions(), plan.labels(), plan.virtualSlots(), plan.physicalSlots(),
+            plan.objectPoolSlots());
         return plan;
     }
 
