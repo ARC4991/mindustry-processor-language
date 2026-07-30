@@ -474,6 +474,34 @@ class MplCompilerTest {
     }
 
     @Test
+    void poolsObjectsReturnedThroughAnInferredCommonParent(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            class Animal {
+                public value: Int;
+                public fun Animal(value: Int) { this.value = value; }
+                public fun score() { return this.value; }
+            }
+            class Dog extends Animal { public fun Dog() { super(1); } }
+            class Cat extends Animal { public fun Cat() { super(2); } }
+            fun create(preferDog: Bool) {
+                if (preferDog) { return new Dog(); }
+                return new Cat();
+            }
+            fun calculate(): Int {
+                val animal = create(true);
+                return animal.score();
+            }
+            val result = calculate();
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertTrue(result.physicalMemoryLayout().physicalSlots() > 0);
+    }
+
+    @Test
     void laysOutScalarTupleObjectFields(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

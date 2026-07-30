@@ -147,6 +147,33 @@ class InheritanceAndOverloadSemanticAnalyzerTest {
     }
 
     @Test
+    void infersTheNearestCommonParentForBranchObjectReturns() {
+        Program source = parser.parse("""
+            class Animal { public fun Animal() {} }
+            class Dog extends Animal { public fun Dog() { super(); } }
+            class Cat extends Animal { public fun Cat() { super(); } }
+            fun create(preferDog: Bool) {
+                if (preferDog) {
+                    return new Dog();
+                } else {
+                    return new Cat();
+                }
+            }
+            val animal = create(true);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(source, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var functions = result.program().orElseThrow().functions();
+        assertEquals(new ObjectType("Animal", false), functions.stream()
+            .filter(function -> function.sourceName().equals("create")).findFirst().orElseThrow().returnType());
+        HirVariableDeclaration animal = assertInstanceOf(HirVariableDeclaration.class,
+            result.program().orElseThrow().statements().get(0));
+        assertEquals(new ObjectType("Animal", false), animal.type());
+    }
+
+    @Test
     void rejectsInvalidInheritanceAndAmbiguousOverloadContracts() {
         assertDiagnostic("""
             class Child extends Missing { public fun Child() { super(); } }
