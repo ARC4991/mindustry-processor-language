@@ -50,6 +50,24 @@ class MplCompilerTest {
     }
 
     @Test
+    void exposesWorkerHelperEffectAnalysisAtTheCompilerBoundary(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun add(left: Int, right: Int): Int {
+                return left + right;
+            }
+            val result = add(2, 3);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertTrue(result.effectAnalysis().function("add").pureNumeric());
+        assertEquals(List.of("add"), result.effectAnalysis().pureNumericFunctions().stream()
+            .map(com.arc.mpl.optimization.HirEffectAnalyzer.FunctionEffect::function).toList());
+    }
+
+    @Test
     void compilesDistinctStaticObjectsAndRegeneratesParseableMil(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

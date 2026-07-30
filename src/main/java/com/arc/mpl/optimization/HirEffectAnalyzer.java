@@ -443,6 +443,10 @@ public final class HirEffectAnalyzer {
             return functions.get(name);
         }
 
+        public static Analysis empty() {
+            return new Analysis(Map.of());
+        }
+
         public List<FunctionEffect> pureNumericFunctions() {
             return functions.values().stream().filter(FunctionEffect::pureNumeric).toList();
         }

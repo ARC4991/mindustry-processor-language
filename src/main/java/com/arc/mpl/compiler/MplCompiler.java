@@ -12,6 +12,7 @@ import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.memory.PhysicalMemoryPlanner;
 import com.arc.mpl.optimization.HirOptimizationResult;
+import com.arc.mpl.optimization.HirEffectAnalyzer;
 import com.arc.mpl.optimization.HirOptimizer;
 import com.arc.mpl.optimization.OptimizationReport;
 import com.arc.mpl.optimization.ProfileLoweringAnalyzer;
@@ -100,13 +101,14 @@ public final class MplCompiler {
         HirOptimizationResult optimized = new HirOptimizer().optimize(analyzed.program().orElseThrow());
         HirProgram program = new DisplayRuntimeLowerer(profile.orElseThrow().maxGraphicsBufferCommands(), hardware)
             .lower(optimized.program());
+        HirEffectAnalyzer.Analysis effectAnalysis = new HirEffectAnalyzer().analyze(program);
         PhysicalMemoryLayout memoryLayout;
         try {
             memoryLayout = new PhysicalMemoryPlanner().plan(program, profile.orElseThrow(), runtimePreferences);
         } catch (IllegalArgumentException exception) {
             return new CompilationResult(profile, List.of(new Diagnostic(
                 Severity.ERROR, "MPL1301", exception.getMessage(), Optional.of(sourceFile), Optional.empty())),
-                Optional.empty(), Optional.empty(), optimized.report(), PhysicalMemoryLayout.empty());
+                Optional.empty(), Optional.empty(), optimized.report(), PhysicalMemoryLayout.empty(), effectAnalysis);
         }
         MlogLabelStyle labelStyle = request.debug() ? MlogLabelStyle.DEBUG : MlogLabelStyle.RELEASE;
         String mil = new MilCodeGenerator().generate(program);
@@ -123,7 +125,7 @@ public final class MplCompiler {
         boolean hasError = diagnostics.stream().anyMatch(diagnostic -> diagnostic.severity() == Severity.ERROR);
         return new CompilationResult(profile, diagnostics,
             hasError ? Optional.empty() : Optional.of(mlog),
-            hasError ? Optional.empty() : Optional.of(mil), optimizationReport, memoryLayout);
+            hasError ? Optional.empty() : Optional.of(mil), optimizationReport, memoryLayout, effectAnalysis);
     }
 
     private String exceptionMessage(Exception exception) {
