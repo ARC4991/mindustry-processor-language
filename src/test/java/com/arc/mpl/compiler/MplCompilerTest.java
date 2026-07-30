@@ -67,7 +67,7 @@ class MplCompilerTest {
         assertTrue(mil.contains("fun displayValue(value: Int) {"), mil);
         java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
         java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
-        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146"));
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
         assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
     }
 
