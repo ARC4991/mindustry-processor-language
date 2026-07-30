@@ -1,6 +1,7 @@
 package com.arc.mpl.project;
 
 import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.hir.ValueType;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.optimization.OptimizationReport;
@@ -128,6 +129,34 @@ class BuildArtifactWriterTest {
         assertEquals("__mpl_mem0", segment.path("bindings").get(0).path("alias").asText());
         assertEquals(List.of(new LogicLink("__mpl_mem0", 3, 0)),
             readProcessorConfig(temporaryDirectory.resolve("runtime.msch")).links());
+    }
+
+    @Test
+    void reportsRealObjectPoolSlotsInsteadOfAPlaceholder() throws Exception {
+        TargetProfile profile = KnownProfiles.find("v146").orElseThrow();
+        PhysicalMemoryLayout.StorageKey occupancyKey = PhysicalMemoryLayout.objectPoolOccupancyKey("Counter");
+        PhysicalMemoryLayout.StorageKey fieldKey = PhysicalMemoryLayout.objectPoolFieldKey("Counter", "value");
+        PhysicalMemoryLayout.Allocation occupancy = new PhysicalMemoryLayout.Allocation(occupancyKey, 1,
+            List.of(new PhysicalMemoryLayout.Slice(0, 0, 0, 1)));
+        PhysicalMemoryLayout.Allocation field = new PhysicalMemoryLayout.Allocation(fieldKey, 1,
+            List.of(new PhysicalMemoryLayout.Slice(0, 1, 0, 1)));
+        Map<PhysicalMemoryLayout.StorageKey, PhysicalMemoryLayout.Allocation> allocations = new java.util.LinkedHashMap<>();
+        allocations.put(occupancyKey, occupancy);
+        allocations.put(fieldKey, field);
+        PhysicalMemoryLayout.ObjectPool pool = new PhysicalMemoryLayout.ObjectPool("Counter", 1, 0, occupancy,
+            Map.of("value", new PhysicalMemoryLayout.PoolField("value", ValueType.INT, 1, field)));
+        PhysicalMemoryLayout layout = new PhysicalMemoryLayout(
+            List.of(new PhysicalMemoryLayout.Segment("__mpl_mem0", RuntimePreferences.MemoryKind.CELL, 64, 2)),
+            allocations, Map.of("Counter", pool), 2, 2);
+        RuntimePlan plan = new RuntimePlanner().plan("write 0 __mpl_mem0 0\nstop\n", profile,
+            RuntimePreferences.defaults(), layout);
+
+        new BuildArtifactWriter().write(temporaryDirectory, "write 0 __mpl_mem0 0\nstop\n", "", profile,
+            new HardwareContract(List.of(), Map.of()), plan, new ProjectMetadata("pool-demo", "1.0.0"));
+
+        JsonNode report = new ObjectMapper().readTree(java.nio.file.Files.readString(temporaryDirectory.resolve("report.json")));
+        assertEquals(2, report.path("totals").path("physicalSlots").asInt());
+        assertEquals(2, report.path("totals").path("objectPoolSlots").asInt());
     }
 
     private Map<String, String> readTags(Path file) throws Exception {

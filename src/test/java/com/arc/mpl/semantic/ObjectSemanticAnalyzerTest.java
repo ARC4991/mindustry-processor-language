@@ -5,6 +5,8 @@ import com.arc.mpl.hir.HirFunctionCall;
 import com.arc.mpl.hir.HirExpressionStatement;
 import com.arc.mpl.hir.HirNewObject;
 import com.arc.mpl.hir.HirObjectFieldAssignment;
+import com.arc.mpl.hir.HirObjectRelease;
+import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirVariableDeclaration;
 import com.arc.mpl.hir.ObjectType;
 import com.arc.mpl.syntax.MplSyntaxParser;
@@ -132,6 +134,101 @@ class ObjectSemanticAnalyzerTest {
     }
 
     @Test
+    void transfersFreshFactoryObjectsToUniqueValOwnersAndSchedulesCleanup() {
+        SemanticResult result = analyze("""
+            class Counter {
+                public value: Int;
+                public fun Counter(initial: Int) { this.value = initial; }
+                public fun add(amount: Int): Int {
+                    this.value += amount;
+                    return this.value;
+                }
+            }
+
+            fun create(initial: Int): Counter {
+                return new Counter(initial);
+            }
+
+            fun use(): Int {
+                val owned = create(4);
+                return owned.add(1);
+            }
+            """);
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var program = result.program().orElseThrow();
+        var factory = program.functions().stream().filter(function -> "create".equals(function.name())).findFirst().orElseThrow();
+        HirReturn factoryReturn = assertInstanceOf(HirReturn.class, factory.body().get(0));
+        HirNewObject allocation = assertInstanceOf(HirNewObject.class, factoryReturn.value().orElseThrow());
+        assertEquals(HirNewObject.AllocationKind.POOLED, allocation.allocationKind());
+
+        var use = program.functions().stream().filter(function -> "use".equals(function.name())).findFirst().orElseThrow();
+        HirVariableDeclaration owner = assertInstanceOf(HirVariableDeclaration.class, use.body().get(0));
+        assertTrue(owner.ownsPooledObject());
+        HirReturn returned = assertInstanceOf(HirReturn.class, use.body().get(1));
+        assertEquals(1, returned.cleanup().size());
+        assertEquals("owned", returned.cleanup().get(0).variable());
+        assertInstanceOf(HirObjectRelease.class, use.body().get(2));
+    }
+
+    @Test
+    void rejectsFactoryResultsWithoutOneDirectNonNullableValOwner() {
+        SemanticResult result = analyze("""
+            class Counter { public fun Counter() {} }
+            fun create(): Counter { return new Counter(); }
+            fun consume(value: Counter) {}
+
+            create();
+            var mutable = create();
+            val nullable: Counter? = create();
+            val owned = create();
+            val alias = owned;
+            consume(owned);
+            """);
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().filter(diagnostic -> "MPL3708".equals(diagnostic.code())).count() >= 5,
+            () -> result.diagnostics().toString());
+    }
+
+    @Test
+    void insertsPoolCleanupForBreakContinueAndNaturalScopeExit() {
+        SemanticResult result = analyze("""
+            class Counter { public fun Counter() {} }
+            fun create(): Counter { return new Counter(); }
+
+            fun run(skip: Bool) {
+                while (true) {
+                    val owned = create();
+                    if (skip) { continue; }
+                    break;
+                }
+            }
+            """);
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var run = result.program().orElseThrow().functions().stream()
+            .filter(function -> "run".equals(function.name())).findFirst().orElseThrow();
+        long releases = countReleases(run.body());
+        assertEquals(3, releases);
+    }
+
+    @Test
+    void rejectsFieldsThatCannotBeStoredInThePhysicalObjectPool() {
+        SemanticResult result = analyze("""
+            class Label {
+                public text: String;
+                public fun Label(text: String) { this.text = text; }
+            }
+            fun create(): Label { return new Label("value"); }
+            val label = create();
+            """);
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(hasDiagnostic(result, "MPL3708", "对象池字段只支持"));
+    }
+
+    @Test
     void rejectsLocalObjectAliasesReturnsArgumentsAndLeakingReceivers() {
         SemanticResult result = analyze("""
             fun consume(value: Counter) {}
@@ -162,7 +259,7 @@ class ObjectSemanticAnalyzerTest {
             """);
 
         assertTrue(result.program().isEmpty());
-        assertEquals(7, result.diagnostics().stream()
+        assertEquals(6, result.diagnostics().stream()
             .filter(diagnostic -> "MPL3708".equals(diagnostic.code())).count());
     }
 
@@ -226,6 +323,21 @@ class ObjectSemanticAnalyzerTest {
     private SemanticResult analyze(String source) {
         Program program = parser.parse(source, Path.of("main.mpl")).program().orElseThrow();
         return analyzer.analyze(program, Path.of("main.mpl"));
+    }
+
+    private long countReleases(java.util.List<com.arc.mpl.hir.HirStatement> statements) {
+        long count = 0;
+        for (var statement : statements) {
+            if (statement instanceof HirObjectRelease) count++;
+            else if (statement instanceof com.arc.mpl.hir.HirBlock block) count += countReleases(block.statements());
+            else if (statement instanceof com.arc.mpl.hir.HirIf branch) {
+                count += countReleases(branch.thenBody());
+                if (branch.elseBody().isPresent()) count += countReleases(branch.elseBody().orElseThrow());
+            } else if (statement instanceof com.arc.mpl.hir.HirWhile loop) {
+                count += countReleases(loop.body());
+            }
+        }
+        return count;
     }
 
     private boolean hasDiagnostic(SemanticResult result, String code, String messagePart) {

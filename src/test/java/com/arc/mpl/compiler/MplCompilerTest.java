@@ -183,6 +183,55 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesOwnedFactoryObjectsThroughThePhysicalPoolAndMilRoundTrip(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            class Counter {
+                private value: Int;
+                public fun Counter(initial: Int) { this.value = initial; }
+                public fun add(amount: Int): Int {
+                    this.value += amount;
+                    return this.value;
+                }
+            }
+
+            fun create(initial: Int): Counter {
+                return new Counter(initial);
+            }
+
+            fun use(): Int {
+                val first = create(1);
+                val second = create(10);
+                return first.add(second.add(2));
+            }
+
+            val result = use();
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertEquals(4, result.physicalMemoryLayout().objectPoolSlots());
+        var pool = result.physicalMemoryLayout().objectPool("Counter").orElseThrow();
+        assertEquals(2, pool.capacity());
+        assertEquals(2, pool.occupancy().size());
+        assertEquals(2, pool.field("value").allocation().size());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("write 0 __mpl_mem0"), mlog);
+        assertTrue(mlog.contains("set __mpl_tmp"), mlog);
+        assertTrue(mlog.contains(" -1"), mlog);
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("return new Counter(initial);"), mil);
+        assertTrue(mil.contains("val first: Counter = create(1);"), mil);
+
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
+        assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
+        assertEquals(4, regenerated.physicalMemoryLayout().objectPoolSlots());
+    }
+
+    @Test
     void compilesAConfiguredMilEntryThroughRuntimeAndTargetLowering(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(project.resolve("mpl.json"), """
