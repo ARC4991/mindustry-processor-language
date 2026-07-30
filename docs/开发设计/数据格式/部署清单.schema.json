@@ -29,7 +29,7 @@
     },
     "sharedRuntime": {
       "type": "object", "additionalProperties": false,
-      "required": ["magic", "abiVersion", "fingerprint", "epoch", "mainShard", "workers", "slots", "readyIndex", "heartbeatIndexes", "slices", "mailboxes"],
+      "required": ["magic", "abiVersion", "fingerprint", "epoch", "mainShard", "workers", "slots", "readyIndex", "acknowledgementIndexes", "heartbeatIndexes", "slices", "mailboxes"],
       "properties": {
         "magic": { "type": "integer", "minimum": 1 },
         "abiVersion": { "type": "integer", "minimum": 1 },
@@ -37,8 +37,9 @@
         "epoch": { "type": "integer", "minimum": 1 },
         "mainShard": { "type": "string" },
         "workers": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
-        "slots": { "type": "integer", "minimum": 6 },
+        "slots": { "type": "integer", "minimum": 7 },
         "readyIndex": { "type": "integer", "minimum": 0 },
+        "acknowledgementIndexes": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
         "heartbeatIndexes": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
         "slices": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/runtimeSlice" } },
         "mailboxes": { "type": "array", "items": { "$ref": "#/$defs/mailbox" } }

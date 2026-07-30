@@ -18,7 +18,7 @@
         "id": "bank__mpl_mem0",
         "kind": "bank",
         "capacity": 512,
-        "usedSlots": 133,
+        "usedSlots": 134,
         "blueprintPosition": { "x": 6, "y": 0 },
         "bindings": [
           { "shard": "Main", "alias": "bank__mpl_mem0", "access": "readWrite", "autoConnected": true },
@@ -28,16 +28,17 @@
     ],
     "sharedRuntime": {
       "magic": 5066828,
-      "abiVersion": 1,
+      "abiVersion": 2,
       "fingerprint": 150158518,
       "epoch": 1648766121,
       "mainShard": "Main",
       "workers": ["Worker-0"],
-      "slots": 11,
+      "slots": 12,
       "readyIndex": 4,
-      "heartbeatIndexes": { "Worker-0": 5 },
+      "acknowledgementIndexes": { "Worker-0": 5 },
+      "heartbeatIndexes": { "Worker-0": 6 },
       "slices": [
-        { "memory": "bank__mpl_mem0", "offset": 122, "logicalStart": 0, "length": 6 }
+        { "memory": "bank__mpl_mem0", "offset": 122, "logicalStart": 0, "length": 7 }
       ],
       "mailboxes": [
         {
@@ -47,7 +48,7 @@
           "payloadSlots": 2,
           "slots": 5,
           "slices": [
-            { "memory": "bank__mpl_mem0", "offset": 128, "logicalStart": 0, "length": 5 }
+            { "memory": "bank__mpl_mem0", "offset": 129, "logicalStart": 0, "length": 5 }
           ]
         }
       ]
