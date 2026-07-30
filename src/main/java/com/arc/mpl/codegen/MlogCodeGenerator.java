@@ -62,6 +62,7 @@ import com.arc.mpl.hir.MplType;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.memory.StringRuntimeLayout;
 import com.arc.mpl.memory.SharedRuntimeLayout;
+import com.arc.mpl.project.RuntimeHelperPlan;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -169,7 +170,7 @@ public final class MlogCodeGenerator {
         for (HirStatement statement : program.statements()) {
             if (statement instanceof HirVariableDeclaration declaration) globalVariables.add(declaration.name());
         }
-        for (HirFunction function : program.functions()) {
+        for (HirFunction function : localFunctions(program)) {
             functionEntries.put(function.name(), label("function_" + function.name()));
         }
         currentFunction = null;
@@ -181,15 +182,61 @@ public final class MlogCodeGenerator {
         }
         startup.emitReady();
         if (runtimeContext.main()) emitHardwareStartupGate();
-        for (HirStatement statement : program.statements()) {
-            emitStatement(statement);
+        if (runtimeContext.main()) {
+            for (HirStatement statement : program.statements()) emitStatement(statement);
+            flushPendingDraw();
+            emitWorkerShutdown();
+            // MPL 程序默认只执行一次；持续逻辑必须由用户显式写 while。
+            output.stop();
+        } else {
+            emitWorkerTaskLoop();
         }
-        flushPendingDraw();
-        // MPL 程序默认只执行一次；持续逻辑必须由用户显式写 while。
-        output.stop();
-        for (HirFunction function : program.functions()) emitFunction(function);
+        for (HirFunction function : localFunctions(program)) emitFunction(function);
         emitStringOutputBlocks();
         return output.render();
+    }
+
+    private List<HirFunction> localFunctions(HirProgram program) {
+        if (!runtimeContext.helperPlan().enabled()) return program.functions();
+        if (runtimeContext.main()) {
+            return program.functions().stream()
+                .filter(function -> runtimeContext.helperPlan().task(function.name()).isEmpty()).toList();
+        }
+        RuntimeHelperPlan.Worker worker = helperWorker();
+        return program.functions().stream().filter(function -> worker.functions().contains(function.name())).toList();
+    }
+
+    private RuntimeHelperPlan.Worker helperWorker() {
+        return runtimeContext.helperPlan().workers().stream()
+            .filter(worker -> worker.id().equals(runtimeContext.shardId())).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("Worker 缺少 helper 任务计划：" + runtimeContext.shardId()));
+    }
+
+    private void emitWorkerTaskLoop() {
+        if (!runtimeContext.helperPlan().enabled()) {
+            output.stop();
+            return;
+        }
+        RuntimeHelperPlan.Worker worker = helperWorker();
+        List<SharedRuntimeTaskEmitter.TaskHandler> handlers = worker.functions().stream().map(functionName -> {
+            RuntimeHelperPlan.Task task = runtimeContext.helperPlan().task(functionName).orElseThrow();
+            HirFunction function = functions.get(functionName);
+            return new SharedRuntimeTaskEmitter.TaskHandler(task.kind(), payload -> {
+                List<String> arguments = payload.subList(0, function.parameters().size());
+                String result = emitPreparedFunctionCall(functionName, arguments, function.returnType());
+                return List.of(result);
+            });
+        }).toList();
+        new SharedRuntimeTaskEmitter(output, memoryLayout, runtimeContext)
+            .emitWorkerLoop(worker.requestMailbox(), worker.responseMailbox(), handlers);
+    }
+
+    private void emitWorkerShutdown() {
+        if (!runtimeContext.helperPlan().enabled()) return;
+        SharedRuntimeTaskEmitter tasks = new SharedRuntimeTaskEmitter(output, memoryLayout, runtimeContext);
+        for (RuntimeHelperPlan.Worker worker : runtimeContext.helperPlan().workers()) {
+            tasks.emitShutdownAndAwait(worker.requestMailbox());
+        }
     }
 
     private void emitHardwareStartupGate() {
@@ -1398,11 +1445,28 @@ public final class MlogCodeGenerator {
             output.set(saved, emitExpression(argument));
             savedArguments.add(saved);
         }
-        String result = emitPreparedFunctionCall(call.function(), savedArguments, call.type());
+        String result = runtimeContext.main() && runtimeContext.helperPlan().task(call.function()).isPresent()
+            ? emitRemoteFunctionCall(call, savedArguments)
+            : emitPreparedFunctionCall(call.function(), savedArguments, call.type());
         if (call.type() != com.arc.mpl.hir.ValueType.STRING) return result;
         StringRuntimeLayout.Entry target = memoryLayout.stringRuntime().callResult(call);
         emitStringCopy(result, target);
         return Integer.toString(target.handle());
+    }
+
+    private String emitRemoteFunctionCall(HirFunctionCall call, List<String> savedArguments) {
+        RuntimeHelperPlan.Task task = runtimeContext.helperPlan().task(call.function()).orElseThrow();
+        RuntimeHelperPlan.Worker worker = runtimeContext.helperPlan().workers().stream()
+            .filter(value -> value.id().equals(task.worker())).findFirst().orElseThrow();
+        List<String> payload = new java.util.ArrayList<>(savedArguments);
+        while (payload.size() < worker.requestPayloadSlots()) payload.add("0");
+        SharedMailboxProtocolEmitter mailboxes = new SharedMailboxProtocolEmitter(output, memoryLayout, runtimeContext);
+        mailboxes.emitSend(worker.requestMailbox(), Integer.toString(task.kind()), payload);
+        SharedMailboxProtocolEmitter.ReceivedMessage response = mailboxes.emitReceive(worker.responseMailbox());
+        if (response.payload().size() != 1) {
+            throw new IllegalArgumentException("helper 响应邮箱必须恰好包含一个结果槽：" + call.function());
+        }
+        return response.payload().get(0);
     }
 
     private String emitPreparedFunctionCall(String functionName, List<String> savedArguments, MplType returnType) {
