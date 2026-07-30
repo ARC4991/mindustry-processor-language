@@ -91,21 +91,27 @@ public record RuntimeHelperPlan(List<Worker> workers, Map<String, Task> tasks) {
     }
 
     public record Task(String function, String worker, int kind, List<MplType> parameterTypes,
-                       MplType returnType) {
+                       MplType returnType, RuntimeHelperCost cost) {
         public Task {
             Objects.requireNonNull(function, "function");
             Objects.requireNonNull(worker, "worker");
             if (kind < 1 || kind > 2_000_000_000) throw new IllegalArgumentException("helper task kind 超出范围：" + kind);
             parameterTypes = List.copyOf(Objects.requireNonNull(parameterTypes, "parameterTypes"));
             Objects.requireNonNull(returnType, "returnType");
+            cost = Objects.requireNonNull(cost, "cost");
             if (parameterTypes.stream().anyMatch(type -> !scalar(type)) || !scalar(returnType)) {
                 throw new IllegalArgumentException("helper ABI 只允许 Int、Float 或 Bool：" + function);
             }
         }
 
-        static Task from(HirFunction function, String worker, int kind) {
+        public Task(String function, String worker, int kind, List<MplType> parameterTypes,
+                    MplType returnType) {
+            this(function, worker, kind, parameterTypes, returnType, RuntimeHelperCost.unit());
+        }
+
+        static Task from(HirFunction function, String worker, int kind, RuntimeHelperCost cost) {
             return new Task(function.name(), worker, kind,
-                function.parameters().stream().map(parameter -> parameter.type()).toList(), function.returnType());
+                function.parameters().stream().map(parameter -> parameter.type()).toList(), function.returnType(), cost);
         }
 
         private static boolean scalar(MplType type) {
@@ -114,9 +120,11 @@ public record RuntimeHelperPlan(List<Worker> workers, Map<String, Task> tasks) {
         }
     }
 
-    static RuntimeHelperPlan partitioned(List<HirFunction> functions, List<List<HirFunction>> partitions) {
+    static RuntimeHelperPlan partitioned(List<HirFunction> functions, List<List<HirFunction>> partitions,
+                                         Map<String, RuntimeHelperCost> costs) {
         if (functions.isEmpty()) return empty();
         Objects.requireNonNull(partitions, "partitions");
+        costs = Map.copyOf(Objects.requireNonNull(costs, "costs"));
         if (partitions.isEmpty() || partitions.stream().anyMatch(List::isEmpty)) {
             throw new IllegalArgumentException("helper 分区不能为空");
         }
@@ -141,8 +149,21 @@ public record RuntimeHelperPlan(List<Worker> workers, Map<String, Task> tasks) {
         Map<String, Task> tasks = new LinkedHashMap<>();
         int kind = 1;
         for (HirFunction function : functions) {
-            tasks.put(function.name(), Task.from(function, owners.get(function.name()), kind++));
+            RuntimeHelperCost cost = costs.get(function.name());
+            if (cost == null) throw new IllegalArgumentException("helper 函数缺少目标成本：" + function.name());
+            tasks.put(function.name(), Task.from(function, owners.get(function.name()), kind++, cost));
         }
         return new RuntimeHelperPlan(workers, tasks);
+    }
+
+    public RuntimeHelperCost workerFunctionCost(String worker) {
+        int instructions = 0;
+        int labels = 0;
+        for (Task task : tasks.values()) {
+            if (!task.worker().equals(worker)) continue;
+            instructions = Math.addExact(instructions, task.cost().instructions());
+            labels = Math.addExact(labels, task.cost().labels());
+        }
+        return new RuntimeHelperCost(instructions, labels);
     }
 }

@@ -222,6 +222,65 @@ class MplCompilerTest {
     }
 
     @Test
+    void passesExactTargetFunctionCostsIntoShardBalancing(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), """
+            {
+              "runtime": {
+                "goal": "maxPerformance",
+                "processors": { "micro": 3 },
+                "memory": { "bank": 1 }
+              }
+            }
+            """);
+        StringBuilder source = new StringBuilder("fun heavy(value: Int): Int {\n    var result = value;\n");
+        for (int index = 0; index < 20; index++) source.append("    result += 1;\n");
+        source.append("    return result;\n}\n")
+            .append("fun lightA(value: Int): Int { return value + 1; }\n")
+            .append("fun lightB(value: Int): Int { return value - 1; }\n")
+            .append("val heavyResult = heavy(1);\n")
+            .append("val first = lightA(2);\n")
+            .append("val second = lightB(3);\n");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), source);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        MultiShardCompilation multi = result.multiShard().orElseThrow();
+        assertEquals(List.of("heavy"), multi.helperPlan().workers().get(0).functions());
+        assertEquals(List.of("lightA", "lightB"), multi.helperPlan().workers().get(1).functions());
+        assertTrue(multi.helperPlan().workerFunctionCost("Worker-0").instructions()
+            > multi.helperPlan().workerFunctionCost("Worker-1").instructions());
+    }
+
+    @Test
+    void reportsAnOversizedIndivisibleHelperComponent(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), """
+            {
+              "runtime": {
+                "goal": "maxPerformance",
+                "processors": { "micro": 2 },
+                "memory": { "bank": 1 }
+              }
+            }
+            """);
+        StringBuilder source = new StringBuilder("fun oversized(value: Int): Int {\n    var result = value;\n");
+        for (int index = 0; index < 400; index++) source.append("    result += 1;\n");
+        source.append("    return result;\n}\nval output = oversized(1);\n");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), source);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertFalse(result.succeeded());
+        com.arc.mpl.diagnostic.Diagnostic diagnostic = result.diagnostics().stream()
+            .filter(value -> value.code().equals("MPL1302")).findFirst().orElseThrow();
+        assertTrue(diagnostic.message().contains("Worker-0"), diagnostic.message());
+        assertTrue(diagnostic.message().contains("[oversized]"), diagnostic.message());
+        assertTrue(diagnostic.message().contains("ABI v2"), diagnostic.message());
+    }
+
+    @Test
     void compilesDistinctStaticObjectsAndRegeneratesParseableMil(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

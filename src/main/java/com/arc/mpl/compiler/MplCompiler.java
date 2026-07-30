@@ -3,6 +3,7 @@ package com.arc.mpl.compiler;
 import com.arc.mpl.ast.Program;
 import com.arc.mpl.codegen.MlogCodeGenerator;
 import com.arc.mpl.codegen.MlogCodeGenerator.HardwareRequirement;
+import com.arc.mpl.codegen.MlogGenerationResult;
 import com.arc.mpl.codegen.MlogLabelStyle;
 import com.arc.mpl.codegen.MlogOutputValidator;
 import com.arc.mpl.codegen.MilCodeGenerator;
@@ -29,6 +30,7 @@ import com.arc.mpl.project.ProjectProgramLoader;
 import com.arc.mpl.project.ProjectProgramResult;
 import com.arc.mpl.project.ResolvedPackageGraph;
 import com.arc.mpl.project.RuntimePreferences;
+import com.arc.mpl.project.RuntimeHelperCost;
 import com.arc.mpl.runtime.DisplayRuntimeLowerer;
 import com.arc.mpl.semantic.SemanticAnalyzer;
 import com.arc.mpl.semantic.SemanticResult;
@@ -117,15 +119,16 @@ public final class MplCompiler {
             .map(link -> new HardwareRequirement(link.gameAlias(), mlogHardwareTypes(link, profile.orElseThrow())))
             .toList();
         TargetProfile target = profile.orElseThrow();
-        String mlog = new MlogCodeGenerator(labelStyle, memoryLayout, hardwareRequirements,
-            target.capabilities()).generate(program);
+        MlogGenerationResult baseline = new MlogCodeGenerator(labelStyle, memoryLayout, hardwareRequirements,
+            target.capabilities()).generateWithMetrics(program);
+        String mlog = baseline.mlog();
         OptimizationReport optimizationReport = new ProfileLoweringAnalyzer().analyze(optimized.report(), program,
             labelStyle, memoryLayout, hardwareRequirements, target, mlog);
         Optional<MultiShardCompilation> multiShard = Optional.empty();
         try {
             Optional<HelperShardCompiler.Result> helperResult = new HelperShardCompiler().compile(
                 program, effectAnalysis, mlog, mil, target, runtimePreferences, memoryLayout,
-                labelStyle, hardwareRequirements);
+                labelStyle, hardwareRequirements, helperCosts(baseline));
             if (helperResult.isPresent()) {
                 HelperShardCompiler.Result result = helperResult.orElseThrow();
                 multiShard = Optional.of(result.compilation());
@@ -156,6 +159,13 @@ public final class MplCompiler {
     private String exceptionMessage(Exception exception) {
         String message = exception.getMessage();
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
+    }
+
+    private java.util.Map<String, RuntimeHelperCost> helperCosts(MlogGenerationResult generation) {
+        java.util.Map<String, RuntimeHelperCost> costs = new java.util.LinkedHashMap<>();
+        generation.functions().forEach((function, metrics) -> costs.put(function,
+            new RuntimeHelperCost(metrics.instructions(), metrics.labels())));
+        return java.util.Collections.unmodifiableMap(costs);
     }
 
     private List<Diagnostic> validateHardware(HardwareContract contract, TargetProfile profile, Path sourceFile) {

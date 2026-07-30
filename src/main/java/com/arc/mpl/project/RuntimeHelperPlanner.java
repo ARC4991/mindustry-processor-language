@@ -21,11 +21,20 @@ public final class RuntimeHelperPlanner {
     public RuntimeHelperPlan plan(HirProgram program, HirEffectAnalyzer.Analysis effects,
                                   String baselineMlog, TargetProfile profile,
                                   RuntimePreferences preferences) {
+        Map<String, RuntimeHelperCost> fallback = new LinkedHashMap<>();
+        program.functions().forEach(function -> fallback.put(function.name(), RuntimeHelperCost.unit()));
+        return plan(program, effects, baselineMlog, profile, preferences, fallback);
+    }
+
+    public RuntimeHelperPlan plan(HirProgram program, HirEffectAnalyzer.Analysis effects,
+                                  String baselineMlog, TargetProfile profile,
+                                  RuntimePreferences preferences, Map<String, RuntimeHelperCost> functionCosts) {
         Objects.requireNonNull(program, "program");
         Objects.requireNonNull(effects, "effects");
         Objects.requireNonNull(baselineMlog, "baselineMlog");
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(preferences, "preferences");
+        functionCosts = Map.copyOf(Objects.requireNonNull(functionCosts, "functionCosts"));
         if (availableProcessors(preferences) < 2) return RuntimeHelperPlan.empty();
 
         int instructions = MlogProgramMetrics.analyze(baselineMlog).instructions();
@@ -40,7 +49,14 @@ public final class RuntimeHelperPlanner {
         if (candidates.isEmpty()) return RuntimeHelperPlan.empty();
         List<List<HirFunction>> components = dependencyComponents(candidates, effects);
         int workerLimit = Math.toIntExact(Math.min(components.size(), availableProcessors(preferences) - 1));
-        return RuntimeHelperPlan.partitioned(candidates, balance(components, workerLimit));
+        Map<String, RuntimeHelperCost> candidateCosts = new LinkedHashMap<>();
+        for (HirFunction candidate : candidates) {
+            RuntimeHelperCost cost = functionCosts.get(candidate.name());
+            if (cost == null) throw new IllegalArgumentException("纯数值 helper 缺少目标成本：" + candidate.name());
+            candidateCosts.put(candidate.name(), cost);
+        }
+        return RuntimeHelperPlan.partitioned(candidates, balance(components, workerLimit, candidateCosts),
+            candidateCosts);
     }
 
     private boolean shouldUseWorker(RuntimePreferences.Goal goal, int instructions, int maximum) {
@@ -90,7 +106,8 @@ public final class RuntimeHelperPlanner {
     }
 
     /** Stable longest-component-first balancing; function order inside each Worker remains source order. */
-    private List<List<HirFunction>> balance(List<List<HirFunction>> components, int workerCount) {
+    private List<List<HirFunction>> balance(List<List<HirFunction>> components, int workerCount,
+                                            Map<String, RuntimeHelperCost> costs) {
         if (workerCount < 1) throw new IllegalArgumentException("helper Worker 数量必须大于 0");
         List<List<HirFunction>> buckets = new ArrayList<>();
         for (int index = 0; index < workerCount; index++) buckets.add(new ArrayList<>());
@@ -98,12 +115,16 @@ public final class RuntimeHelperPlanner {
         for (int index = 0; index < components.size(); index++) {
             ordered.add(new IndexedComponent(index, components.get(index)));
         }
-        ordered.sort(Comparator.comparingInt((IndexedComponent value) -> value.functions().size()).reversed()
+        ordered.sort(Comparator.comparingInt((IndexedComponent value) -> componentCost(value.functions(), costs)
+                .instructions()).reversed()
+            .thenComparing(Comparator.comparingInt((IndexedComponent value) -> componentCost(value.functions(), costs)
+                .labels()).reversed())
             .thenComparingInt(IndexedComponent::sourceIndex));
         for (IndexedComponent component : ordered) {
             int target = 0;
             for (int index = 1; index < buckets.size(); index++) {
-                if (buckets.get(index).size() < buckets.get(target).size()) target = index;
+                if (predictedCost(buckets.get(index), component.functions(), costs)
+                    .compareTo(predictedCost(buckets.get(target), component.functions(), costs)) < 0) target = index;
             }
             buckets.get(target).addAll(component.functions());
         }
@@ -116,6 +137,38 @@ public final class RuntimeHelperPlanner {
         return buckets.stream().map(List::copyOf).toList();
     }
 
+    private RuntimeHelperCost componentCost(List<HirFunction> functions, Map<String, RuntimeHelperCost> costs) {
+        int instructions = 0;
+        int labels = 0;
+        for (HirFunction function : functions) {
+            RuntimeHelperCost cost = costs.get(function.name());
+            instructions = Math.addExact(instructions, cost.instructions() + 2);
+            labels = Math.addExact(labels, cost.labels() + 1);
+        }
+        return new RuntimeHelperCost(instructions, labels);
+    }
+
+    private PredictedCost predictedCost(List<HirFunction> current, List<HirFunction> added,
+                                        Map<String, RuntimeHelperCost> costs) {
+        List<HirFunction> combined = new ArrayList<>(current);
+        combined.addAll(added);
+        RuntimeHelperCost body = componentCost(combined, costs);
+        int payloadWidth = combined.stream().mapToInt(function -> function.parameters().size()).max().orElse(0);
+        return new PredictedCost(Math.addExact(body.instructions(), Math.multiplyExact(payloadWidth, 3)),
+            body.labels(), combined.size());
+    }
+
     private record IndexedComponent(int sourceIndex, List<HirFunction> functions) {
+    }
+
+    private record PredictedCost(int instructions, int labels, int functions) implements Comparable<PredictedCost> {
+        @Override
+        public int compareTo(PredictedCost other) {
+            int instructionOrder = Integer.compare(instructions, other.instructions);
+            if (instructionOrder != 0) return instructionOrder;
+            int labelOrder = Integer.compare(labels, other.labels);
+            if (labelOrder != 0) return labelOrder;
+            return Integer.compare(functions, other.functions);
+        }
     }
 }

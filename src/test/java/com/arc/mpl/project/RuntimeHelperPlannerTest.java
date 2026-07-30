@@ -118,6 +118,29 @@ class RuntimeHelperPlannerTest {
             .equals(plan.task("independent").orElseThrow().worker()));
     }
 
+    @Test
+    void balancesWorkersByTargetInstructionsInsteadOfFunctionCount() {
+        HirFunction heavy = binary("heavy", "+");
+        HirFunction lightA = binary("lightA", "-");
+        HirFunction lightB = binary("lightB", "*");
+        HirProgram program = new HirProgram(List.of(heavy, lightA, lightB), List.of(
+            call("heavy"), call("lightA"), call("lightB")));
+        RuntimePreferences performance = new RuntimePreferences(RuntimePreferences.Goal.MAX_PERFORMANCE,
+            Map.of(TargetProfile.ProcessorKind.MICRO, 3), Map.of(RuntimePreferences.MemoryKind.BANK, 1));
+        Map<String, RuntimeHelperCost> costs = Map.of(
+            "heavy", new RuntimeHelperCost(100, 5),
+            "lightA", new RuntimeHelperCost(10, 1),
+            "lightB", new RuntimeHelperCost(10, 1));
+
+        RuntimeHelperPlan plan = new RuntimeHelperPlanner().plan(program,
+            new HirEffectAnalyzer().analyze(program), "stop\n", profile, performance, costs);
+
+        assertEquals(List.of("heavy"), plan.workers().get(0).functions());
+        assertEquals(List.of("lightA", "lightB"), plan.workers().get(1).functions());
+        assertEquals(new RuntimeHelperCost(100, 5), plan.workerFunctionCost("Worker-0"));
+        assertEquals(new RuntimeHelperCost(20, 2), plan.workerFunctionCost("Worker-1"));
+    }
+
     private HirProgram calledProgram() {
         return new HirProgram(List.of(add), List.of(new com.arc.mpl.hir.HirExpressionStatement(
             new com.arc.mpl.hir.HirFunctionCall("add", List.of(

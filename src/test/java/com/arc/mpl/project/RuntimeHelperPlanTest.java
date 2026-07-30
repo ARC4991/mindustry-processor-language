@@ -28,6 +28,7 @@ class RuntimeHelperPlanTest {
             "add", task("add", "Worker-0", 1, List.of(ValueType.INT, ValueType.INT)))));
         assertThrows(IllegalArgumentException.class, () -> new RuntimeHelperPlan.Task("tuple", "Worker-0", 1,
             List.of(new TupleType(List.of(ValueType.INT, ValueType.INT))), ValueType.INT));
+        assertThrows(IllegalArgumentException.class, () -> new RuntimeHelperCost(-1, 0));
     }
 
     private RuntimeHelperPlan.Worker worker(int index, int width, String function) {
