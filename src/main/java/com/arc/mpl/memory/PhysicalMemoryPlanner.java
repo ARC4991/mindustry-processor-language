@@ -11,6 +11,9 @@ import com.arc.mpl.hir.HirBuildingQuerySize;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
+import com.arc.mpl.hir.HirMutableListLiteral;
+import com.arc.mpl.hir.HirMutableListAdd;
+import com.arc.mpl.hir.HirMutableListClear;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirDraw;
 import com.arc.mpl.hir.HirDynamicCollectionSet;
@@ -176,12 +179,21 @@ public final class PhysicalMemoryPlanner {
             if (statement instanceof HirVariableDeclaration declaration && declaration.initializer() instanceof HirArrayLiteral array) {
                 declarations.put(new PhysicalMemoryLayout.StorageKey(function, declaration.name()), array.elements().size());
             }
+            if (statement instanceof HirVariableDeclaration declaration
+                && declaration.initializer() instanceof HirMutableListLiteral list) {
+                declarations.put(new PhysicalMemoryLayout.StorageKey(function, declaration.name()), list.capacity());
+                required.add(new PhysicalMemoryLayout.StorageKey(function, declaration.name()));
+            }
             if (statement instanceof HirVariableDeclaration declaration) {
                 collectExpression(function, declaration.initializer(), declarations, required);
             } else if (statement instanceof HirDynamicCollectionSet update) {
                 required.add(resolve(function, update.target(), declarations));
                 collectExpression(function, update.index(), declarations, required);
                 collectExpression(function, update.value(), declarations, required);
+            } else if (statement instanceof HirMutableListAdd add) {
+                required.add(resolve(function, add.target(), declarations));
+                collectExpression(function, add.value(), declarations, required);
+            } else if (statement instanceof HirMutableListClear) {
             } else if (statement instanceof HirCollectionSet update) {
                 collectExpression(function, update.value(), declarations, required);
             } else if (statement instanceof HirExpressionStatement expression) {
@@ -204,6 +216,10 @@ public final class PhysicalMemoryPlanner {
                 loop.declarationInitializer().ifPresent(declaration -> {
                     if (declaration.initializer() instanceof HirArrayLiteral array) {
                         declarations.put(new PhysicalMemoryLayout.StorageKey(function, declaration.name()), array.elements().size());
+                    }
+                    if (declaration.initializer() instanceof HirMutableListLiteral list) {
+                        declarations.put(new PhysicalMemoryLayout.StorageKey(function, declaration.name()), list.capacity());
+                        required.add(new PhysicalMemoryLayout.StorageKey(function, declaration.name()));
                     }
                     collectExpression(function, declaration.initializer(), declarations, required);
                 });

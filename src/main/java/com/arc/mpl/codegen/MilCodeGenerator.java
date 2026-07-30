@@ -14,6 +14,10 @@ import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
+import com.arc.mpl.hir.HirMutableListLiteral;
+import com.arc.mpl.hir.HirMutableListAdd;
+import com.arc.mpl.hir.HirMutableListClear;
+import com.arc.mpl.hir.HirMutableListRemoveAt;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirDraw;
@@ -274,6 +278,18 @@ public final class MilCodeGenerator {
                 + expression(update.value()) + ");");
             return;
         }
+        if (statement instanceof HirMutableListAdd add) {
+            writer.line(identifier(add.target(), "MutableList") + ".add(" + expression(add.value()) + ");");
+            return;
+        }
+        if (statement instanceof HirMutableListClear clear) {
+            writer.line(identifier(clear.target(), "MutableList") + ".clear();");
+            return;
+        }
+        if (statement instanceof HirMutableListRemoveAt remove) {
+            writer.line(identifier(remove.target(), "MutableList") + ".removeAt(" + remove.index() + ");");
+            return;
+        }
         if (statement instanceof HirBreak) {
             writer.line("break;");
             return;
@@ -383,6 +399,12 @@ public final class MilCodeGenerator {
         if (value instanceof HirCollectionLiteral collection) {
             String factory = collection.type().kind() == com.arc.mpl.hir.CollectionType.Kind.LIST ? "List.of" : "Set.of";
             return aggregateLiteral(factory + "(", ")", collection.elements());
+        }
+        if (value instanceof HirMutableListLiteral list) {
+            if (list.capacity() == list.elements().size()) {
+                return aggregateLiteral("MutableList.of(", ")", list.elements());
+            }
+            return "MutableList.withCapacity(" + list.capacity() + ")";
         }
         if (value instanceof HirIndexAccess access) return expression(access.target()) + "[" + expression(access.index()) + "]";
         if (value instanceof HirDynamicIndexAccess access) {

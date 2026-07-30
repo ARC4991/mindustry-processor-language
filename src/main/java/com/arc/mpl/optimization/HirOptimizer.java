@@ -14,6 +14,10 @@ import com.arc.mpl.hir.HirBuildingQuerySize;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
+import com.arc.mpl.hir.HirMutableListLiteral;
+import com.arc.mpl.hir.HirMutableListAdd;
+import com.arc.mpl.hir.HirMutableListClear;
+import com.arc.mpl.hir.HirMutableListRemoveAt;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
@@ -176,6 +180,11 @@ public final class HirOptimizer {
             return List.of(new HirDynamicCollectionSet(update.target(), optimizeExpression(update.index()),
                 optimizeExpression(update.value())));
         }
+        if (statement instanceof HirMutableListAdd add) {
+            return List.of(new HirMutableListAdd(add.target(), optimizeExpression(add.value())));
+        }
+        if (statement instanceof HirMutableListClear clear) return List.of(clear);
+        if (statement instanceof HirMutableListRemoveAt remove) return List.of(remove);
         if (statement instanceof HirReturn returned) {
             return List.of(new HirReturn(returned.value().map(this::optimizeExpression), returned.cleanup()));
         }
@@ -290,6 +299,9 @@ public final class HirOptimizer {
         }
         if (expression instanceof HirCollectionLiteral collection) {
             return new HirCollectionLiteral(optimizeExpressions(collection.elements()), collection.type());
+        }
+        if (expression instanceof HirMutableListLiteral list) {
+            return new HirMutableListLiteral(optimizeExpressions(list.elements()), list.capacity(), list.type());
         }
         if (expression instanceof HirIndexAccess access) {
             return new HirIndexAccess(optimizeExpression(access.target()), optimizeExpression(access.index()), access.type());

@@ -54,6 +54,10 @@ import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
+import com.arc.mpl.hir.HirMutableListLiteral;
+import com.arc.mpl.hir.HirMutableListAdd;
+import com.arc.mpl.hir.HirMutableListClear;
+import com.arc.mpl.hir.HirMutableListRemoveAt;
 import com.arc.mpl.hir.HirClass;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirContinue;
@@ -151,6 +155,8 @@ public final class SemanticAnalyzer {
     private int nextObjectAllocationId;
     private int nextStringAllocationId;
     private int loopDepth;
+    /** Length-changing list operations are accepted only on a linear path whose capacity is provable. */
+    private int aggregateControlDepth;
     private String activeUnitBinding;
     private String activeBuildingBinding;
     private String activeBuildingType;
@@ -1171,11 +1177,16 @@ public final class SemanticAnalyzer {
     private HirStatement analyzeIf(IfStatement branch) {
         HirExpression condition = analyzeExpression(branch.condition());
         requireBool(condition.type(), branch.condition().span(), "if 条件");
-        List<HirStatement> consequence = analyzeWithNarrowing(
-            nonNullNarrowing(branch.condition(), true), () -> analyzeBlock(branch.thenBlock()));
-        Optional<List<HirStatement>> alternative = branch.elseBranch().map(value -> analyzeWithNarrowing(
-            nonNullNarrowing(branch.condition(), false), () -> analyzeAlternative(value)));
-        return new HirIf(condition, consequence, alternative);
+        aggregateControlDepth++;
+        try {
+            List<HirStatement> consequence = analyzeWithNarrowing(
+                nonNullNarrowing(branch.condition(), true), () -> analyzeBlock(branch.thenBlock()));
+            Optional<List<HirStatement>> alternative = branch.elseBranch().map(value -> analyzeWithNarrowing(
+                nonNullNarrowing(branch.condition(), false), () -> analyzeAlternative(value)));
+            return new HirIf(condition, consequence, alternative);
+        } finally {
+            aggregateControlDepth--;
+        }
     }
 
     private Map<String, Symbol> nonNullNarrowing(Expression condition, boolean conditionResult) {
@@ -1224,9 +1235,11 @@ public final class SemanticAnalyzer {
 
     private List<HirStatement> analyzeLoopBlock(BlockStatement block) {
         loopDepth++;
+        aggregateControlDepth++;
         try {
             return analyzeBlock(block);
         } finally {
+            aggregateControlDepth--;
             loopDepth--;
         }
     }
@@ -1285,7 +1298,8 @@ public final class SemanticAnalyzer {
         }
         Symbol arraySymbol = lookup(array.name());
         if (arraySymbol == null || !(arraySymbol.type() instanceof CollectionType collection)
-            || collection.kind() != CollectionType.Kind.ARRAY || arraySymbol.staticAggregateSize() == null) {
+            || (collection.kind() != CollectionType.Kind.ARRAY && collection.kind() != CollectionType.Kind.MUTABLE_LIST)
+            || arraySymbol.staticAggregateSize() == null) {
             return Optional.empty();
         }
         if (!(loop.update().orElseThrow() instanceof AssignmentExpression update)
@@ -1920,9 +1934,19 @@ public final class SemanticAnalyzer {
         }
 
         Symbol targetSymbol = lookup(target.name());
-        if (targetSymbol != null && targetSymbol.type() instanceof CollectionType collection
-            && "set".equals(member.member())) {
-            return analyzeArraySet(target.name(), targetSymbol, collection, call.arguments(), call.span());
+        if (targetSymbol != null && targetSymbol.type() instanceof CollectionType collection) {
+            if ("set".equals(member.member())) {
+                return analyzeCollectionSet(target.name(), targetSymbol, collection, call.arguments(), call.span());
+            }
+            if ("add".equals(member.member())) {
+                return analyzeMutableListAdd(target.name(), targetSymbol, collection, call.arguments(), call.span());
+            }
+            if ("clear".equals(member.member())) {
+                return analyzeMutableListClear(target.name(), targetSymbol, collection, call.arguments(), call.span());
+            }
+            if ("removeAt".equals(member.member())) {
+                return analyzeMutableListRemoveAt(target.name(), targetSymbol, collection, call.arguments(), call.span());
+            }
         }
         if (targetSymbol != null && targetSymbol.type() == ValueType.BUILDING
             && target.name().equals(activeBuildingBinding) && activeBuildingType != null) {
@@ -2111,13 +2135,13 @@ public final class SemanticAnalyzer {
         return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
     }
 
-    private HirStatement analyzeArraySet(String target, Symbol symbol, CollectionType type,
+    private HirStatement analyzeCollectionSet(String target, Symbol symbol, CollectionType type,
                                          List<Expression> arguments, SourceSpan span) {
-        if (type.kind() != CollectionType.Kind.ARRAY) {
-            error("MPL3601", "只有 Array 支持 set(index, value)", span);
+        if (type.kind() != CollectionType.Kind.ARRAY && type.kind() != CollectionType.Kind.MUTABLE_LIST) {
+            error("MPL3601", "只有 Array 或 MutableList 支持 set(index, value)", span);
             return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
         }
-        if (!symbol.mutable()) error("MPL3104", "不能修改 val Array：" + target, span);
+        if (!symbol.mutable()) error("MPL3104", "不能修改 val " + type.displayName() + "：" + target, span);
         if (arguments.size() != 2) {
             error("MPL3601", "Array.set(index, value) 需要两个参数", span);
             return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
@@ -2134,18 +2158,86 @@ public final class SemanticAnalyzer {
         }
         HirExpression index = analyzeExpression(sourceIndex);
         if (index.type() != ValueType.INT) {
-            error("MPL3601", "Array.set(...) 下标必须是 Int", sourceIndex.span());
+            error("MPL3601", type.displayName() + ".set(...) 下标必须是 Int", sourceIndex.span());
             return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
         }
         if (!supportsDynamicArrayElement(type.elementType())) {
-            error("MPL3601", "动态 Array 下标当前只支持 Int、Float 或 Bool 元素", span);
+            error("MPL3601", "动态容器下标当前只支持 Int、Float 或 Bool 元素", span);
             return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
         }
         if (!hasArrayBoundsProof(target, sourceIndex)) {
-            error("MPL3601", "无法证明动态 Array 下标在范围内；请使用从 0 到 array.size 的标准计数 for 循环", sourceIndex.span());
+            error("MPL3601", boundsProofMessage(type), sourceIndex.span());
             return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
         }
         return new HirDynamicCollectionSet(target, index, value);
+    }
+
+    private HirStatement analyzeMutableListAdd(String target, Symbol symbol, CollectionType type,
+                                               List<Expression> arguments, SourceSpan span) {
+        if (type.kind() != CollectionType.Kind.MUTABLE_LIST) {
+            error("MPL3601", "只有 MutableList 支持 add(value)", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (!symbol.mutable()) error("MPL3104", "不能修改 val MutableList：" + target, span);
+        if (arguments.size() != 1) {
+            error("MPL3601", "MutableList.add(value) 需要一个参数", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        HirExpression value = analyzeExpression(arguments.get(0));
+        if (!canAssign(type.elementType(), value.type())) {
+            error("MPL3103", "不能将 " + display(value.type()) + " 写入 " + type.displayName(), arguments.get(0).span());
+        }
+        if (aggregateControlDepth > 0 || symbol.staticAggregateSize() == null || symbol.aggregateCapacity() == null) {
+            error("MPL3601", "MutableList.add 需要编译器可证明的线性容量；不能位于条件或循环中", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (symbol.staticAggregateSize() >= symbol.aggregateCapacity()) {
+            error("MPL3601", "MutableList.add 超出已声明容量 " + symbol.aggregateCapacity(), span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        updateSymbol(target, valueAt -> valueAt.withAggregateSize(valueAt.staticAggregateSize() + 1));
+        return new HirMutableListAdd(target, value);
+    }
+
+    private HirStatement analyzeMutableListClear(String target, Symbol symbol, CollectionType type,
+                                                 List<Expression> arguments, SourceSpan span) {
+        if (type.kind() != CollectionType.Kind.MUTABLE_LIST) {
+            error("MPL3601", "只有 MutableList 支持 clear()", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (!symbol.mutable()) error("MPL3104", "不能修改 val MutableList：" + target, span);
+        if (!arguments.isEmpty()) error("MPL3601", "MutableList.clear() 不接受参数", span);
+        if (aggregateControlDepth > 0) {
+            error("MPL3601", "MutableList.clear 不能位于条件或循环中", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        updateSymbol(target, valueAt -> valueAt.withAggregateSize(0));
+        return new HirMutableListClear(target);
+    }
+
+    private HirStatement analyzeMutableListRemoveAt(String target, Symbol symbol, CollectionType type,
+                                                    List<Expression> arguments, SourceSpan span) {
+        if (type.kind() != CollectionType.Kind.MUTABLE_LIST) {
+            error("MPL3601", "只有 MutableList 支持 removeAt(index)", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (!symbol.mutable()) error("MPL3104", "不能修改 val MutableList：" + target, span);
+        if (arguments.size() != 1 || !(arguments.get(0) instanceof IntegerLiteral literal)
+            || literal.value() < 0 || literal.value() > Integer.MAX_VALUE) {
+            error("MPL3601", "MutableList.removeAt(index) 需要非负 Int 字面量下标", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        if (aggregateControlDepth > 0) {
+            error("MPL3601", "MutableList.removeAt 不能位于条件或循环中", span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        int index = (int) literal.value();
+        if (symbol.staticAggregateSize() == null || index >= symbol.staticAggregateSize()) {
+            error("MPL3601", "MutableList.removeAt 下标越界：" + index, span);
+            return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
+        }
+        updateSymbol(target, valueAt -> valueAt.withAggregateSize(valueAt.staticAggregateSize() - 1));
+        return new HirMutableListRemoveAt(target, index);
     }
 
     private HirStatement analyzePrintCall(String linkName, List<Expression> sourceArguments) {
@@ -2259,7 +2351,8 @@ public final class SemanticAnalyzer {
             error("MPL3103", "不能将 " + display(initializer.type()) + " 赋给 " + display(type), declaration.initializer().span());
         }
         if (isAggregate(type) && unitQuery == null && buildingQuery == null && !(initializer instanceof HirArrayLiteral)
-            && !(initializer instanceof HirTupleLiteral) && !(initializer instanceof HirCollectionLiteral)) {
+            && !(initializer instanceof HirTupleLiteral) && !(initializer instanceof HirCollectionLiteral)
+            && !(initializer instanceof HirMutableListLiteral)) {
             error("MPL3601", "当前阶段不支持复制聚合值；请在声明处使用字面量或集合工厂", declaration.initializer().span());
         }
         if (unitQuery != null && declaration.mutable()) {
@@ -2305,7 +2398,7 @@ public final class SemanticAnalyzer {
         }
         boolean declared = declare(declaration.name(),
             new Symbol(type, declaration.mutable(), type == ValueType.STRING ? initialStringMax : null,
-                staticAggregateSize(initializer), unitQuery,
+                staticAggregateSize(initializer), aggregateCapacity(initializer), unitQuery,
                 buildingQuery, reusableLocalObject, ownsPooledObject, global, declaration.span()),
             declaration.span());
         if (declared && ownsPooledObject && type instanceof ObjectType object) {
@@ -2337,6 +2430,15 @@ public final class SemanticAnalyzer {
         if (expectedType instanceof CollectionType collection && initializer instanceof CallExpression call
             && call.arguments().isEmpty() && collectionFactory(call.callee()).filter(collection.kind()::equals).isPresent()) {
             return new HirCollectionLiteral(List.of(), collection);
+        }
+        if (expectedType instanceof CollectionType collection && collection.kind() == CollectionType.Kind.MUTABLE_LIST
+            && initializer instanceof CallExpression call && mutableListCapacityFactory(call.callee())) {
+            if (call.arguments().size() != 1 || !(call.arguments().get(0) instanceof IntegerLiteral capacity)
+                || capacity.value() < 1 || capacity.value() > Integer.MAX_VALUE) {
+                error("MPL3601", "MutableList.withCapacity(capacity) 需要大于 0 的 Int 字面量容量", call.span());
+                return new HirConstant("0", ValueType.ERROR);
+            }
+            return new HirMutableListLiteral(List.of(), (int) capacity.value(), collection);
         }
         return analyzeExpression(initializer);
     }
@@ -2576,6 +2678,10 @@ public final class SemanticAnalyzer {
             }
             return new HirObjectFieldRead(target, field.ownerClass(), member.member(), field.type());
         }
+        if ("size".equals(member.member()) && target.type() instanceof CollectionType collection
+            && collection.kind() == CollectionType.Kind.MUTABLE_LIST) {
+            return new HirMemberAccess(target, "size", ValueType.INT);
+        }
         if ("size".equals(member.member()) && isAggregate(target.type())) {
             Integer size = aggregateSize(member.target(), target.type());
             if (size == null) {
@@ -2657,6 +2763,10 @@ public final class SemanticAnalyzer {
         }
         Optional<CollectionType.Kind> factory = collectionFactory(call.callee());
         if (factory.isPresent()) return analyzeCollectionFactory(factory.orElseThrow(), call.arguments(), call.span());
+        if (mutableListCapacityFactory(call.callee())) {
+            error("MPL3601", "MutableList.withCapacity(capacity) 需要在显式 MutableList<T> 声明中使用", call.span());
+            return new HirConstant("0", ValueType.ERROR);
+        }
         if (call.callee() instanceof MemberAccessExpression member && "get".equals(member.member())
             && call.arguments().size() == 1) {
             HirUnitQuery query = resolveUnitQuery(member.target(), "_");
@@ -3254,6 +3364,10 @@ public final class SemanticAnalyzer {
         if (name.startsWith("List<") && name.endsWith(">")) {
             return collectionType(CollectionType.Kind.LIST, name.substring("List<".length(), name.length() - 1), span);
         }
+        if (name.startsWith("MutableList<") && name.endsWith(">")) {
+            return collectionType(CollectionType.Kind.MUTABLE_LIST,
+                name.substring("MutableList<".length(), name.length() - 1), span);
+        }
         if (name.startsWith("Set<") && name.endsWith(">")) {
             return collectionType(CollectionType.Kind.SET, name.substring("Set<".length(), name.length() - 1), span);
         }
@@ -3301,6 +3415,9 @@ public final class SemanticAnalyzer {
             return typeError("Building<T> 只能作为 Building.getAll类型(...) 返回的 Set 元素类型", span);
         }
         if (isAggregate(element)) return typeError("当前阶段不支持嵌套聚合类型；需要 Memory runtime", span);
+        if (kind == CollectionType.Kind.MUTABLE_LIST && !supportsDynamicArrayElement(element)) {
+            return typeError("MutableList 当前只支持 Int、Float 或 Bool 元素", span);
+        }
         return new CollectionType(kind, element);
     }
 
@@ -3369,6 +3486,7 @@ public final class SemanticAnalyzer {
             return switch (namespace.name()) {
                 case "List" -> Optional.of(CollectionType.Kind.LIST);
                 case "Set" -> Optional.of(CollectionType.Kind.SET);
+                case "MutableList" -> Optional.of(CollectionType.Kind.MUTABLE_LIST);
                 default -> Optional.empty();
             };
         }
@@ -3383,11 +3501,25 @@ public final class SemanticAnalyzer {
         List<HirExpression> elements = sourceElements.stream().map(this::analyzeExpression).toList();
         MplType elementType = commonElementType(elements.stream().map(HirExpression::type).toList(), span);
         if (elementType == ValueType.ERROR) return new HirConstant("0", ValueType.ERROR);
+        if (kind == CollectionType.Kind.MUTABLE_LIST && !supportsDynamicArrayElement(elementType)) {
+            error("MPL3601", "MutableList 当前只支持 Int、Float 或 Bool 元素", span);
+            return new HirConstant("0", ValueType.ERROR);
+        }
         if (kind == CollectionType.Kind.SET && !hasStaticallyDistinctElements(elements)) {
             error("MPL3601", "第一版 Set 元素必须是互不相同的静态字面量", span);
             return new HirConstant("0", ValueType.ERROR);
         }
-        return new HirCollectionLiteral(elements, new CollectionType(kind, elementType));
+        CollectionType type = new CollectionType(kind, elementType);
+        if (kind == CollectionType.Kind.MUTABLE_LIST) {
+            return new HirMutableListLiteral(elements, elements.size(), type);
+        }
+        return new HirCollectionLiteral(elements, type);
+    }
+
+    private boolean mutableListCapacityFactory(Expression callee) {
+        return callee instanceof MemberAccessExpression member
+            && member.target() instanceof Identifier namespace
+            && "MutableList".equals(namespace.name()) && "withCapacity".equals(member.member());
     }
 
     private boolean hasStaticallyDistinctElements(List<HirExpression> elements) {
@@ -3446,19 +3578,19 @@ public final class SemanticAnalyzer {
             return new HirIndexAccess(target, index, elementType);
         }
         if (!(target.type() instanceof CollectionType collection)
-            || collection.kind() != CollectionType.Kind.ARRAY
+            || (collection.kind() != CollectionType.Kind.ARRAY && collection.kind() != CollectionType.Kind.MUTABLE_LIST)
             || !(sourceTarget instanceof Identifier array)
             || !(target instanceof HirVariable)) {
-            error("MPL3601", "动态下标当前只支持具名 Array", span);
+            error("MPL3601", "动态下标当前只支持具名 Array 或 MutableList", span);
             return new HirConstant("0", ValueType.ERROR);
         }
         MplType elementType = collection.elementType();
         if (!supportsDynamicArrayElement(elementType)) {
-            error("MPL3601", "动态 Array 下标当前只支持 Int、Float 或 Bool 元素", span);
+            error("MPL3601", "动态容器下标当前只支持 Int、Float 或 Bool 元素", span);
             return new HirConstant("0", ValueType.ERROR);
         }
         if (!hasArrayBoundsProof(array.name(), sourceIndex)) {
-            error("MPL3601", "无法证明动态 Array 下标在范围内；请使用从 0 到 array.size 的标准计数 for 循环", sourceIndex.span());
+            error("MPL3601", boundsProofMessage(collection), sourceIndex.span());
             return new HirConstant("0", ValueType.ERROR);
         }
         return new HirDynamicIndexAccess(target, index, elementType);
@@ -3466,6 +3598,12 @@ public final class SemanticAnalyzer {
 
     private boolean supportsDynamicArrayElement(MplType type) {
         return type == ValueType.INT || type == ValueType.FLOAT || type == ValueType.BOOL;
+    }
+
+    private String boundsProofMessage(CollectionType collection) {
+        return collection.kind() == CollectionType.Kind.ARRAY
+            ? "无法证明动态 Array 下标在范围内；请使用从 0 到 array.size 的标准计数 for 循环"
+            : "无法证明动态 MutableList 下标在范围内；请使用从 0 到 list.size 的标准计数 for 循环";
     }
 
     private boolean hasArrayBoundsProof(String array, Expression sourceIndex) {
@@ -3542,6 +3680,17 @@ public final class SemanticAnalyzer {
         }
         current.put(name, symbol);
         return true;
+    }
+
+    private void updateSymbol(String name, java.util.function.UnaryOperator<Symbol> change) {
+        for (Map<String, Symbol> scope : scopes) {
+            Symbol current = scope.get(name);
+            if (current != null) {
+                scope.put(name, change.apply(current));
+                return;
+            }
+        }
+        throw new IllegalStateException("unknown variable: " + name);
     }
 
     private void recordGlobalAccess(String name, Symbol symbol, SourceSpan accessSpan) {
@@ -3665,29 +3814,47 @@ public final class SemanticAnalyzer {
         if (expression instanceof HirArrayLiteral array) return array.elements().size();
         if (expression instanceof HirTupleLiteral tuple) return tuple.elements().size();
         if (expression instanceof HirCollectionLiteral collection) return collection.elements().size();
+        if (expression instanceof HirMutableListLiteral list) return list.elements().size();
         return null;
     }
 
+    private Integer aggregateCapacity(HirExpression expression) {
+        if (expression instanceof HirMutableListLiteral list) return list.capacity();
+        return staticAggregateSize(expression);
+    }
+
     private record Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
-                          HirUnitQuery unitQuery, HirBuildingQuery buildingQuery, boolean reusableLocalObject,
+                          Integer aggregateCapacity, HirUnitQuery unitQuery, HirBuildingQuery buildingQuery, boolean reusableLocalObject,
                           boolean ownsPooledObject,
                           boolean global,
                           SourceSpan declarationSpan) {
         private Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
                        HirUnitQuery unitQuery, HirBuildingQuery buildingQuery, boolean reusableLocalObject,
                        boolean global, SourceSpan declarationSpan) {
-            this(type, mutable, staticStringCodeUnits, staticAggregateSize, unitQuery, buildingQuery,
+            this(type, mutable, staticStringCodeUnits, staticAggregateSize, staticAggregateSize, unitQuery, buildingQuery,
                 reusableLocalObject, false, global, declarationSpan);
         }
 
+        private Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
+                       HirUnitQuery unitQuery, HirBuildingQuery buildingQuery, boolean reusableLocalObject,
+                       boolean ownsPooledObject, boolean global, SourceSpan declarationSpan) {
+            this(type, mutable, staticStringCodeUnits, staticAggregateSize, staticAggregateSize, unitQuery, buildingQuery,
+                reusableLocalObject, ownsPooledObject, global, declarationSpan);
+        }
+
         private Symbol withType(MplType narrowedType) {
-            return new Symbol(narrowedType, mutable, staticStringCodeUnits, staticAggregateSize, unitQuery, buildingQuery,
+            return new Symbol(narrowedType, mutable, staticStringCodeUnits, staticAggregateSize, aggregateCapacity, unitQuery, buildingQuery,
                 reusableLocalObject, ownsPooledObject, global, declarationSpan);
         }
 
 
         private Symbol withStringMax(int maxCodeUnits) {
-            return new Symbol(type, mutable, maxCodeUnits, staticAggregateSize, unitQuery, buildingQuery,
+            return new Symbol(type, mutable, maxCodeUnits, staticAggregateSize, aggregateCapacity, unitQuery, buildingQuery,
+                reusableLocalObject, ownsPooledObject, global, declarationSpan);
+        }
+
+        private Symbol withAggregateSize(Integer size) {
+            return new Symbol(type, mutable, staticStringCodeUnits, size, aggregateCapacity, unitQuery, buildingQuery,
                 reusableLocalObject, ownsPooledObject, global, declarationSpan);
         }
     }

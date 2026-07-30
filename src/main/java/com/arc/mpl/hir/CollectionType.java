@@ -23,12 +23,14 @@ public record CollectionType(Kind kind, MplType elementType) implements MplType 
             case ARRAY -> elementType.displayName() + "[]";
             case LIST -> "List<" + elementType.displayName() + ">";
             case SET -> "Set<" + elementType.displayName() + ">";
+            case MUTABLE_LIST -> "MutableList<" + elementType.displayName() + ">";
         };
     }
 
     public enum Kind {
         ARRAY,
         LIST,
-        SET
+        SET,
+        MUTABLE_LIST
     }
 }

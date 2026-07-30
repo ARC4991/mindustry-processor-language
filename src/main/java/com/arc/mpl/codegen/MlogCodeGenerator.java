@@ -20,6 +20,10 @@ import com.arc.mpl.hir.HirBreak;
 import com.arc.mpl.hir.HirCollectionContains;
 import com.arc.mpl.hir.HirCollectionLiteral;
 import com.arc.mpl.hir.HirCollectionSet;
+import com.arc.mpl.hir.HirMutableListLiteral;
+import com.arc.mpl.hir.HirMutableListAdd;
+import com.arc.mpl.hir.HirMutableListClear;
+import com.arc.mpl.hir.HirMutableListRemoveAt;
 import com.arc.mpl.hir.HirContinue;
 import com.arc.mpl.hir.HirDoWhile;
 import com.arc.mpl.hir.HirDraw;
@@ -317,6 +321,11 @@ public final class MlogCodeGenerator {
                 emitAggregateDeclaration(declaration, collection.elements());
                 return;
             }
+            if (declaration.initializer() instanceof HirMutableListLiteral list) {
+                emitAggregateDeclaration(declaration, list.elements());
+                output.set(mutableListSizeVariable(declaration.name()), Integer.toString(list.elements().size()));
+                return;
+            }
             if (declaration.type() == com.arc.mpl.hir.ValueType.STRING) {
                 StringRuntimeLayout.Entry target = stringVariable(declaration.name());
                 String source = emitExpression(declaration.initializer());
@@ -392,6 +401,18 @@ public final class MlogCodeGenerator {
         }
         if (statement instanceof HirDynamicCollectionSet update) {
             emitDynamicCollectionSet(update);
+            return;
+        }
+        if (statement instanceof HirMutableListAdd add) {
+            emitMutableListAdd(add);
+            return;
+        }
+        if (statement instanceof HirMutableListClear clear) {
+            output.set(mutableListSizeVariable(clear.target()), "0");
+            return;
+        }
+        if (statement instanceof HirMutableListRemoveAt remove) {
+            emitMutableListRemoveAt(remove);
             return;
         }
         if (statement instanceof HirBreak) {
@@ -1063,7 +1084,8 @@ public final class MlogCodeGenerator {
         if (expression instanceof HirText text) {
             return Integer.toString(memoryLayout.stringRuntime().literal(text).handle());
         }
-        if (expression instanceof HirArrayLiteral || expression instanceof HirTupleLiteral || expression instanceof HirCollectionLiteral) {
+        if (expression instanceof HirArrayLiteral || expression instanceof HirTupleLiteral || expression instanceof HirCollectionLiteral
+            || expression instanceof HirMutableListLiteral) {
             throw new IllegalArgumentException("aggregate literal must be assigned before target lowering");
         }
         if (expression instanceof HirVariable variable) return variable(variable.name());
@@ -1404,6 +1426,33 @@ public final class MlogCodeGenerator {
         output.set(index, emitExpression(update.index()));
         String value = emitExpression(update.value());
         emitPhysicalWrite(allocation, index, value);
+    }
+
+    private void emitMutableListAdd(HirMutableListAdd add) {
+        PhysicalMemoryLayout.Allocation allocation = allocation(add.target());
+        String index = temporary();
+        output.set(index, mutableListSizeVariable(add.target()));
+        emitPhysicalWrite(allocation, index, emitExpression(add.value()));
+        output.operation(Operation.ADD, mutableListSizeVariable(add.target()), mutableListSizeVariable(add.target()), "1");
+    }
+
+    private void emitMutableListRemoveAt(HirMutableListRemoveAt remove) {
+        PhysicalMemoryLayout.Allocation allocation = allocation(remove.target());
+        String index = temporary();
+        String nextIndex = temporary();
+        output.set(index, Integer.toString(remove.index()));
+        MlogProgramBuilder.Label loop = label("mutable_list_remove_loop");
+        MlogProgramBuilder.Label end = label("mutable_list_remove_end");
+        emitLabel(loop);
+        output.operation(Operation.ADD, nextIndex, index, "1");
+        emitJump(end, JumpCondition.GREATER_THAN_EQ, nextIndex, mutableListSizeVariable(remove.target()));
+        String value = emitPhysicalRead(allocation, nextIndex);
+        emitPhysicalWrite(allocation, index, value);
+        output.operation(Operation.ADD, index, index, "1");
+        emitJump(loop, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(end);
+        output.operation(Operation.SUB, mutableListSizeVariable(remove.target()),
+            mutableListSizeVariable(remove.target()), "1");
     }
 
     private void emitPhysicalWrite(PhysicalMemoryLayout.Allocation allocation, String index, String value) {
@@ -1857,6 +1906,10 @@ public final class MlogCodeGenerator {
     }
 
     private String emitMemberAccess(HirMemberAccess member) {
+        if (member.target() instanceof HirVariable variable && variable.type() instanceof com.arc.mpl.hir.CollectionType collection
+            && collection.kind() == com.arc.mpl.hir.CollectionType.Kind.MUTABLE_LIST && "size".equals(member.member())) {
+            return mutableListSizeVariable(variable.name());
+        }
         if (member.target() instanceof HirHardwareLink hardware) {
             String result = temporary();
             output.sensor(result, hardware.gameAlias(), "@" + member.member());
@@ -1891,6 +1944,10 @@ public final class MlogCodeGenerator {
             return alive;
         }
         return result;
+    }
+
+    private String mutableListSizeVariable(String name) {
+        return variable("__mpl_mutableList_size_" + name);
     }
 
     private String emitStoredUnitMember(HirVariable reference, String member) {

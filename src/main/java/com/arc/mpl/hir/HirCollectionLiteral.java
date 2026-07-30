@@ -11,5 +11,8 @@ public record HirCollectionLiteral(List<HirExpression> elements, CollectionType 
         if (type.kind() == CollectionType.Kind.ARRAY) {
             throw new IllegalArgumentException("use HirArrayLiteral for array literals");
         }
+        if (type.kind() == CollectionType.Kind.MUTABLE_LIST) {
+            throw new IllegalArgumentException("use HirMutableListLiteral for mutable list literals");
+        }
     }
 }
