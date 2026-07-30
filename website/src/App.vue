@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import SiteHeader from "./components/SiteHeader.vue";
+import TutorialView from "./components/TutorialView.vue";
 import { pages } from "./content/pages";
 import type { PageKey } from "./types/site";
 
@@ -41,25 +42,7 @@ function select(name: PageKey) {
       </section>
     </section>
 
-    <section v-else-if="page === 'tutorial'" class="page-content tutorial">
-      <article class="lesson"><p class="eyebrow">01 / 项目与硬件</p><h2>从当前目录初始化一个项目</h2><p>项目根包含 <code>mpl.json</code>、源代码和只声明游戏连接的 <code>src/hardware.mplh</code>。MPL 名称和游戏提供的链接变量通过 <code>link(...)</code> 明确对应。</p><pre class="code"><code><span class="cm">// src/hardware.mplh</span>
-<span class="kw">const</span> <span class="ty">Status</span>: <span class="ty">Message</span> = <span class="fn">link</span>(<span class="string">"message1"</span>);
-<span class="kw">const</span> <span class="ty">Canvas</span>: <span class="ty">Display</span> = <span class="fn">link</span>(<span class="string">"display1"</span>);</code></pre></article>
-      <article class="lesson"><p class="eyebrow">02 / MPL 基础语法</p><h2>让类型推导承担重复标注</h2><p><code>val</code> 声明不可变绑定，<code>var</code> 声明可变绑定。初始化器、最具体重载和返回表达式共同参与类型推导；需要公共 API 或复杂表达式时仍可显式标注。</p><pre class="code"><code><span class="kw">fun</span> <span class="fn">orbitStep</span>(phase: <span class="ty">Float</span>) = phase + 0.15;
-<span class="kw">var</span> phase = 0.0;
-<span class="kw">val</span> center: (<span class="ty">Float</span>, <span class="ty">Float</span>) = (80.0, 80.0);
-phase = <span class="fn">orbitStep</span>(phase);</code></pre></article>
-      <article class="lesson"><p class="eyebrow">03 / 对象与游戏接口</p><h2>使用集合化查询而不是裸指令</h2><p>类型、对象和 Unit 查询可以自然组合。<code>where</code> 可链式过滤，查询结果保持为 <code>Set&lt;Unit&lt;Dagger&gt;&gt;</code>，可遍历、计数、索引和传递。</p><pre class="code"><code><span class="kw">class</span> <span class="ty">Orbit</span> {
-  <span class="kw">fun</span> <span class="fn">apply</span>(unit: <span class="ty">Unit</span>&lt;<span class="ty">Dagger</span>&gt;, phase: <span class="ty">Float</span>) {
-    unit.<span class="fn">move</span>(80.0 + <span class="ty">Math</span>.<span class="fn">cos</span>(phase) * 24.0, 80.0 + <span class="ty">Math</span>.<span class="fn">sin</span>(phase) * 24.0);
-  }
-}
-<span class="kw">for</span> (<span class="kw">var</span> unit : <span class="ty">Unit</span>.<span class="fn">getAllDagger</span>().<span class="fn">where</span>(u =&gt; u.alive)) { <span class="kw">new</span> <span class="ty">Orbit</span>().<span class="fn">apply</span>(unit, phase); }</code></pre></article>
-      <article class="lesson"><p class="eyebrow">04 / MIL 与构建</p><h2>通过 MIL 检查目标层表达</h2><p>编译后的 MIL 保留变量和控制流，仅将 Unit/Building、I/O、字符串与 Runtime 糖展开为受 profile 限制的宏。可手写 MIL 以获得精确目标控制，再由同一检查器生成 mlog。</p><pre class="code"><code><span class="cm">// 由编译器生成的 MIL 片段</span>
-@unit.<span class="fn">getAll</span>(<span class="ty">Dagger</span>, unit);
-@io.<span class="fn">print</span>(@message1, <span class="string">"active="</span>, units.size);
-@io.<span class="fn">drawFlush</span>(@display1);</code></pre><p>运行 <code>mpl build --target=v146 build</code> 后得到 <code>runtime.msch</code>、每片 <code>.mil</code>/<code>.mlog</code>、<code>report.json</code>、<code>deployment.json</code> 和连接说明。</p></article>
-    </section>
+    <TutorialView v-else-if="page === 'tutorial'" />
 
     <section v-else-if="page === 'language'" class="page-content">
       <div class="two-column"><article><h2>集合与值</h2><p>集合工厂统一为 <code>List.of</code> 与 <code>Set.of</code>。数组字面量、元组、受证明动态下标与容量化 MutableList 均映射为编译器管理的布局。</p><pre class="code"><code><span class="kw">val</span> point: (<span class="ty">Int</span>, <span class="ty">Int</span>) = (3, 4);
