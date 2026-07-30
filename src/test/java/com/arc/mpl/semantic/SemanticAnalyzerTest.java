@@ -64,7 +64,7 @@ class SemanticAnalyzerTest {
             val name = "mpl";
             val counter = new Counter(count);
             val values = [1, 2, 3];
-            val labels = listOf("a", "b");
+            val labels = List.of("a", "b");
             val allowed = Set.of(1, 3);
             """, Path.of("main.mpl")).program().orElseThrow();
 
@@ -399,7 +399,7 @@ class SemanticAnalyzerTest {
     @Test
     void supportsStaticListAndSetOperationsAndTraversal() {
         Program program = parser.parse("""
-            val list: List<Int> = listOf(1, 2, 3);
+            val list: List<Int> = List.of(1, 2, 3);
             val set: Set<Int> = Set.of(2, 4, 6);
             var first: Int = list.get(0);
             var found: Bool = set.contains(4);
@@ -420,11 +420,25 @@ class SemanticAnalyzerTest {
     }
 
     @Test
+    void requiresQualifiedCollectionFactories() {
+        Program program = parser.parse("""
+            val list = listOf(1, 2);
+            val set = setOf(1, 2);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertEquals(2, result.diagnostics().stream().filter(diagnostic -> diagnostic.code().equals("MPL3501")
+            && diagnostic.message().contains("未声明的函数")).count());
+    }
+
+    @Test
     void resolvesEmptyCollectionsFromAnExplicitTypeAndRejectsAggregateCopies() {
         Program validProgram = parser.parse("""
             val emptyArray: Int[] = [];
             val emptyList: List<Int> = List.of();
-            val emptySet: Set<Int> = setOf();
+            val emptySet: Set<Int> = Set.of();
             var size: Int = emptyArray.size + emptyList.size + emptySet.size;
             """, Path.of("main.mpl")).program().orElseThrow();
 

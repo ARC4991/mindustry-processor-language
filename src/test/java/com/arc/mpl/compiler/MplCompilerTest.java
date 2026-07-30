@@ -1256,7 +1256,7 @@ class MplCompilerTest {
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
             var array: Int[] = [1, 2, 3];
             array.set(1, 9);
-            val queue: List<Int> = listOf(2, 4, 6);
+            val queue: List<Int> = List.of(2, 4, 6);
             val tags: Set<Int> = Set.of(3, 5, 7);
             var found: Bool = queue.contains(4);
             """);
@@ -1270,8 +1270,8 @@ class MplCompilerTest {
         assertTrue(mlog.contains("set mpl_tags_e2 7"));
         assertTrue(mlog.contains("op equal __mpl_tmp2 mpl_queue_e0 __mpl_tmp0"));
         assertTrue(mlog.contains("op or __mpl_tmp1 __mpl_tmp1 __mpl_tmp2"));
-        assertTrue(result.mil().orElseThrow().contains("val queue: List<Int> = listOf(2, 4, 6);"));
-        assertTrue(result.mil().orElseThrow().contains("val tags: Set<Int> = setOf(3, 5, 7);"));
+        assertTrue(result.mil().orElseThrow().contains("val queue: List<Int> = List.of(2, 4, 6);"));
+        assertTrue(result.mil().orElseThrow().contains("val tags: Set<Int> = Set.of(3, 5, 7);"));
     }
 
     @Test
