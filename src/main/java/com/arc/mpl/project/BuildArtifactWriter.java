@@ -93,15 +93,20 @@ public final class BuildArtifactWriter {
 
         ArrayNode memorySegments = topology.putArray("memorySegments");
         plan.physicalMemoryLayout().segments().forEach(segment -> {
+            BlueprintLayout.MemoryPlacement placement = layout.memories().stream()
+                .filter(memory -> memory.segment().alias().equals(segment.alias())).findFirst()
+                .orElseThrow(() -> new IllegalStateException("蓝图缺少 Memory 布局：" + segment.alias()));
             ObjectNode memory = memorySegments.addObject();
             memory.put("id", segment.alias());
             memory.put("kind", segment.kind().name().toLowerCase(java.util.Locale.ROOT));
             memory.put("capacity", segment.capacity());
             memory.put("usedSlots", segment.usedSlots());
+            memory.putObject("blueprintPosition").put("x", placement.x()).put("y", placement.y());
             ObjectNode binding = memory.putArray("bindings").addObject();
             binding.put("shard", "Main");
             binding.put("alias", segment.alias());
             binding.put("access", "readWrite");
+            binding.put("autoConnected", true);
         });
 
         ObjectNode deployment = artifactHeader(profile, digest);
@@ -154,6 +159,11 @@ public final class BuildArtifactWriter {
             .append(main.x()).append(", ").append(main.y()).append(")。\n");
         guide.append("打开处理器代码时，首行应为：# MPL shard: Main / build: ")
             .append(digest, 0, 12).append("\n\n");
+        if (!layout.memories().isEmpty()) {
+            guide.append("蓝图内的 Runtime Memory 已自动连接到 Main，无需手动重新连接。内部 alias：")
+                .append(layout.memories().stream().map(memory -> memory.segment().alias()).toList())
+                .append("。\n\n");
+        }
         if (hardware.links().isEmpty()) {
             guide.append("本项目不需要手动连接外部硬件。\n");
             return guide.toString();
@@ -197,7 +207,7 @@ public final class BuildArtifactWriter {
         resources.put("virtualSlots", plan.virtualSlots());
         resources.put("physicalSlots", plan.physicalSlots());
         resources.put("objectPoolSlots", plan.objectPoolSlots());
-        resources.put("stringSlots", 0);
+        resources.put("stringSlots", plan.stringSlots());
         resources.put("runtimeSlots", 0);
         return resources;
     }
