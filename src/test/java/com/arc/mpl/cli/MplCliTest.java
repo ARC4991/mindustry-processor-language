@@ -187,6 +187,13 @@ class MplCliTest {
         assertEquals(6, runtime.path("mailboxes").size());
         assertEquals(3, runtime.path("tasks").size());
         assertEquals("Worker-2", runtime.path("tasks").get(2).path("worker").asText());
+        assertTrue(runtime.path("tasks").get(0).path("estimatedInstructions").asInt() > 0);
+        assertTrue(runtime.path("tasks").get(0).path("estimatedLabels").asInt() > 0);
+        JsonNode report = new ObjectMapper().readTree(Files.readString(outputDirectory.resolve("report.json")));
+        assertTrue(report.path("shards").get(1).path("resources")
+            .path("plannedFunctionInstructions").asInt() > 0);
+        assertTrue(report.path("shards").get(1).path("resources")
+            .path("plannedFunctionLabels").asInt() > 0);
     }
 
     @Test

@@ -204,6 +204,8 @@ public final class BuildArtifactWriter {
                 item.put("kind", task.kind());
                 item.put("parameterSlots", task.parameterTypes().size());
                 item.put("returnSlots", 1);
+                item.put("estimatedInstructions", task.cost().instructions());
+                item.put("estimatedLabels", task.cost().labels());
                 ArrayNode parameterTypes = item.putArray("parameterTypes");
                 task.parameterTypes().forEach(type -> parameterTypes.add(type.displayName()));
                 item.put("returnType", task.returnType().displayName());
@@ -338,6 +340,11 @@ public final class BuildArtifactWriter {
         resources.put("objectPoolSlots", ownsSharedLayout ? plan.objectPoolSlots() : 0);
         resources.put("stringSlots", ownsSharedLayout ? plan.stringSlots() : 0);
         resources.put("runtimeSlots", ownsSharedLayout ? plan.runtimeSlots() : 0);
+        plan.helperPlan().filter(ignored -> shard.roles().contains("numeric-helper")).ifPresent(helpers -> {
+            RuntimeHelperCost cost = helpers.workerFunctionCost(shard.id());
+            resources.put("plannedFunctionInstructions", cost.instructions());
+            resources.put("plannedFunctionLabels", cost.labels());
+        });
         return resources;
     }
 

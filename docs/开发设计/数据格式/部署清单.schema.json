@@ -56,6 +56,8 @@
         "kind": { "type": "integer", "minimum": 1, "maximum": 2000000000 },
         "parameterSlots": { "type": "integer", "minimum": 0 },
         "returnSlots": { "const": 1 },
+        "estimatedInstructions": { "type": "integer", "minimum": 0 },
+        "estimatedLabels": { "type": "integer", "minimum": 0 },
         "parameterTypes": { "type": "array", "items": { "enum": ["Int", "Float", "Bool"] } },
         "returnType": { "enum": ["Int", "Float", "Bool"] }
       }

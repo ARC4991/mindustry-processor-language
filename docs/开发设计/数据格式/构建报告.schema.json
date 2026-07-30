@@ -27,7 +27,9 @@
         "physicalSlots": { "type": "integer", "minimum": 0 },
         "objectPoolSlots": { "type": "integer", "minimum": 0 },
         "stringSlots": { "type": "integer", "minimum": 0 },
-        "runtimeSlots": { "type": "integer", "minimum": 0 }
+        "runtimeSlots": { "type": "integer", "minimum": 0 },
+        "plannedFunctionInstructions": { "type": "integer", "minimum": 0 },
+        "plannedFunctionLabels": { "type": "integer", "minimum": 0 }
       }
     },
     "shard": {
