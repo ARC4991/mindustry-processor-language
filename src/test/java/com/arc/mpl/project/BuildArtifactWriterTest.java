@@ -132,6 +132,9 @@ class BuildArtifactWriterTest {
         assertTrue(segment.path("bindings").get(0).path("autoConnected").asBoolean());
         assertEquals(List.of(new LogicLink("bank__mpl_mem0", 1, 0)),
             readProcessorConfig(temporaryDirectory.resolve("runtime.msch")).links());
+        assertEquals(List.of(new TilePlacement("micro-processor", 0, 0),
+                new TilePlacement("memory-bank", 1, 0)),
+            readTilePlacements(temporaryDirectory.resolve("runtime.msch")));
         assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("连接说明.txt"))
             .contains("Runtime Memory 已自动连接到 Main"));
     }
@@ -203,6 +206,36 @@ class BuildArtifactWriterTest {
         throw new IllegalStateException("蓝图中缺少处理器配置");
     }
 
+    private List<TilePlacement> readTilePlacements(Path file) throws Exception {
+        byte[] bytes = java.nio.file.Files.readAllBytes(file);
+        try (DataInputStream stream = new DataInputStream(
+            new InflaterInputStream(new ByteArrayInputStream(bytes, 5, bytes.length - 5)))) {
+            stream.readShort();
+            stream.readShort();
+            int tagCount = stream.readUnsignedByte();
+            for (int index = 0; index < tagCount; index++) {
+                stream.readUTF();
+                stream.readUTF();
+            }
+            int blockCount = stream.readUnsignedByte();
+            List<String> blocks = new java.util.ArrayList<>();
+            for (int index = 0; index < blockCount; index++) blocks.add(stream.readUTF());
+            int tileCount = stream.readInt();
+            List<TilePlacement> placements = new java.util.ArrayList<>();
+            for (int index = 0; index < tileCount; index++) {
+                String block = blocks.get(stream.readUnsignedByte());
+                int packed = stream.readInt();
+                int x = (short)(packed >>> 16);
+                int y = (short)packed;
+                int configType = stream.readUnsignedByte();
+                if (configType == 14) stream.skipNBytes(stream.readInt());
+                stream.readUnsignedByte();
+                placements.add(new TilePlacement(block, x, y));
+            }
+            return List.copyOf(placements);
+        }
+    }
+
     private ProcessorConfig readLogicConfig(byte[] config) throws Exception {
         try (DataInputStream stream = new DataInputStream(new InflaterInputStream(new ByteArrayInputStream(config)))) {
             stream.readUnsignedByte();
@@ -217,6 +250,9 @@ class BuildArtifactWriterTest {
     }
 
     private record LogicLink(String alias, int relativeX, int relativeY) {
+    }
+
+    private record TilePlacement(String block, int x, int y) {
     }
 
     private record ProcessorConfig(String code, List<LogicLink> links) {
