@@ -30,10 +30,14 @@ final class TargetProfileLoader {
             }
 
             Map<TargetProfile.ProcessorKind, Integer> processors = new EnumMap<>(TargetProfile.ProcessorKind.class);
+            Map<TargetProfile.ProcessorKind, Integer> linkRanges = new EnumMap<>(TargetProfile.ProcessorKind.class);
             Map<String, Object> processorNodes = requiredObject(root, "processors");
-            processors.put(TargetProfile.ProcessorKind.MICRO, requiredInt(requiredObject(processorNodes, "micro"), "ipt"));
-            processors.put(TargetProfile.ProcessorKind.LOGIC, requiredInt(requiredObject(processorNodes, "logic"), "ipt"));
-            processors.put(TargetProfile.ProcessorKind.HYPER, requiredInt(requiredObject(processorNodes, "hyper"), "ipt"));
+            for (TargetProfile.ProcessorKind kind : TargetProfile.ProcessorKind.values()) {
+                String key = kind.name().toLowerCase(java.util.Locale.ROOT);
+                Map<String, Object> processor = requiredObject(processorNodes, key);
+                processors.put(kind, requiredInt(processor, "ipt"));
+                linkRanges.put(kind, requiredInt(processor, "linkRange"));
+            }
 
             Map<String, Object> limits = requiredObject(root, "limits");
             Map<String, Object> hardware = requiredObject(root, "hardware");
@@ -45,6 +49,7 @@ final class TargetProfileLoader {
                 requiredInt(requiredObject(hardware, "memoryBank"), "capacity"),
                 displayData(hardware),
                 processors,
+                linkRanges,
                 requiredInt(limits, "maxInstructions"),
                 requiredInt(limits, "maxJumpLabels"),
                 requiredInt(limits, "maxTokensPerStatement"),

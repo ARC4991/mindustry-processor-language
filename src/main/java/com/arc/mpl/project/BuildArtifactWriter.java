@@ -69,6 +69,7 @@ public final class BuildArtifactWriter {
         String digest = digest(digestInput.toString());
         String blueprintName = "MPL-" + metadata.name() + "-" + metadata.version() + "-" + digest.substring(0, 12);
         BlueprintLayout layout = BlueprintLayout.topology(plan);
+        layout.validateInternalLinks(plan, profile);
         Map<String, String> identifiedMlog = new LinkedHashMap<>();
         for (String id : plannedIds) {
             ShardArtifact artifact = artifactsById.get(id);

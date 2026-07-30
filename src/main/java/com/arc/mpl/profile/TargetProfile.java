@@ -26,6 +26,9 @@ public interface TargetProfile {
 
     int instructionsPerTick(ProcessorKind processor);
 
+    /** Maximum processor-to-building link radius, measured in world tiles. */
+    int linkRange(ProcessorKind processor);
+
     /** Maximum executable mlog statements the target parser accepts. */
     int maxInstructions();
 

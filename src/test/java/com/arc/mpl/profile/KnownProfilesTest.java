@@ -16,6 +16,9 @@ class KnownProfilesTest {
         assertEquals(2, profile.instructionsPerTick(TargetProfile.ProcessorKind.MICRO));
         assertEquals(8, profile.instructionsPerTick(TargetProfile.ProcessorKind.LOGIC));
         assertEquals(25, profile.instructionsPerTick(TargetProfile.ProcessorKind.HYPER));
+        assertEquals(10, profile.linkRange(TargetProfile.ProcessorKind.MICRO));
+        assertEquals(22, profile.linkRange(TargetProfile.ProcessorKind.LOGIC));
+        assertEquals(42, profile.linkRange(TargetProfile.ProcessorKind.HYPER));
         assertEquals(1_000, profile.maxInstructions());
         assertEquals(500, profile.maxJumpLabels());
         assertEquals(16, profile.maxTokensPerStatement());

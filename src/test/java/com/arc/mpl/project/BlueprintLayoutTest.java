@@ -2,12 +2,15 @@ package com.arc.mpl.project;
 
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.profile.TargetProfile;
+import com.arc.mpl.profile.KnownProfiles;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BlueprintLayoutTest {
     @Test
@@ -71,6 +74,24 @@ class BlueprintLayoutTest {
             layout.shards().stream().map(value -> new Position(value.x(), value.y())).toList());
         assertEquals(List.of(new Position(0, 1)),
             layout.memories().stream().map(value -> new Position(value.x(), value.y())).toList());
+    }
+
+    @Test
+    void rejectsAConfiguredMemoryLinkOutsideTheProcessorRange() {
+        PhysicalMemoryLayout memory = new PhysicalMemoryLayout(List.of(
+            segment("bank__mpl_mem0", RuntimePreferences.MemoryKind.BANK, 512)
+        ), Map.of(), 0);
+        RuntimeTopologyPlan plan = new RuntimeTopologyPlan(List.of(
+            new ShardPlan("Main", List.of("main"), TargetProfile.ProcessorKind.MICRO, 1, 0, 2, 0)
+        ), memory);
+        BlueprintLayout layout = new BlueprintLayout(22, 2,
+            List.of(new BlueprintLayout.ShardPlacement("Main", "micro", List.of("main"), 0, 0)),
+            List.of(new BlueprintLayout.MemoryPlacement(memory.segments().get(0), 20, 0)));
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> layout.validateInternalLinks(plan, KnownProfiles.find("v146").orElseThrow()));
+
+        assertTrue(error.getMessage().contains("10 格连接半径"));
     }
 
     private PhysicalMemoryLayout.Segment segment(String alias, RuntimePreferences.MemoryKind kind, int capacity) {

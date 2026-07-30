@@ -19,6 +19,7 @@ class TargetProfileLoaderTest {
         assertEquals(512, profile.memoryBankCapacity());
         assertEquals("large-logic-display", profile.displayType(176, 176).orElseThrow().mlogName());
         assertEquals(8, profile.instructionsPerTick(TargetProfile.ProcessorKind.LOGIC));
+        assertEquals(22, profile.linkRange(TargetProfile.ProcessorKind.LOGIC));
         assertTrue(profile.capabilities().contains("baseline-logic"));
         assertEquals("duo", profile.buildingType("Duo").orElseThrow().mlogName());
         assertEquals(1, profile.instructions().size());
@@ -82,9 +83,9 @@ class TargetProfileLoaderTest {
                 "maxDrawCoordinateMagnitude": 1023
               },
               "processors": {
-                "micro": { "ipt": 2 },
-                "logic": { "ipt": 8 },
-                "hyper": { "ipt": 25 }
+                "micro": { "ipt": 2, "linkRange": 10 },
+                "logic": { "ipt": 8, "linkRange": 22 },
+                "hyper": { "ipt": 25, "linkRange": 42 }
               },
               "hardware": {
                 "memoryCell": { "capacity": 64 },

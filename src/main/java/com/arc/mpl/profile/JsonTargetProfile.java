@@ -14,6 +14,7 @@ record JsonTargetProfile(
     int memoryBankCapacity,
     List<DisplayType> displayTypes,
     Map<ProcessorKind, Integer> instructionsPerTick,
+    Map<ProcessorKind, Integer> linkRanges,
     int maxInstructions,
     int maxJumpLabels,
     int maxTokensPerStatement,
@@ -32,6 +33,7 @@ record JsonTargetProfile(
         id = requireText(id, "id");
         capabilities = Set.copyOf(Objects.requireNonNull(capabilities, "capabilities"));
         instructionsPerTick = Map.copyOf(Objects.requireNonNull(instructionsPerTick, "instructionsPerTick"));
+        linkRanges = Map.copyOf(Objects.requireNonNull(linkRanges, "linkRanges"));
         displayTypes = List.copyOf(Objects.requireNonNull(displayTypes, "displayTypes"));
         if (displayTypes.isEmpty()) throw new IllegalArgumentException("目标配置至少需要一种 Display");
         if (displayTypes.stream().map(type -> type.width() + "x" + type.height()).distinct().count() != displayTypes.size()) {
@@ -43,6 +45,9 @@ record JsonTargetProfile(
         for (ProcessorKind kind : ProcessorKind.values()) {
             if (!instructionsPerTick.containsKey(kind) || instructionsPerTick.get(kind) < 1) {
                 throw new IllegalArgumentException("目标配置缺少有效的 " + kind + " IPT");
+            }
+            if (!linkRanges.containsKey(kind) || linkRanges.get(kind) < 0) {
+                throw new IllegalArgumentException("目标配置缺少有效的 " + kind + " 连接半径");
             }
         }
         requirePositive(memoryCellCapacity, "memoryCellCapacity");
@@ -79,6 +84,11 @@ record JsonTargetProfile(
     @Override
     public int instructionsPerTick(ProcessorKind processor) {
         return instructionsPerTick.get(Objects.requireNonNull(processor, "processor"));
+    }
+
+    @Override
+    public int linkRange(ProcessorKind processor) {
+        return linkRanges.get(Objects.requireNonNull(processor, "processor"));
     }
 
     @Override

@@ -1,6 +1,7 @@
 package com.arc.mpl.project;
 
 import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.profile.TargetProfile;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +42,32 @@ public record BlueprintLayout(int width, int height, List<ShardPlacement> shards
             memories.add(new MemoryPlacement(segment, anchor(rectangle.x(), size), anchor(rectangle.y(), size)));
         }
         return new BlueprintLayout(packing.width(), packing.height(), shards, memories);
+    }
+
+    /** Rejects links which would be serialized correctly but ignored by the game as out of range. */
+    public void validateInternalLinks(RuntimeTopologyPlan plan, TargetProfile profile) {
+        Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(profile, "profile");
+        for (ShardPlan shard : plan.shards()) {
+            ShardPlacement processor = shards.stream().filter(value -> value.id().equals(shard.id())).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("蓝图缺少 shard 布局：" + shard.id()));
+            int processorSize = processorSize(shard);
+            double processorX = worldCenter(processor.x(), processorSize);
+            double processorY = worldCenter(processor.y(), processorSize);
+            double range = profile.linkRange(shard.processor()) * 8.0;
+            for (MemoryPlacement memory : memories) {
+                int memorySize = memorySize(memory.segment());
+                double memoryX = worldCenter(memory.x(), memorySize);
+                double memoryY = worldCenter(memory.y(), memorySize);
+                double allowed = range + memorySize * 4.0;
+                double dx = memoryX - processorX;
+                double dy = memoryY - processorY;
+                if (dx * dx + dy * dy > allowed * allowed) {
+                    throw new IllegalArgumentException("蓝图内存 " + memory.segment().alias() + " 超出处理器 "
+                        + shard.id() + " 的 " + profile.linkRange(shard.processor()) + " 格连接半径");
+                }
+            }
+        }
     }
 
     /** Exhaustively chooses a deterministic minimum-area first-fit packing for processors then Memory. */
@@ -126,6 +153,10 @@ public record BlueprintLayout(int width, int height, List<ShardPlacement> shards
             case LOGIC -> 2;
             case HYPER -> 3;
         };
+    }
+
+    private static double worldCenter(int anchor, int size) {
+        return anchor * 8.0 + ((size + 1) % 2) * 4.0;
     }
 
     private static int anchor(int origin, int size) {
