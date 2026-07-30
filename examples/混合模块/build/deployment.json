@@ -3,9 +3,9 @@
   "compiler" : {
     "version" : "0.1.0-SNAPSHOT"
   },
-  "inputDigest" : "c60b68eb7d46c42e29a5a1bce4aace6ec7510fb3e787bb8f393a8c4925b77e92",
+  "inputDigest" : "ec3219fde5fc88fb2beff45f56c0a88a6202dc91dccd9edb52664068dae2d10e",
   "targetProfile" : "v146",
-  "layoutFingerprint" : "876b8819585ee6634e598c9130e4c5bba66571570c21c52220cf683f1429d005",
+  "layoutFingerprint" : "10f98c8e2097b95afc3747d7761a27798950fd97a726a9127dd9d140eaf24c1e",
   "runtimeTopology" : {
     "blueprint" : {
       "file" : "runtime.msch",
@@ -17,8 +17,8 @@
       "mlog" : "Main.mlog",
       "roles" : [ "main" ],
       "blueprintPosition" : {
-        "x" : 1,
-        "y" : 1
+        "x" : 0,
+        "y" : 0
       }
     } ],
     "memorySegments" : [ ]
@@ -30,5 +30,6 @@
     "type" : "Message",
     "access" : "write"
   } ],
+  "logicalDisplays" : [ ],
   "prerequisites" : [ ]
 }

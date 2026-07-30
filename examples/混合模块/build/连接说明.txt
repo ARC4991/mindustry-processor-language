@@ -1,9 +1,9 @@
 MPL 外部硬件连接说明
-蓝图：MPL-mixed-modules-0.1.0-c60b68eb7d46
-构建：c60b68eb7d46c42e29a5a1bce4aace6ec7510fb3e787bb8f393a8c4925b77e92
+蓝图：MPL-mixed-modules-0.1.0-ec3219fde5fc
+构建：ec3219fde5fc88fb2beff45f56c0a88a6202dc91dccd9edb52664068dae2d10e
 
-所有外部硬件只连接 Main。Main 是蓝图最左侧处理器，局部坐标为 (1, 1)。
-打开处理器代码时，首行应为：# MPL shard: Main / build: c60b68eb7d46
+所有外部硬件只连接 Main。Main 是蓝图最左侧处理器，Main 局部坐标为 (0, 0)。
+打开处理器代码时，首行应为：# MPL shard: Main / build: ec3219fde5fc
 
 按以下 alias 连接；多个同类建筑按数字从小到大连接：
 - Status : Message -> message1
