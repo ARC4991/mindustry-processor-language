@@ -82,6 +82,25 @@ class SharedMailboxProtocolEmitterTest {
     }
 
     @Test
+    void emitsIdleHooksOnRetryAndCanAwaitTheExactAcknowledgement() {
+        MlogProgramBuilder output = new MlogProgramBuilder(MlogLabelStyle.RELEASE);
+        SharedMailboxProtocolEmitter emitter = new SharedMailboxProtocolEmitter(output,
+            prepared.physicalMemoryLayout(), MlogRuntimeContext.shared("Main", prepared.sharedRuntime()));
+
+        String committed = emitter.emitSend("Requests", "7", List.of("11", "13"),
+            () -> output.set("sendIdle", "1"));
+        emitter.emitAwaitAcknowledged("Requests", committed, () -> output.set("ackIdle", "1"));
+        output.stop();
+        String mlog = output.render();
+
+        assertEquals(1, count(mlog, "set sendIdle 1\n"));
+        assertEquals(1, count(mlog, "set ackIdle 1\n"));
+        assertTrue(mlog.contains("read __mpl_mailbox5 bank__mpl_mem0 8\n"));
+        assertTrue(mlog.contains("jump _3 notEqual __mpl_mailbox5 __mpl_mailbox3\n"));
+        assertTrue(new MlogOutputValidator().validate(mlog, profile).isEmpty());
+    }
+
+    @Test
     void enforcesStaticOwnershipWidthAndNumericSentinelBoundary() {
         MlogProgramBuilder mainOutput = new MlogProgramBuilder(MlogLabelStyle.RELEASE);
         SharedMailboxProtocolEmitter main = new SharedMailboxProtocolEmitter(mainOutput,
