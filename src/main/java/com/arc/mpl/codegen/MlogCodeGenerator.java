@@ -61,6 +61,7 @@ import com.arc.mpl.hir.TupleType;
 import com.arc.mpl.hir.MplType;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.memory.StringRuntimeLayout;
+import com.arc.mpl.memory.SharedRuntimeLayout;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -83,6 +84,7 @@ public final class MlogCodeGenerator {
     private final PhysicalMemoryLayout memoryLayout;
     private final List<HardwareRequirement> hardwareRequirements;
     private final Set<String> targetCapabilities;
+    private final MlogRuntimeContext runtimeContext;
     private MlogProgramBuilder output;
     private int temporaryIndex;
     private int unitIterationIndex;
@@ -122,10 +124,26 @@ public final class MlogCodeGenerator {
     /** Creates an emitter with the target capabilities used for profile-specific lowering. */
     public MlogCodeGenerator(MlogLabelStyle labelStyle, PhysicalMemoryLayout memoryLayout,
                              List<HardwareRequirement> hardwareRequirements, Set<String> targetCapabilities) {
+        this(labelStyle, memoryLayout, hardwareRequirements, targetCapabilities, MlogRuntimeContext.singleShard());
+    }
+
+    /** Creates one shard emitter with a structured shared-Memory startup protocol. */
+    public MlogCodeGenerator(MlogLabelStyle labelStyle, PhysicalMemoryLayout memoryLayout,
+                             List<HardwareRequirement> hardwareRequirements, Set<String> targetCapabilities,
+                             MlogRuntimeContext runtimeContext) {
         this.labelStyle = java.util.Objects.requireNonNull(labelStyle, "labelStyle");
         this.memoryLayout = java.util.Objects.requireNonNull(memoryLayout, "memoryLayout");
         this.hardwareRequirements = List.copyOf(java.util.Objects.requireNonNull(hardwareRequirements, "hardwareRequirements"));
         this.targetCapabilities = Set.copyOf(java.util.Objects.requireNonNull(targetCapabilities, "targetCapabilities"));
+        this.runtimeContext = java.util.Objects.requireNonNull(runtimeContext, "runtimeContext");
+        if (runtimeContext.worker() && !this.hardwareRequirements.isEmpty()) {
+            throw new IllegalArgumentException("Worker shard 不能拥有外部硬件启动门");
+        }
+        runtimeContext.sharedRuntime().ifPresent(shared -> {
+            if (!shared.header().equals(memoryLayout.allocations().get(SharedRuntimeLayout.storageKey()))) {
+                throw new IllegalArgumentException("共享 Runtime header 不属于 mlog 的物理 Memory 布局");
+            }
+        });
     }
 
     public String generate(HirProgram program) {
@@ -155,9 +173,13 @@ public final class MlogCodeGenerator {
             functionEntries.put(function.name(), label("function_" + function.name()));
         }
         currentFunction = null;
-        emitStringRuntimeInitialization();
-        emitObjectPoolInitialization();
-        emitHardwareStartupGate();
+        emitSharedRuntimePreparation();
+        if (runtimeContext.main()) {
+            emitStringRuntimeInitialization();
+            emitObjectPoolInitialization();
+        }
+        emitSharedRuntimeReady();
+        if (runtimeContext.main()) emitHardwareStartupGate();
         for (HirStatement statement : program.statements()) {
             emitStatement(statement);
         }
@@ -167,6 +189,107 @@ public final class MlogCodeGenerator {
         for (HirFunction function : program.functions()) emitFunction(function);
         emitStringOutputBlocks();
         return output.render();
+    }
+
+    private void emitSharedRuntimePreparation() {
+        runtimeContext.sharedRuntime().ifPresent(shared -> {
+            if (runtimeContext.main()) emitMainSharedRuntimePreparation(shared);
+            else emitWorkerSharedRuntimeStartup(shared);
+        });
+    }
+
+    /** Invalidates stale state and waits until every Worker has observed this reset phase. */
+    private void emitMainSharedRuntimePreparation(SharedRuntimeLayout shared) {
+        writePhysicalConstant(shared.header(), SharedRuntimeLayout.READY_INDEX, "0");
+        writePhysicalConstant(shared.header(), SharedRuntimeLayout.MAGIC_INDEX,
+            Integer.toString(SharedRuntimeLayout.MAGIC));
+        writePhysicalConstant(shared.header(), SharedRuntimeLayout.ABI_INDEX,
+            Integer.toString(SharedRuntimeLayout.ABI_VERSION));
+        writePhysicalConstant(shared.header(), SharedRuntimeLayout.FINGERPRINT_INDEX,
+            Integer.toString(shared.fingerprint()));
+        writePhysicalConstant(shared.header(), SharedRuntimeLayout.EPOCH_INDEX,
+            Integer.toString(shared.epoch()));
+        for (String worker : shared.workers()) {
+            writePhysicalConstant(shared.header(), shared.heartbeatIndex(worker), "0");
+        }
+
+        MlogProgramBuilder.Label wait = label("runtime_reset_wait");
+        emitLabel(wait);
+        String resetAck = Integer.toString(-shared.epoch());
+        for (String worker : shared.workers()) {
+            String heartbeat = readSharedConstant(shared.header(), shared.heartbeatIndex(worker));
+            emitJump(wait, JumpCondition.NOT_EQUAL, heartbeat, resetAck);
+        }
+    }
+
+    /** Publishes initialized shared storage and waits for every Worker's positive epoch acknowledgement. */
+    private void emitSharedRuntimeReady() {
+        runtimeContext.sharedRuntime().filter(ignored -> runtimeContext.main()).ifPresent(shared -> {
+            writePhysicalConstant(shared.header(), SharedRuntimeLayout.READY_INDEX, "1");
+            MlogProgramBuilder.Label wait = label("runtime_workers_wait");
+            emitLabel(wait);
+            for (String worker : shared.workers()) {
+                String heartbeat = readSharedConstant(shared.header(), shared.heartbeatIndex(worker));
+                emitJump(wait, JumpCondition.NOT_EQUAL, heartbeat, Integer.toString(shared.epoch()));
+            }
+        });
+    }
+
+    private void emitWorkerSharedRuntimeStartup(SharedRuntimeLayout shared) {
+        MlogProgramBuilder.Label resetWait = label("runtime_reset_wait");
+        MlogProgramBuilder.Label readyWait = label("runtime_ready_wait");
+        MlogProgramBuilder.Label resetAck = label("runtime_reset_ack");
+        MlogProgramBuilder.Label readyDone = label("runtime_ready_done");
+        emitLabel(resetWait);
+        verifySharedConstant(resetWait, shared.header(), SharedRuntimeLayout.MAGIC_INDEX,
+            Integer.toString(SharedRuntimeLayout.MAGIC));
+        verifySharedConstant(resetWait, shared.header(), SharedRuntimeLayout.ABI_INDEX,
+            Integer.toString(SharedRuntimeLayout.ABI_VERSION));
+        verifySharedConstant(resetWait, shared.header(), SharedRuntimeLayout.FINGERPRINT_INDEX,
+            Integer.toString(shared.fingerprint()));
+        verifySharedConstant(resetWait, shared.header(), SharedRuntimeLayout.EPOCH_INDEX,
+            Integer.toString(shared.epoch()));
+        verifySharedConstant(resetWait, shared.header(), SharedRuntimeLayout.READY_INDEX, "0");
+        writePhysicalConstant(shared.header(), shared.heartbeatIndex(runtimeContext.shardId()),
+            Integer.toString(-shared.epoch()));
+
+        emitLabel(readyWait);
+        String ready = readSharedConstant(shared.header(), SharedRuntimeLayout.READY_INDEX);
+        emitJump(resetAck, JumpCondition.EQUAL, ready, "0");
+        emitJump(readyWait, JumpCondition.NOT_EQUAL, ready, "1");
+        verifySharedConstant(readyWait, shared.header(), SharedRuntimeLayout.MAGIC_INDEX,
+            Integer.toString(SharedRuntimeLayout.MAGIC));
+        verifySharedConstant(readyWait, shared.header(), SharedRuntimeLayout.ABI_INDEX,
+            Integer.toString(SharedRuntimeLayout.ABI_VERSION));
+        verifySharedConstant(readyWait, shared.header(), SharedRuntimeLayout.FINGERPRINT_INDEX,
+            Integer.toString(shared.fingerprint()));
+        verifySharedConstant(readyWait, shared.header(), SharedRuntimeLayout.EPOCH_INDEX,
+            Integer.toString(shared.epoch()));
+        verifySharedConstant(readyWait, shared.header(), SharedRuntimeLayout.READY_INDEX, "1");
+        writePhysicalConstant(shared.header(), shared.heartbeatIndex(runtimeContext.shardId()),
+            Integer.toString(shared.epoch()));
+        emitJump(readyDone, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(resetAck);
+        writePhysicalConstant(shared.header(), shared.heartbeatIndex(runtimeContext.shardId()),
+            Integer.toString(-shared.epoch()));
+        emitJump(readyWait, JumpCondition.ALWAYS, "0", "0");
+        emitLabel(readyDone);
+    }
+
+    private void verifySharedConstant(MlogProgramBuilder.Label wait, PhysicalMemoryLayout.Allocation header,
+                                      int index, String expected) {
+        String actual = readSharedConstant(header, index);
+        emitJump(wait, JumpCondition.NOT_EQUAL, actual, expected);
+    }
+
+    /** Resets the destination first because an invalid v146 Memory read can preserve its old value. */
+    private String readSharedConstant(PhysicalMemoryLayout.Allocation allocation, int index) {
+        PhysicalMemoryLayout.Slice slice = constantSlice(allocation, index);
+        String result = temporary();
+        output.set(result, "null");
+        output.read(result, segment(slice).alias(),
+            Integer.toString(slice.offset() + index - slice.logicalStart()));
+        return result;
     }
 
     private void emitHardwareStartupGate() {

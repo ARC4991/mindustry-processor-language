@@ -1,6 +1,8 @@
 package com.arc.mpl.project;
 
 import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.memory.SharedRuntimeLayout;
+import com.arc.mpl.memory.SharedRuntimeLayoutPlanner;
 import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.codegen.MlogProgramMetrics;
 import lombok.extern.slf4j.Slf4j;
@@ -11,6 +13,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /** Selects a permitted processor by resource/performance preference, never confusing IPT with program capacity. */
@@ -45,10 +48,48 @@ public final class RuntimePlanner {
                                             RuntimePreferences preferences,
                                             PhysicalMemoryLayout memoryLayout) {
         Objects.requireNonNull(sources, "sources");
+        if (sources.size() > 1) {
+            throw new IllegalArgumentException("多处理器规划必须先准备共享 Runtime 布局并生成启动握手");
+        }
+        return planTopology(sources, profile, preferences, memoryLayout, Optional.empty());
+    }
+
+    /** Allocates the shared startup header before final per-shard mlog is generated. */
+    public SharedRuntimeLayoutPlanner.Result prepareSharedRuntime(List<ShardSource> sources, TargetProfile profile,
+                                                                  RuntimePreferences preferences,
+                                                                  PhysicalMemoryLayout baseMemoryLayout) {
+        Objects.requireNonNull(sources, "sources");
+        Objects.requireNonNull(profile, "profile");
+        Objects.requireNonNull(preferences, "preferences");
+        Objects.requireNonNull(baseMemoryLayout, "baseMemoryLayout");
+        if (sources.size() < 2) throw new IllegalArgumentException("共享 Runtime 至少需要两个 shard");
+        validateMemoryLimits(baseMemoryLayout, preferences);
+        ShardSource main = uniqueMain(sources);
+        List<String> workers = sources.stream().filter(source -> !source.id().equals(main.id()))
+            .map(ShardSource::id).toList();
+        return new SharedRuntimeLayoutPlanner().plan(baseMemoryLayout, main.id(), workers,
+            sourceSeed(sources), profile, preferences);
+    }
+
+    /** Measures final mlog after structured startup handshakes have been emitted. */
+    public RuntimeTopologyPlan planTopology(List<ShardSource> sources, TargetProfile profile,
+                                            RuntimePreferences preferences,
+                                            SharedRuntimeLayoutPlanner.Result prepared) {
+        Objects.requireNonNull(prepared, "prepared");
+        return planTopology(sources, profile, preferences, prepared.physicalMemoryLayout(),
+            Optional.of(prepared.sharedRuntime()));
+    }
+
+    private RuntimeTopologyPlan planTopology(List<ShardSource> sources, TargetProfile profile,
+                                             RuntimePreferences preferences,
+                                             PhysicalMemoryLayout memoryLayout,
+                                             Optional<SharedRuntimeLayout> sharedRuntime) {
+        Objects.requireNonNull(sources, "sources");
         Objects.requireNonNull(profile, "profile");
         Objects.requireNonNull(preferences, "preferences");
         Objects.requireNonNull(memoryLayout, "memoryLayout");
-        if (sources.isEmpty()) throw new IllegalArgumentException("多处理器规划至少需要一个 shard 源程序");
+        if (sources.isEmpty()) throw new IllegalArgumentException("Runtime 规划至少需要一个 shard 源程序");
+        uniqueMain(sources);
         validateMemoryLimits(memoryLayout, preferences);
         Map<TargetProfile.ProcessorKind, Integer> remaining = new EnumMap<>(TargetProfile.ProcessorKind.class);
         remaining.putAll(preferences.processors());
@@ -60,10 +101,31 @@ public final class RuntimePlanner {
             shards.add(new ShardPlan(source.id(), source.roles(), processor, metrics.instructions(), metrics.labels(),
                 metrics.maxTokensPerStatement(), virtualSlots(source.mlog())));
         }
-        RuntimeTopologyPlan plan = new RuntimeTopologyPlan(shards, memoryLayout);
+        RuntimeTopologyPlan plan = new RuntimeTopologyPlan(shards, memoryLayout, sharedRuntime);
         log.info("自动多处理器规划：shards={}, instructions={}, labels={}, virtualSlots={}, physicalSlots={}",
             plan.shards().size(), plan.instructions(), plan.labels(), plan.virtualSlots(), plan.physicalSlots());
         return plan;
+    }
+
+    private ShardSource uniqueMain(List<ShardSource> sources) {
+        List<ShardSource> mains = sources.stream().filter(source -> source.roles().contains("main")).toList();
+        if (mains.size() != 1) throw new IllegalArgumentException("shard 源程序必须且只能包含一个 main");
+        if (!sources.get(0).id().equals(mains.get(0).id())) {
+            throw new IllegalArgumentException("Main shard 必须位于源程序列表首位");
+        }
+        if (sources.stream().map(ShardSource::id).distinct().count() != sources.size()) {
+            throw new IllegalArgumentException("shard 源程序 id 不能重复");
+        }
+        return mains.get(0);
+    }
+
+    private String sourceSeed(List<ShardSource> sources) {
+        StringBuilder seed = new StringBuilder();
+        for (ShardSource source : sources) {
+            seed.append(source.id()).append('\n').append(String.join(",", source.roles())).append('\n')
+                .append(source.mlog()).append('\n');
+        }
+        return seed.toString();
     }
 
     private void validateMemoryLimits(PhysicalMemoryLayout layout, RuntimePreferences preferences) {

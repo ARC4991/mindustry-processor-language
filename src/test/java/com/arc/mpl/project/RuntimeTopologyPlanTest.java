@@ -1,6 +1,8 @@
 package com.arc.mpl.project;
 
 import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.memory.SharedRuntimeLayoutPlanner;
+import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
 import org.junit.jupiter.api.Test;
 
@@ -40,5 +42,26 @@ class RuntimeTopologyPlanTest {
         assertThrows(IllegalArgumentException.class, () -> new RuntimeTopologyPlan(List.of(
             new ShardPlan("Worker-0", List.of("worker"), TargetProfile.ProcessorKind.MICRO, 1, 0, 1, 0)
         ), PhysicalMemoryLayout.empty()));
+    }
+
+    @Test
+    void validatesSharedRuntimeIdentityAndCountsItsSlotsOnce() {
+        List<RuntimePlanner.ShardSource> sources = List.of(
+            new RuntimePlanner.ShardSource("Main", List.of("main"), "main"),
+            new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), "worker"));
+        SharedRuntimeLayoutPlanner.Result prepared = new RuntimePlanner().prepareSharedRuntime(sources,
+            KnownProfiles.find("v146").orElseThrow(), RuntimePreferences.defaults(), PhysicalMemoryLayout.empty());
+        List<ShardPlan> shards = List.of(
+            new ShardPlan("Main", List.of("main"), TargetProfile.ProcessorKind.MICRO, 10, 1, 4, 2),
+            new ShardPlan("Worker-0", List.of("worker"), TargetProfile.ProcessorKind.MICRO, 10, 1, 4, 2));
+
+        RuntimeTopologyPlan topology = new RuntimeTopologyPlan(shards, prepared.physicalMemoryLayout(),
+            java.util.Optional.of(prepared.sharedRuntime()));
+
+        assertEquals(6, topology.runtimeSlots());
+        assertEquals(6, topology.physicalSlots());
+        assertThrows(IllegalArgumentException.class, () -> new RuntimeTopologyPlan(List.of(
+            shards.get(0), new ShardPlan("Worker-1", List.of("worker"), TargetProfile.ProcessorKind.MICRO,
+                10, 1, 4, 2)), prepared.physicalMemoryLayout(), java.util.Optional.of(prepared.sharedRuntime())));
     }
 }

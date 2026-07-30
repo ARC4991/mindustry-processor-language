@@ -1,6 +1,12 @@
 package com.arc.mpl.project;
 
+import com.arc.mpl.codegen.MlogCodeGenerator;
+import com.arc.mpl.codegen.MlogLabelStyle;
+import com.arc.mpl.codegen.MlogProgramMetrics;
+import com.arc.mpl.codegen.MlogRuntimeContext;
+import com.arc.mpl.hir.HirProgram;
 import com.arc.mpl.memory.PhysicalMemoryLayout;
+import com.arc.mpl.memory.SharedRuntimeLayoutPlanner;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
 import org.junit.jupiter.api.Test;
@@ -83,36 +89,63 @@ class RuntimePlannerTest {
             java.util.Map.of(TargetProfile.ProcessorKind.MICRO, 1, TargetProfile.ProcessorKind.LOGIC, 1),
             RuntimePreferences.defaults().memory());
 
-        RuntimeTopologyPlan plan = new RuntimePlanner().planTopology(List.of(
-            new RuntimePlanner.ShardSource("Main", List.of("main"), "set mpl_main 1\nstop\n"),
-            new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), "set mpl_worker 1\nstop\n")
-        ), profile, preferences, PhysicalMemoryLayout.empty());
+        RuntimePlanner planner = new RuntimePlanner();
+        List<RuntimePlanner.ShardSource> seeds = twoShards("main-seed", "worker-seed");
+        SharedRuntimeLayoutPlanner.Result prepared = planner.prepareSharedRuntime(
+            seeds, profile, preferences, PhysicalMemoryLayout.empty());
+        String main = sharedMlog("Main", prepared);
+        String worker = sharedMlog("Worker-0", prepared);
+
+        RuntimeTopologyPlan plan = planner.planTopology(twoShards(main, worker), profile, preferences, prepared);
 
         assertEquals(List.of(TargetProfile.ProcessorKind.MICRO, TargetProfile.ProcessorKind.LOGIC),
             plan.shards().stream().map(ShardPlan::processor).toList());
-        assertEquals(4, plan.instructions());
-        assertEquals(2, plan.virtualSlots());
+        assertEquals(MlogProgramMetrics.analyze(main).instructions()
+            + MlogProgramMetrics.analyze(worker).instructions(), plan.instructions());
+        assertEquals(6, plan.runtimeSlots());
+        org.junit.jupiter.api.Assertions.assertTrue(plan.instructions() > 4);
     }
 
     @Test
     void rejectsInsufficientProcessorsAndOversizedIndividualShards() {
         RuntimePreferences oneProcessor = new RuntimePreferences(RuntimePreferences.Goal.MIN_RESOURCES,
             java.util.Map.of(TargetProfile.ProcessorKind.MICRO, 1), RuntimePreferences.defaults().memory());
-        List<RuntimePlanner.ShardSource> twoShards = List.of(
-            new RuntimePlanner.ShardSource("Main", List.of("main"), "stop\n"),
-            new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), "stop\n")
-        );
+        RuntimePlanner planner = new RuntimePlanner();
+        List<RuntimePlanner.ShardSource> twoShards = twoShards("stop\n", "stop\n");
+        SharedRuntimeLayoutPlanner.Result oneProcessorPrepared = planner.prepareSharedRuntime(
+            twoShards, profile, oneProcessor, PhysicalMemoryLayout.empty());
         IllegalArgumentException count = assertThrows(IllegalArgumentException.class,
-            () -> new RuntimePlanner().planTopology(twoShards, profile, oneProcessor, PhysicalMemoryLayout.empty()));
+            () -> planner.planTopology(twoShards, profile, oneProcessor, oneProcessorPrepared));
         org.junit.jupiter.api.Assertions.assertTrue(count.getMessage().contains("处理器数量不足"));
 
         String oversized = String.join("\n",
             java.util.Collections.nCopies(profile.maxInstructions() + 1, "set value 1")) + "\n";
+        List<RuntimePlanner.ShardSource> oversizedSources = twoShards("stop\n", oversized);
+        SharedRuntimeLayoutPlanner.Result oversizedPrepared = planner.prepareSharedRuntime(
+            oversizedSources, profile, RuntimePreferences.defaults(), PhysicalMemoryLayout.empty());
         IllegalArgumentException limit = assertThrows(IllegalArgumentException.class,
-            () -> new RuntimePlanner().planTopology(List.of(
-                new RuntimePlanner.ShardSource("Main", List.of("main"), "stop\n"),
-                new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), oversized)
-            ), profile, RuntimePreferences.defaults(), PhysicalMemoryLayout.empty()));
+            () -> planner.planTopology(oversizedSources, profile, RuntimePreferences.defaults(), oversizedPrepared));
         org.junit.jupiter.api.Assertions.assertTrue(limit.getMessage().contains("shard Worker-0"));
+    }
+
+    @Test
+    void rejectsMultiShardPlanningWithoutPreparedSharedRuntime() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+            () -> new RuntimePlanner().planTopology(twoShards("stop\n", "stop\n"), profile,
+                RuntimePreferences.defaults(), PhysicalMemoryLayout.empty()));
+
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("必须先准备共享 Runtime"));
+    }
+
+    private List<RuntimePlanner.ShardSource> twoShards(String main, String worker) {
+        return List.of(
+            new RuntimePlanner.ShardSource("Main", List.of("main"), main),
+            new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), worker));
+    }
+
+    private String sharedMlog(String shard, SharedRuntimeLayoutPlanner.Result prepared) {
+        return new MlogCodeGenerator(MlogLabelStyle.RELEASE, prepared.physicalMemoryLayout(), List.of(),
+            profile.capabilities(), MlogRuntimeContext.shared(shard, prepared.sharedRuntime()))
+            .generate(new HirProgram(List.of()));
     }
 }
