@@ -17,6 +17,7 @@ final class MlogProgramBuilder {
     private final List<Instruction> instructions = new ArrayList<>();
     private int nextLabelIndex;
     private int nextInstructionAddress;
+    private int boundLabelCount;
 
     MlogProgramBuilder(MlogLabelStyle labelStyle) {
         this.labelStyle = Objects.requireNonNull(labelStyle, "labelStyle");
@@ -32,6 +33,7 @@ final class MlogProgramBuilder {
     void label(Label label) {
         label.bind(nextInstructionAddress);
         instructions.add(new LabelInstruction(label));
+        boundLabelCount++;
     }
 
     void set(String target, String value) {
@@ -116,6 +118,14 @@ final class MlogProgramBuilder {
     String render() {
         if (instructions.isEmpty()) return "";
         return instructions.stream().map(Instruction::render).collect(java.util.stream.Collectors.joining("\n", "", "\n"));
+    }
+
+    int instructionCount() {
+        return nextInstructionAddress;
+    }
+
+    int labelCount() {
+        return boundLabelCount;
     }
 
     enum Operation {

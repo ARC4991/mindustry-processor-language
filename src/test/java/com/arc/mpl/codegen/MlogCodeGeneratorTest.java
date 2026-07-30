@@ -5,9 +5,13 @@ import com.arc.mpl.hir.HirArrayLiteral;
 import com.arc.mpl.hir.HirConstant;
 import com.arc.mpl.hir.HirDynamicCollectionSet;
 import com.arc.mpl.hir.HirDynamicIndexAccess;
+import com.arc.mpl.hir.HirBinary;
+import com.arc.mpl.hir.HirFunction;
+import com.arc.mpl.hir.HirFunctionParameter;
 import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirMemberAccess;
 import com.arc.mpl.hir.HirProgram;
+import com.arc.mpl.hir.HirReturn;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirVariable;
@@ -20,6 +24,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -186,6 +191,25 @@ class MlogCodeGeneratorTest {
         assertTrue(mlog.contains("op add __mpl_tmp1 mpl_index 40\nread __mpl_tmp0 __mpl_mem0 __mpl_tmp1"));
         assertTrue(mlog.contains("op add __mpl_tmp2 mpl_index -24\nread __mpl_tmp0 __mpl_mem1 __mpl_tmp2"));
         assertTrue(mlog.contains("mpl_memory_read_end_0:\nset mpl_current __mpl_tmp0"));
+    }
+
+    @Test
+    void recordsExactPerFunctionTargetEmissionCosts() {
+        HirFunction identity = new HirFunction("identity", List.of(
+            new HirFunctionParameter("value", ValueType.INT)), ValueType.INT,
+            List.of(new HirReturn(Optional.of(new HirVariable("value", ValueType.INT)))));
+        HirFunction add = new HirFunction("add", List.of(
+            new HirFunctionParameter("left", ValueType.INT),
+            new HirFunctionParameter("right", ValueType.INT)), ValueType.INT,
+            List.of(new HirReturn(Optional.of(new HirBinary(new HirVariable("left", ValueType.INT), "+",
+                new HirVariable("right", ValueType.INT), ValueType.INT)))));
+
+        MlogGenerationResult result = new MlogCodeGenerator().generateWithMetrics(
+            new HirProgram(List.of(identity, add), List.of()));
+
+        assertEquals(new MlogGenerationResult.FunctionMetrics(2, 1), result.functions().get("identity"));
+        assertEquals(new MlogGenerationResult.FunctionMetrics(5, 1), result.functions().get("add"));
+        assertEquals(result.mlog(), new MlogCodeGenerator().generate(new HirProgram(List.of(identity, add), List.of())));
     }
 
     private HirVariableDeclaration clockVariable(String variable, String member, ValueType type) {

@@ -98,6 +98,7 @@ public final class MlogCodeGenerator {
     private Map<String, MlogProgramBuilder.Label> stringOutputLabels;
     private Set<String> globalVariables;
     private Map<String, HirHardwareLink> activeBuildingBindings;
+    private Map<String, MlogGenerationResult.FunctionMetrics> functionMetrics;
     private String activeDrawTarget;
     private String currentFunction;
 
@@ -148,6 +149,11 @@ public final class MlogCodeGenerator {
     }
 
     public String generate(HirProgram program) {
+        return generateWithMetrics(program).mlog();
+    }
+
+    /** Emits mlog and exact per-function target costs without parsing rendered labels back from text. */
+    public MlogGenerationResult generateWithMetrics(HirProgram program) {
         output = new MlogProgramBuilder(labelStyle);
         temporaryIndex = 0;
         unitIterationIndex = 0;
@@ -166,6 +172,7 @@ public final class MlogCodeGenerator {
         prepareStringOutputLabels();
         globalVariables = new HashSet<>();
         activeBuildingBindings = new HashMap<>();
+        functionMetrics = new java.util.LinkedHashMap<>();
         activeDrawTarget = null;
         for (HirStatement statement : program.statements()) {
             if (statement instanceof HirVariableDeclaration declaration) globalVariables.add(declaration.name());
@@ -191,9 +198,15 @@ public final class MlogCodeGenerator {
         } else {
             emitWorkerTaskLoop();
         }
-        for (HirFunction function : localFunctions(program)) emitFunction(function);
+        for (HirFunction function : localFunctions(program)) {
+            int instructionsBefore = output.instructionCount();
+            int labelsBefore = output.labelCount();
+            emitFunction(function);
+            functionMetrics.put(function.name(), new MlogGenerationResult.FunctionMetrics(
+                output.instructionCount() - instructionsBefore, output.labelCount() - labelsBefore));
+        }
         emitStringOutputBlocks();
-        return output.render();
+        return new MlogGenerationResult(output.render(), functionMetrics);
     }
 
     private List<HirFunction> localFunctions(HirProgram program) {
