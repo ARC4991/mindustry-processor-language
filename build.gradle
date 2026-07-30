@@ -101,6 +101,7 @@ tasks.register("releaseArchive", Zip) {
     exclude("*.zip")
     archiveFileName = "mpl-${project.version}-universal-jdk17.zip"
     destinationDirectory = layout.buildDirectory.dir("release-archives")
+    outputs.upToDateWhen { false }
     doLast {
         copy {
             from archiveFile
