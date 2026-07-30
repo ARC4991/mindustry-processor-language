@@ -1,6 +1,6 @@
 # 动态聚合 Memory 运行时（讨论稿）
 
-> 状态：受证明的定长 Array 动态读写、物理分段、mlog lowering 与蓝图部署已实现。动态长度、MutableList/MutableSet、嵌套聚合和对象池尚未实现。
+> 状态：受证明的定长 Array 动态读写、物理分段、唯一所有权对象池、mlog lowering 与蓝图部署已实现。动态长度、MutableList/MutableSet 和嵌套聚合尚未实现。
 
 运行时下标数组不向 MPL 暴露 Memory 或地址。每个需要运行时下标的 `Array<T>` 由编译器分配固定容量的逻辑连续物理槽；一个数组可跨越多个 Cell/Bank 切片，目标 lowering 负责将逻辑下标转换为正确的段 alias 和局部 offset。容量是布局属性，不属于公开类型。
 
@@ -17,4 +17,4 @@ for (var i: Int = 0; i < values.size; i += 1) {
 
 布局器按确定顺序汇总所有需要动态下标的数组，根据 `mpl.json` 中 Cell/Bank 数量上限生成分段。同一份 `PhysicalMemoryLayout` 同时交给 mlog lowering、`RuntimePlanner`、`runtime.msch` 和 `deployment.json`，不允许产物阶段重新猜测内存类型或数量。构建报告当前输出总 `physicalSlots`，部署清单输出每段的 kind、capacity、usedSlots 和 alias；按数组列出占用来源仍属后续报告完善项。
 
-Tuple 保持静态布局。可变 `List`、`Set`、嵌套聚合与对象池在数组 read/write 闭环验证后复用同一分段布局，但必须另行定义容量、去重与生命周期。
+Tuple 默认保持静态布局。对象池已复用数组的跨段 read/write 后端，并以编译器证明的所有者数量作为容量；可变 `List`、`Set` 与嵌套聚合仍必须另行定义容量、去重与生命周期。
