@@ -43,7 +43,7 @@ profile 的 `macros` 是 MIL 白名单的唯一来源。每一个宏必须同时
 
 完整结构由 [构建报告.schema.json](构建报告.schema.json) 校验。一次成功构建总会产生报告，即使它只输出一个 `output.mlog`。报告是优化和 CI 的事实记录，不是部署输入：
 
-- `shards` 逐片列出指令、标签、token 峰值、IPT、虚拟槽、物理槽、String、对象池和 runtime 元数据；
+- `shards` 逐片列出指令、标签、token 峰值、IPT、虚拟槽、物理槽、String、对象池和 runtime 元数据；数值 helper Worker 还写出规划时来自 baseline target 发射的 `plannedFunctionInstructions` / `plannedFunctionLabels`，便于比较函数体成本与最终 Runtime 包装成本；
 - `totals` 可以求和展示，但物理与虚拟槽必须分别列出，不能把 `512 + 4096` 解释为可互换的内存；
 - `optimizations` 记录优化名称、所属 shard 与实际应用次数；profile lowering 还可写 `estimatedInstructionsSaved`、`estimatedLabelsSaved`。这两个可选字段必须来自同一 HIR/布局的 baseline 与专用 mlog 对照，不能用应用次数冒充节省量；
 - `diagnosticSummary` 即使构建失败也可生成，但失败构建不得伪造可部署的 `deployment.json`。
@@ -57,7 +57,7 @@ profile 的 `macros` 是 MIL 白名单的唯一来源。每一个宏必须同时
 
 每个 shard 和 Runtime Memory 还必须记录蓝图局部坐标 `blueprintPosition`。Memory binding 以 `autoConnected` 区分蓝图内已连接的编译器资源与未来可能的手工部署资源；当前生成的 Runtime Memory 始终为 `true`。其 alias 依方块类型使用 `cell__mpl_memN` 或 `bank__mpl_memN`，以防止 v146 在读入蓝图时重命名链接。
 
-多 shard 构建还包含 `runtimeTopology.sharedRuntime`：记录 magic、ABI、布局指纹、部署 epoch、Main/Worker 身份、ready/回执/heartbeat 下标、header 的物理 slice，以及每个 SPSC 邮箱的生产者、消费者、payload 宽度和 slice。`tasks` 逐项记录 helper 函数、所有者 Worker、稳定 kind、参数/返回槽数和严格数值类型，使部署诊断能从邮箱消息反查编译期任务。该字段来自实际代码生成使用的同一份布局与 `RuntimeHelperPlan`，不允许由报告层重新估算；单 shard 构建省略它。
+多 shard 构建还包含 `runtimeTopology.sharedRuntime`：记录 magic、ABI、布局指纹、部署 epoch、Main/Worker 身份、ready/回执/heartbeat 下标、header 的物理 slice，以及每个 SPSC 邮箱的生产者、消费者、payload 宽度和 slice。`tasks` 逐项记录 helper 函数、所有者 Worker、稳定 kind、参数/返回槽数、严格数值类型，以及可选的 `estimatedInstructions` / `estimatedLabels` target 函数体成本，使部署诊断能从邮箱消息反查编译期任务。该字段来自实际代码生成使用的同一份布局与 `RuntimeHelperPlan`，不允许由报告层重新估算；单 shard 构建省略它。
 
 外部硬件第一版全部归 `Main`，构建器另行生成中文 `连接说明.txt`；它按处理器坐标列出 MPL 逻辑名到游戏 alias 的映射。这些外部链接仍是人工部署事实，不会因为 Runtime Memory 可自动连接就被伪装成编译期已验证。
 

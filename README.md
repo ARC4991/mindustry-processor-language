@@ -25,7 +25,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 `build` 的最后一个参数是构建目录。编译器在其中生成最终 `runtime.msch` 蓝图，以及 `Main.mlog`、`Main.mil`、`report.json`、`deployment.json` 和连接说明等可检查的中间产物。`.mil` 保留普通变量、表达式及 `if`/`while`/`for` 等结构化写法，只有需要映射游戏能力的高级糖变为所选 profile 的宏调用；它不是逐条包装 mlog。正常部署时把蓝图导入游戏，`.mlog` 用于排查单个处理器代码。
 
-当 `runtime.goal` 为 `maxPerformance`、允许至少两个处理器，且调用图中存在可达的纯数值函数时，编译器会自动生成 `Worker-N.mlog/.mil`。效果分析只接受无捕获、无 I/O、无 Unit/Building、无物理 Memory/对象分配，且参数与返回值均为 `Int` / `Float` / `Bool` 的函数；有调用关系的 helper 固定同片，互不依赖的分量会在允许的 Worker 间确定性均衡。Main 通过编译器私有的共享 Memory 邮箱同步调用这些函数，最后确认关闭全部 Worker。普通顺序控制流不会按行硬切。
+当 `runtime.goal` 为 `maxPerformance`、允许至少两个处理器，且调用图中存在可达的纯数值函数时，编译器会自动生成 `Worker-N.mlog/.mil`。效果分析只接受无捕获、无 I/O、无 Unit/Building、无物理 Memory/对象分配，且参数与返回值均为 `Int` / `Float` / `Bool` 的函数；有调用关系的 helper 固定同片，互不依赖的分量按同一次 target 发射得到的真实指令/标签数，并计入 handler 与请求宽度开销后确定性均衡。Main 通过编译器私有的共享 Memory 邮箱同步调用这些函数，最后确认关闭全部 Worker。普通顺序控制流不会按行硬切。
 
 默认构建在最终 `.mlog` 中使用最短的 `_0`、`_1` … 跳转标签以节省代码空间；排查生成逻辑时可加 `--debug`，让最终 target lowering 使用可读的完整标签名。源级 `.mil` 保留结构化控制流，通常不需要展示这些标签：
 
