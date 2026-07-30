@@ -82,6 +82,7 @@ public final class MlogCodeGenerator {
     private final MlogLabelStyle labelStyle;
     private final PhysicalMemoryLayout memoryLayout;
     private final List<HardwareRequirement> hardwareRequirements;
+    private final Set<String> targetCapabilities;
     private MlogProgramBuilder output;
     private int temporaryIndex;
     private int unitIterationIndex;
@@ -99,25 +100,32 @@ public final class MlogCodeGenerator {
 
     /** Creates a compact release emitter, suitable for deployment to a processor. */
     public MlogCodeGenerator() {
-        this(MlogLabelStyle.RELEASE, PhysicalMemoryLayout.empty(), List.of());
+        this(MlogLabelStyle.RELEASE, PhysicalMemoryLayout.empty(), List.of(), Set.of());
     }
 
     /** Creates an emitter with an explicit jump-label spelling policy. */
     public MlogCodeGenerator(MlogLabelStyle labelStyle) {
-        this(labelStyle, PhysicalMemoryLayout.empty(), List.of());
+        this(labelStyle, PhysicalMemoryLayout.empty(), List.of(), Set.of());
     }
 
     /** Creates an emitter backed by the exact physical layout used by the runtime blueprint. */
     public MlogCodeGenerator(MlogLabelStyle labelStyle, PhysicalMemoryLayout memoryLayout) {
-        this(labelStyle, memoryLayout, List.of());
+        this(labelStyle, memoryLayout, List.of(), Set.of());
     }
 
     /** Creates an emitter that waits for all manually connected hardware before entering user code. */
     public MlogCodeGenerator(MlogLabelStyle labelStyle, PhysicalMemoryLayout memoryLayout,
                              List<HardwareRequirement> hardwareRequirements) {
+        this(labelStyle, memoryLayout, hardwareRequirements, Set.of());
+    }
+
+    /** Creates an emitter with the target capabilities used for profile-specific lowering. */
+    public MlogCodeGenerator(MlogLabelStyle labelStyle, PhysicalMemoryLayout memoryLayout,
+                             List<HardwareRequirement> hardwareRequirements, Set<String> targetCapabilities) {
         this.labelStyle = java.util.Objects.requireNonNull(labelStyle, "labelStyle");
         this.memoryLayout = java.util.Objects.requireNonNull(memoryLayout, "memoryLayout");
         this.hardwareRequirements = List.copyOf(java.util.Objects.requireNonNull(hardwareRequirements, "hardwareRequirements"));
+        this.targetCapabilities = Set.copyOf(java.util.Objects.requireNonNull(targetCapabilities, "targetCapabilities"));
     }
 
     public String generate(HirProgram program) {
@@ -340,6 +348,7 @@ public final class MlogCodeGenerator {
     }
 
     private void prepareStringOutputLabels() {
+        if (supportsPrintChar()) return;
         for (StringRuntimeLayout.Entry entry : memoryLayout.stringRuntime().entries()) {
             if (!entry.isLiteral()) continue;
             for (String token : stringTokens(entry.literal())) {
@@ -356,6 +365,13 @@ public final class MlogCodeGenerator {
             writePhysicalConstant(memoryLayout.stringRuntime().lengths(), entry.handle() - 1,
                 Integer.toString(entry.isLiteral() ? entry.fixedLength() : 0));
             if (!entry.isLiteral()) continue;
+            if (supportsPrintChar()) {
+                for (int index = 0; index < entry.literal().length(); index++) {
+                    writePhysicalConstant(entry.allocation(), index,
+                        Integer.toString(entry.literal().charAt(index)));
+                }
+                continue;
+            }
             List<String> tokens = stringTokens(entry.literal());
             for (int index = 0; index < tokens.size(); index++) {
                 PhysicalMemoryLayout.Slice slice = constantSlice(entry.allocation(), index);
@@ -367,6 +383,7 @@ public final class MlogCodeGenerator {
 
     /** Emits one shared output block per transport-safe UTF-16 runtime token. */
     private void emitStringOutputBlocks() {
+        if (supportsPrintChar()) return;
         for (Map.Entry<String, MlogProgramBuilder.Label> entry : stringOutputLabels.entrySet()) {
             emitLabel(entry.getValue());
             if (!entry.getKey().isEmpty()) output.print(quote(entry.getKey()));
@@ -778,9 +795,13 @@ public final class MlogCodeGenerator {
         MlogProgramBuilder.Label loop = label("string_print_loop");
         emitJump(end, JumpCondition.GREATER_THAN_EQ, index, length);
         emitLabel(loop);
-        String address = emitStringUnitRead(handle, index);
-        output.operation(Operation.ADD, "__mpl_string_return", "@counter", "1");
-        output.set("@counter", address);
+        String unit = emitStringUnitRead(handle, index);
+        if (supportsPrintChar()) {
+            output.printChar(unit);
+        } else {
+            output.operation(Operation.ADD, "__mpl_string_return", "@counter", "1");
+            output.set("@counter", unit);
+        }
         output.operation(Operation.ADD, index, index, "1");
         emitJump(loop, JumpCondition.LESS_THAN, index, length);
         emitLabel(end);
@@ -799,6 +820,10 @@ public final class MlogCodeGenerator {
             return;
         }
         leaves.add(expression);
+    }
+
+    private boolean supportsPrintChar() {
+        return targetCapabilities.contains("printchar");
     }
 
     /** The target owns one graphics buffer, so runtime flushes it before switching Displays and at exit. */

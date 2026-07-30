@@ -70,6 +70,11 @@ public final class BuildArtifactWriter {
         addOptimization(optimizations, "eliminatedBranches", optimizationReport.eliminatedBranches());
         addOptimization(optimizations, "eliminatedLoops", optimizationReport.eliminatedLoops());
         addOptimization(optimizations, "eliminatedStatements", optimizationReport.eliminatedStatements());
+        optimizationReport.profileOptimizations().forEach(optimization -> {
+            ObjectNode node = addOptimization(optimizations, optimization.name(), optimization.applied());
+            node.put("estimatedInstructionsSaved", optimization.estimatedInstructionsSaved());
+            node.put("estimatedLabelsSaved", optimization.estimatedLabelsSaved());
+        });
         return report;
     }
 
@@ -212,11 +217,12 @@ public final class BuildArtifactWriter {
         return resources;
     }
 
-    private void addOptimization(ArrayNode optimizations, String name, int applied) {
+    private ObjectNode addOptimization(ArrayNode optimizations, String name, int applied) {
         ObjectNode optimization = optimizations.addObject();
         optimization.put("name", name);
         optimization.put("shard", "Main");
         optimization.put("applied", applied);
+        return optimization;
     }
 
     private String access(String type) { return ("Message".equals(type) || "Display".equals(type)) ? "write" : "readWrite"; }

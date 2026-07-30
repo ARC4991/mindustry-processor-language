@@ -13,6 +13,8 @@ import com.arc.mpl.memory.PhysicalMemoryLayout;
 import com.arc.mpl.memory.PhysicalMemoryPlanner;
 import com.arc.mpl.optimization.HirOptimizationResult;
 import com.arc.mpl.optimization.HirOptimizer;
+import com.arc.mpl.optimization.OptimizationReport;
+import com.arc.mpl.optimization.ProfileLoweringAnalyzer;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.project.HardwareContract;
@@ -111,13 +113,17 @@ public final class MplCompiler {
         List<HardwareRequirement> hardwareRequirements = hardware.links().stream()
             .map(link -> new HardwareRequirement(link.gameAlias(), mlogHardwareTypes(link, profile.orElseThrow())))
             .toList();
-        String mlog = new MlogCodeGenerator(labelStyle, memoryLayout, hardwareRequirements).generate(program);
+        TargetProfile target = profile.orElseThrow();
+        String mlog = new MlogCodeGenerator(labelStyle, memoryLayout, hardwareRequirements,
+            target.capabilities()).generate(program);
+        OptimizationReport optimizationReport = new ProfileLoweringAnalyzer().analyze(optimized.report(), program,
+            labelStyle, memoryLayout, hardwareRequirements, target, mlog);
         List<Diagnostic> diagnostics = new ArrayList<>(analyzed.diagnostics());
-        diagnostics.addAll(new MlogOutputValidator().validate(mlog, profile.orElseThrow()));
+        diagnostics.addAll(new MlogOutputValidator().validate(mlog, target));
         boolean hasError = diagnostics.stream().anyMatch(diagnostic -> diagnostic.severity() == Severity.ERROR);
         return new CompilationResult(profile, diagnostics,
             hasError ? Optional.empty() : Optional.of(mlog),
-            hasError ? Optional.empty() : Optional.of(mil), optimized.report(), memoryLayout);
+            hasError ? Optional.empty() : Optional.of(mil), optimizationReport, memoryLayout);
     }
 
     private String exceptionMessage(Exception exception) {

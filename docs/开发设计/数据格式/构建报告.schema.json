@@ -48,7 +48,9 @@
       "properties": {
         "name": { "type": "string" },
         "shard": { "type": "string" },
-        "applied": { "type": "integer", "minimum": 0 }
+        "applied": { "type": "integer", "minimum": 0 },
+        "estimatedInstructionsSaved": { "type": "integer", "minimum": 0 },
+        "estimatedLabelsSaved": { "type": "integer", "minimum": 0 }
       }
     }
   }

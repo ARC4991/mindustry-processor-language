@@ -46,6 +46,10 @@ final class MlogProgramBuilder {
         add(new PrintInstruction(value));
     }
 
+    void printChar(String value) {
+        add(new PrintCharInstruction(value));
+    }
+
     void printFlush(String target) {
         add(new PrintFlushInstruction(target));
     }
@@ -196,7 +200,8 @@ final class MlogProgramBuilder {
     }
 
     private sealed interface Instruction permits LabelInstruction, SetInstruction, PrintInstruction,
-        PrintFlushInstruction, DrawInstruction, DrawFlushInstruction, JumpInstruction, UnitBindInstruction, SensorInstruction,
+        PrintCharInstruction, PrintFlushInstruction, DrawInstruction, DrawFlushInstruction, JumpInstruction,
+        UnitBindInstruction, SensorInstruction,
         ReadInstruction, WriteInstruction, LabelAddressWriteInstruction, OperationInstruction, UnitControlInstruction,
         BuildingControlInstruction, CounterJumpInstruction,
         StopInstruction {
@@ -224,6 +229,12 @@ final class MlogProgramBuilder {
     private record PrintInstruction(String value) implements Instruction {
         @Override public String render() {
             return "print " + value;
+        }
+    }
+
+    private record PrintCharInstruction(String value) implements Instruction {
+        @Override public String render() {
+            return "printchar " + value;
         }
     }
 
