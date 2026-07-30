@@ -269,6 +269,10 @@ public final class PhysicalMemoryPlanner {
         if (expression instanceof HirMemberAccess member) collectExpression(function, member.target(), declarations, required);
         if (expression instanceof HirIntrinsicCall call) collectExpressions(function, call.arguments(), declarations, required);
         if (expression instanceof HirFunctionCall call) collectExpressions(function, call.arguments(), declarations, required);
+        if (expression instanceof com.arc.mpl.hir.HirMethodCall call) {
+            collectExpression(function, call.receiver(), declarations, required);
+            collectExpressions(function, call.arguments(), declarations, required);
+        }
         if (expression instanceof HirNewObject allocation) {
             collectExpressions(function, allocation.arguments(), declarations, required);
         }

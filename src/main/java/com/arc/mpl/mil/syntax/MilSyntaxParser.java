@@ -185,7 +185,9 @@ public final class MilSyntaxParser {
                         (FunctionDeclaration) visit(member.functionDeclaration())));
                 }
             }
-            return new ClassDeclaration(context.name.getText(), fields, methods, span(context));
+            return new ClassDeclaration(context.name.getText(),
+                context.superName == null ? Optional.empty() : Optional.of(context.superName.getText()),
+                fields, methods, span(context));
         }
 
         @Override
@@ -375,6 +377,7 @@ public final class MilSyntaxParser {
             }
             if (context.NULL() != null) return new NullLiteral(span(context));
             if (context.THIS() != null) return new Identifier("this", span(context));
+            if (context.SUPER() != null) return new Identifier("super", span(context));
             if (context.name != null) return new Identifier(context.name.getText(), span(context));
             if (context.macroInvocation() != null) return visit(context.macroInvocation());
             if (context.gameSymbol() != null) return visit(context.gameSymbol());

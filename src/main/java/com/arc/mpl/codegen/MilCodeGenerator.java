@@ -31,6 +31,7 @@ import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
+import com.arc.mpl.hir.HirMethodCall;
 import com.arc.mpl.hir.HirClass;
 import com.arc.mpl.hir.HirNewObject;
 import com.arc.mpl.hir.HirObjectFieldAssignment;
@@ -77,6 +78,10 @@ import java.util.Objects;
  */
 public final class MilCodeGenerator {
     private Map<String, HirFunction> functions = Map.of();
+    /** Internal function ids are deliberately unique for overloaded declarations.
+     *  MIL, however, must retain the source-level overloaded name so it can be
+     *  parsed and resolved again by a subsequent compiler invocation. */
+    private Map<String, String> functionSourceNames = Map.of();
     private Map<String, ObjectMethod> objectMethods = Map.of();
 
     /**
@@ -90,6 +95,8 @@ public final class MilCodeGenerator {
         Objects.requireNonNull(program, "program");
         functions = program.functions().stream().collect(java.util.stream.Collectors.toMap(
             HirFunction::name, value -> value, (left, right) -> left, LinkedHashMap::new));
+        functionSourceNames = program.functions().stream().collect(java.util.stream.Collectors.toMap(
+            HirFunction::name, HirFunction::sourceName, (left, right) -> left, LinkedHashMap::new));
         Map<String, ObjectMethod> methods = new LinkedHashMap<>();
         for (HirClass type : program.classes()) {
             for (HirClass.Method method : type.methods()) {
@@ -111,7 +118,10 @@ public final class MilCodeGenerator {
     }
 
     private void emitClass(Writer writer, HirClass type) {
-        writer.line((type.exported() ? "export " : "") + "class " + identifier(type.name(), "类名") + " {");
+        writer.append(type.exported() ? "export " : "").append("class ")
+            .append(identifier(type.name(), "类名"));
+        type.superClass().ifPresent(parent -> writer.append(" extends ").append(identifier(parent, "父类名")));
+        writer.line(" {");
         writer.indent();
         for (HirClass.Field field : type.fields()) {
             writer.line(access(field.publicAccess()) + identifier(field.name(), "字段名") + ": "
@@ -147,7 +157,7 @@ public final class MilCodeGenerator {
     }
 
     private void emitFunction(Writer writer, HirFunction function) {
-        writer.append("fun ").append(identifier(function.name(), "函数名")).append("(");
+        writer.append("fun ").append(identifier(function.sourceName(), "函数名")).append("(");
         for (int index = 0; index < function.parameters().size(); index++) {
             if (index > 0) writer.append(", ");
             var parameter = function.parameters().get(index);
@@ -451,7 +461,21 @@ public final class MilCodeGenerator {
                 appendExpressions(result, call.arguments().subList(1, call.arguments().size()));
                 return result.append(')').toString();
             }
-            StringBuilder result = new StringBuilder(identifier(call.function(), "函数名")).append('(');
+            String sourceName = functionSourceNames.getOrDefault(call.function(), call.function());
+            StringBuilder result = new StringBuilder(identifier(sourceName, "函数名")).append('(');
+            appendExpressions(result, call.arguments());
+            return result.append(')').toString();
+        }
+        if (value instanceof HirMethodCall call) {
+            StringBuilder result = new StringBuilder();
+            if (call.kind() == HirMethodCall.InvocationKind.SUPER_CONSTRUCTOR) {
+                result.append("super(");
+            } else if (call.kind() == HirMethodCall.InvocationKind.SUPER_METHOD) {
+                result.append("super.").append(identifier(call.sourceName(), "方法名")).append('(');
+            } else {
+                result.append(expression(call.receiver())).append('.')
+                    .append(identifier(call.sourceName(), "方法名")).append('(');
+            }
             appendExpressions(result, call.arguments());
             return result.append(')').toString();
         }

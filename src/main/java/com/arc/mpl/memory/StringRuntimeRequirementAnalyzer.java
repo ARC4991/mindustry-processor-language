@@ -183,6 +183,10 @@ final class StringRuntimeRequirementAnalyzer {
             } else if (value instanceof HirFunctionCall call) {
                 if (call.type() == ValueType.STRING) callResult(function, call);
                 call.arguments().forEach(argument -> expression(function, argument));
+            } else if (value instanceof HirMethodCall call) {
+                if (call.type() == ValueType.STRING) callResult(function, call.stringResultAllocationId());
+                expression(function, call.receiver());
+                call.arguments().forEach(argument -> expression(function, argument));
             } else if (value instanceof HirNewObject allocation) {
                 objectFields(allocation);
                 allocation.arguments().forEach(argument -> expression(function, argument));
@@ -257,11 +261,14 @@ final class StringRuntimeRequirementAnalyzer {
         }
 
         private void callResult(String function, HirFunctionCall call) {
-            int allocationId = call.stringResultAllocationId();
+            callResult(function, call.stringResultAllocationId());
+        }
+
+        private void callResult(String function, int allocationId) {
             if (callResults.containsKey(allocationId)) return;
             PhysicalMemoryLayout.StorageKey storage = new PhysicalMemoryLayout.StorageKey(
                 function, "@stringCallResult:" + allocationId);
-            Requirement requirement = add(Kind.CALL_RESULT, capacities.callResult(call), null, allocationId,
+            Requirement requirement = add(Kind.CALL_RESULT, capacities.callResult(allocationId), null, allocationId,
                 null, null, null, null, storage);
             callResults.put(allocationId, requirement);
         }

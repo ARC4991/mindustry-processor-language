@@ -92,7 +92,7 @@ public final class DisplayRuntimeLowerer {
         });
         collectNames(program.statements());
         List<HirFunction> functions = program.functions().stream()
-            .map(function -> new HirFunction(function.name(), function.parameters(), function.returnType(),
+            .map(function -> new HirFunction(function.name(), function.sourceName(), function.parameters(), function.returnType(),
                 lowerStatements(function.body())))
             .toList();
         return new HirProgram(program.classes(), functions, lowerStatements(program.statements()));
@@ -273,6 +273,7 @@ public final class DisplayRuntimeLowerer {
 
     private boolean containsFunctionCall(HirExpression expression) {
         if (expression instanceof HirFunctionCall) return true;
+        if (expression instanceof com.arc.mpl.hir.HirMethodCall) return true;
         if (expression instanceof HirNewObject) return true;
         if (expression instanceof HirObjectFieldRead read) return containsFunctionCall(read.target());
         if (expression instanceof HirObjectFieldAssignment assignment) {

@@ -114,6 +114,9 @@ final class ObjectPoolRequirementAnalyzer {
             allocation.arguments().forEach(value -> collect(value, owners, pooledAllocations));
         } else if (expression instanceof HirFunctionCall call) {
             call.arguments().forEach(value -> collect(value, owners, pooledAllocations));
+        } else if (expression instanceof HirMethodCall call) {
+            collect(call.receiver(), owners, pooledAllocations);
+            call.arguments().forEach(value -> collect(value, owners, pooledAllocations));
         } else if (expression instanceof HirAssignment assignment) {
             collect(assignment.value(), owners, pooledAllocations);
         } else if (expression instanceof HirBinary binary) {

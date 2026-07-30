@@ -113,6 +113,10 @@ final class StringCapacityAnalyzer {
             return callResults.getOrDefault(value.stringResultAllocationId(), maximumCapacity);
         }
 
+        int callResult(int allocationId) {
+            return callResults.getOrDefault(allocationId, maximumCapacity);
+        }
+
         int aggregateElement(String function, String variable, int element) {
             return aggregateElements.getOrDefault(
                 new StringRuntimeLayout.AggregateElementKey(function, variable, element), maximumCapacity);
@@ -350,6 +354,20 @@ final class StringCapacityAnalyzer {
                 if (call.type() == ValueType.STRING) {
                     callResultCapacities.put(call.stringResultAllocationId(), capacity);
                 }
+                return capacity;
+            }
+            if (value instanceof HirMethodCall call) {
+                List<Integer> arguments = new ArrayList<>();
+                arguments.add(expression(function, call.receiver(), environment));
+                for (HirExpression argument : call.arguments()) arguments.add(expression(function, argument, environment));
+                int capacity = 0;
+                for (HirMethodCall.DispatchTarget target : call.dispatchTargets()) {
+                    recordCall(target.function(), arguments);
+                    if (call.type() == ValueType.STRING) {
+                        capacity = Math.max(capacity, results.getOrDefault(target.function(), maximumCapacity));
+                    }
+                }
+                if (call.type() == ValueType.STRING) callResultCapacities.put(call.stringResultAllocationId(), capacity);
                 return capacity;
             }
             if (value instanceof HirNewObject allocation) {

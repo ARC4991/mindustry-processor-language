@@ -85,9 +85,13 @@ public record StringRuntimeLayout(
     }
 
     public Entry callResult(com.arc.mpl.hir.HirFunctionCall call) {
-        Entry entry = callResults.get(call.stringResultAllocationId());
+        return callResult(call.stringResultAllocationId(), call.function());
+    }
+
+    public Entry callResult(int allocationId, String callable) {
+        Entry entry = callResults.get(allocationId);
         if (entry == null) {
-            throw new IllegalArgumentException("String 函数调用缺少独立结果描述符：" + call.function());
+            throw new IllegalArgumentException("String 调用缺少独立结果描述符：" + callable);
         }
         return entry;
     }

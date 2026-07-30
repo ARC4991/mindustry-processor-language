@@ -19,7 +19,7 @@ topLevelDeclaration
     | statement
     ;
 
-classDeclaration: CLASS name=IDENTIFIER LBRACE classMember* RBRACE;
+classDeclaration: CLASS name=IDENTIFIER (EXTENDS superName=IDENTIFIER)? LBRACE classMember* RBRACE;
 classMember
     : accessModifier? fieldDeclaration
     | accessModifier? functionDeclaration
@@ -73,7 +73,7 @@ assignmentExpression
     : assignmentTarget operator=(ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) assignmentExpression
     | logicalOrExpression
     ;
-assignmentTarget: object=(IDENTIFIER | THIS) (DOT member=IDENTIFIER)?;
+assignmentTarget: object=(IDENTIFIER | THIS | SUPER) (DOT member=IDENTIFIER)?;
 logicalOrExpression: logicalAndExpression (OR_OR logicalAndExpression)*;
 logicalAndExpression: equalityExpression (AND_AND equalityExpression)*;
 equalityExpression: comparisonExpression ((STRICT_EQUAL | STRICT_NOT_EQUAL | EQUAL_EQUAL | BANG_EQUAL) comparisonExpression)*;
@@ -97,6 +97,7 @@ primaryExpression
     | FALSE
     | NULL
     | THIS
+    | SUPER
     | name=IDENTIFIER
     | macroInvocation
     | gameSymbol

@@ -150,7 +150,9 @@ public final class MplSyntaxParser {
                         (FunctionDeclaration) visit(member.functionDeclaration())));
                 }
             }
-            return new ClassDeclaration(context.name.getText(), fields, methods, span(context));
+            return new ClassDeclaration(context.name.getText(),
+                context.superName == null ? Optional.empty() : Optional.of(context.superName.getText()),
+                fields, methods, span(context));
         }
 
         private AccessModifier access(MplParser.AccessModifierContext context) {
@@ -400,6 +402,7 @@ public final class MplSyntaxParser {
             }
             if (context.NULL() != null) return new NullLiteral(span(context));
             if (context.THIS() != null) return new Identifier("this", span(context));
+            if (context.SUPER() != null) return new Identifier("super", span(context));
             if (context.name != null) {
                 return new Identifier(context.name.getText(), span(context));
             }

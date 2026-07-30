@@ -69,7 +69,7 @@ final class ModuleSymbolRewriter {
         List<ClassMethodDeclaration> methods = source.methods().stream()
             .map(method -> new ClassMethodDeclaration(method.access(), method(method.function(), source.name(), className)))
             .toList();
-        return new ClassDeclaration(className, fields, methods, source.span());
+        return new ClassDeclaration(className, source.superClass().map(this::type), fields, methods, source.span());
     }
 
     private FunctionDeclaration method(FunctionDeclaration source, String sourceClassName, String linkedClassName) {

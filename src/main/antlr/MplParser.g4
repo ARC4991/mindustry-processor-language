@@ -19,7 +19,7 @@ topLevelDeclaration
     | statement
     ;
 
-classDeclaration: CLASS name=IDENTIFIER LBRACE classMember* RBRACE;
+classDeclaration: CLASS name=IDENTIFIER (EXTENDS superName=IDENTIFIER)? LBRACE classMember* RBRACE;
 
 classMember
     : accessModifier? fieldDeclaration
@@ -90,7 +90,7 @@ assignmentExpression
     | logicalOrExpression
     ;
 
-assignmentTarget: object=(IDENTIFIER | THIS) (DOT member=IDENTIFIER)?;
+assignmentTarget: object=(IDENTIFIER | THIS | SUPER) (DOT member=IDENTIFIER)?;
 
 logicalOrExpression: logicalAndExpression (OR_OR logicalAndExpression)*;
 logicalAndExpression: equalityExpression (AND_AND equalityExpression)*;
@@ -121,6 +121,7 @@ primaryExpression
     | FALSE
     | NULL
     | THIS
+    | SUPER
     | name=IDENTIFIER
     | LBRACK (expression (COMMA expression)*)? RBRACK
     | LPAREN tupleElement+=expression (COMMA tupleElement+=expression)+ RPAREN

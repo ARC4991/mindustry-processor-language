@@ -287,7 +287,11 @@ public final class ProjectProgramLoader {
         for (ClassDeclaration declaration : module.program().classes()) {
             declare(path, names, used, declaration.name(), declaration.span());
         }
+        Set<String> functionNames = new HashSet<>();
         for (FunctionDeclaration function : module.program().functions()) {
+            // A source function name denotes one overload set.  It owns one
+            // module binding regardless of how many parameter signatures it has.
+            if (!functionNames.add(function.name())) continue;
             declare(path, names, used, function.name(), function.span());
         }
         for (Statement statement : module.program().statements()) {
@@ -326,7 +330,8 @@ public final class ProjectProgramLoader {
                 } else if (mutableTopLevel(path, declaration.name())) {
                     error("MPL1411", "第一版只能 export 函数或 val 常量：" + declaration.name(),
                         path, declaration.span());
-                } else if (visible.putIfAbsent(declaration.name(), target) != null) {
+                } else if (visible.putIfAbsent(declaration.name(), target) != null
+                    && !overloadedFunction(path, declaration.name())) {
                     error("MPL1407", "重复 export：" + declaration.name(), path, declaration.span());
                 }
             }
@@ -340,6 +345,10 @@ public final class ProjectProgramLoader {
             .filter(VariableDeclaration.class::isInstance)
             .map(VariableDeclaration.class::cast)
             .anyMatch(variable -> variable.name().equals(name) && variable.mutable());
+    }
+
+    private boolean overloadedFunction(Path path, String name) {
+        return modules.get(path).program().functions().stream().filter(function -> function.name().equals(name)).count() > 1;
     }
 
     private Map<Path, Map<String, String>> bindImports(Map<Path, Map<String, String>> declarations,

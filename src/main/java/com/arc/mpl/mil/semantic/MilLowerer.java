@@ -76,7 +76,7 @@ public final class MilLowerer {
     private ClassDeclaration lowerClass(ClassDeclaration source) {
         List<ClassMethodDeclaration> methods = source.methods().stream()
             .map(method -> new ClassMethodDeclaration(method.access(), lowerFunction(method.function()))).toList();
-        return new ClassDeclaration(source.name(), source.fields(), methods, source.span());
+        return new ClassDeclaration(source.name(), source.superClass(), source.fields(), methods, source.span());
     }
 
     private FunctionDeclaration lowerFunction(FunctionDeclaration function) {

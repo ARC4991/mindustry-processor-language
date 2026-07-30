@@ -122,6 +122,9 @@ final class ObjectAllocationCollector {
         }
         if (expression instanceof HirFunctionCall call) {
             call.arguments().forEach(argument -> collect(argument, found));
+        } else if (expression instanceof com.arc.mpl.hir.HirMethodCall call) {
+            collect(call.receiver(), found);
+            call.arguments().forEach(argument -> collect(argument, found));
         } else if (expression instanceof HirAssignment assignment) {
             collect(assignment.value(), found);
         } else if (expression instanceof HirBinary binary) {

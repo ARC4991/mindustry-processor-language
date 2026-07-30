@@ -237,6 +237,17 @@ public final class HirEffectAnalyzer {
             }
             return;
         }
+        if (expression instanceof com.arc.mpl.hir.HirMethodCall call) {
+            inspectExpression(call.receiver(), locals, functions, summaries, effects, reasons);
+            for (HirExpression argument : call.arguments()) inspectExpression(argument, locals, functions, summaries, effects, reasons);
+            for (var target : call.dispatchTargets()) {
+                FunctionEffect summary = summaries.get(target.function());
+                if (summary == null) add(effects, reasons, EffectKind.UNKNOWN_CALL, "未知方法：" + target.function());
+                else { effects.addAll(summary.effects()); reasons.addAll(summary.reasons()); }
+            }
+            add(effects, reasons, EffectKind.READS_STATE, "对象方法调用不属于纯数值 helper");
+            return;
+        }
         if (expression instanceof HirMemberAccess member) {
             inspectExpression(member.target(), locals, functions, summaries, effects, reasons);
             add(effects, reasons, EffectKind.READS_STATE, "成员访问可能读取游戏状态"); return;
@@ -384,6 +395,10 @@ public final class HirEffectAnalyzer {
 
     private void collectCalls(HirExpression expression, Set<String> calls) {
         if (expression instanceof HirFunctionCall call) { calls.add(call.function()); call.arguments().forEach(value -> collectCalls(value, calls)); return; }
+        if (expression instanceof com.arc.mpl.hir.HirMethodCall call) {
+            call.dispatchTargets().forEach(target -> calls.add(target.function()));
+            collectCalls(call.receiver(), calls); call.arguments().forEach(value -> collectCalls(value, calls)); return;
+        }
         if (expression instanceof HirUnary unary) { collectCalls(unary.operand(), calls); return; }
         if (expression instanceof HirBinary binary) { collectCalls(binary.left(), calls); collectCalls(binary.right(), calls); return; }
         if (expression instanceof HirAssignment assignment) { collectCalls(assignment.value(), calls); return; }

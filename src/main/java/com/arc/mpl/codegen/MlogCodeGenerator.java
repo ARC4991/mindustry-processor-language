@@ -31,6 +31,7 @@ import com.arc.mpl.hir.HirIntrinsicCall;
 import com.arc.mpl.hir.HirIndexAccess;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
+import com.arc.mpl.hir.HirMethodCall;
 import com.arc.mpl.hir.HirClass;
 import com.arc.mpl.hir.HirNewObject;
 import com.arc.mpl.hir.HirObjectFieldAssignment;
@@ -1088,6 +1089,7 @@ public final class MlogCodeGenerator {
         if (expression instanceof HirMemberAccess member) return emitMemberAccess(member);
         if (expression instanceof HirIntrinsicCall call) return emitIntrinsicCall(call);
         if (expression instanceof HirFunctionCall call) return emitFunctionCall(call);
+        if (expression instanceof HirMethodCall call) return emitMethodCall(call);
         if (expression instanceof HirNewObject allocation) return emitNewObject(allocation);
         if (expression instanceof HirObjectFieldRead read) return emitObjectFieldRead(read);
         if (expression instanceof HirObjectFieldAssignment assignment) return emitObjectFieldAssignment(assignment);
@@ -1501,6 +1503,63 @@ public final class MlogCodeGenerator {
         return Integer.toString(target.handle());
     }
 
+    private String emitMethodCall(HirMethodCall call) {
+        String receiver = temporary();
+        output.set(receiver, emitExpression(call.receiver()));
+        List<String> savedArguments = new java.util.ArrayList<>();
+        savedArguments.add(receiver);
+        for (HirExpression argument : call.arguments()) {
+            String saved = temporary();
+            output.set(saved, emitExpression(argument));
+            savedArguments.add(saved);
+        }
+        String result;
+        List<String> targets = call.dispatchTargets().stream().map(HirMethodCall.DispatchTarget::function).distinct().toList();
+        if (call.kind() != HirMethodCall.InvocationKind.VIRTUAL || targets.size() == 1) {
+            result = emitPreparedFunctionCall(targets.get(0), savedArguments, call.type());
+        } else {
+            result = emitVirtualMethodCall(call, receiver, savedArguments);
+        }
+        if (call.type() != com.arc.mpl.hir.ValueType.STRING) return result;
+        StringRuntimeLayout.Entry target = memoryLayout.stringRuntime()
+            .callResult(call.stringResultAllocationId(), call.sourceName());
+        emitStringCopy(result, target);
+        return Integer.toString(target.handle());
+    }
+
+    private String emitVirtualMethodCall(HirMethodCall call, String receiver, List<String> savedArguments) {
+        String result = temporary();
+        output.set(result, "0");
+        MlogProgramBuilder.Label end = label("virtual_method_end");
+        Map<String, MlogProgramBuilder.Label> entries = new java.util.LinkedHashMap<>();
+        for (String function : call.dispatchTargets().stream().map(HirMethodCall.DispatchTarget::function).distinct().toList()) {
+            entries.put(function, label("virtual_method_" + function));
+        }
+        for (HirMethodCall.DispatchTarget target : call.dispatchTargets()) {
+            MlogProgramBuilder.Label entry = entries.get(target.function());
+            for (int allocationId : allocations(target.runtimeClass())) {
+                output.jump(entry, JumpCondition.EQUAL, receiver, Integer.toString(allocationId));
+            }
+            memoryLayout.objectPool(target.runtimeClass()).ifPresent(pool -> {
+                MlogProgramBuilder.Label next = label("virtual_method_pool_next");
+                output.jump(next, JumpCondition.GREATER_THAN, receiver,
+                    Long.toString(-((long) pool.handleBase() + 1L)));
+                output.jump(next, JumpCondition.LESS_THAN, receiver,
+                    Long.toString(-((long) pool.handleBase() + pool.capacity())));
+                output.jump(entry, JumpCondition.ALWAYS, "0", "0");
+                emitLabel(next);
+            });
+        }
+        output.jump(end, JumpCondition.ALWAYS, "0", "0");
+        for (Map.Entry<String, MlogProgramBuilder.Label> entry : entries.entrySet()) {
+            emitLabel(entry.getValue());
+            output.set(result, emitPreparedFunctionCall(entry.getKey(), savedArguments, call.type()));
+            output.jump(end, JumpCondition.ALWAYS, "0", "0");
+        }
+        emitLabel(end);
+        return result;
+    }
+
     private String emitRemoteFunctionCall(HirFunctionCall call, List<String> savedArguments) {
         RuntimeHelperPlan.Task task = runtimeContext.helperPlan().task(call.function()).orElseThrow();
         RuntimeHelperPlan.Worker worker = runtimeContext.helperPlan().workers().stream()
@@ -1606,17 +1665,16 @@ public final class MlogCodeGenerator {
         String result = temporary();
         output.set(result, "0");
         MlogProgramBuilder.Label end = label("object_field_read_end");
-        java.util.Optional<PhysicalMemoryLayout.ObjectPool> pooled = memoryLayout.objectPool(className);
-        MlogProgramBuilder.Label fixed = pooled.isPresent() ? label("object_field_read_fixed") : null;
-        if (pooled.isPresent()) {
-            emitJump(fixed, JumpCondition.GREATER_THAN_EQ, target, "0");
-            PhysicalMemoryLayout.ObjectPool pool = pooled.orElseThrow();
+        for (PhysicalMemoryLayout.ObjectPool pool : objectPoolsAssignableTo(className)) {
+            MlogProgramBuilder.Label next = label("object_field_read_pool_next");
+            emitJump(next, JumpCondition.GREATER_THAN, target, Long.toString(-((long) pool.handleBase() + 1L)));
+            emitJump(next, JumpCondition.LESS_THAN, target, Long.toString(-((long) pool.handleBase() + pool.capacity())));
             PhysicalMemoryLayout.PoolField poolField = pool.field(field);
             output.set(result, emitPhysicalRead(poolField.allocation(), pooledFieldIndex(target, pool, poolField, element)));
             emitJump(end, JumpCondition.ALWAYS, "0", "0");
-            emitLabel(fixed);
+            emitLabel(next);
         }
-        for (int allocationId : allocations(className)) {
+        for (int allocationId : allocationsAssignableTo(className)) {
             MlogProgramBuilder.Label next = label("object_field_read_next");
             emitJump(next, JumpCondition.NOT_EQUAL, target, Integer.toString(allocationId));
             output.set(result, objectFieldSlot(allocationId, field, element));
@@ -1688,7 +1746,7 @@ public final class MlogCodeGenerator {
         String result = temporary();
         output.set(result, "0");
         MlogProgramBuilder.Label end = label("object_string_write_end");
-        for (int allocationId : allocations(className)) {
+        for (int allocationId : allocationsAssignableTo(className)) {
             MlogProgramBuilder.Label next = label("object_string_write_next");
             emitJump(next, JumpCondition.NOT_EQUAL, objectHandle, Integer.toString(allocationId));
             StringRuntimeLayout.Entry target = memoryLayout.stringRuntime()
@@ -1707,17 +1765,16 @@ public final class MlogCodeGenerator {
 
     private void emitObjectSlotWrite(String target, String className, String field, Integer element, String value) {
         MlogProgramBuilder.Label end = label("object_field_write_end");
-        java.util.Optional<PhysicalMemoryLayout.ObjectPool> pooled = memoryLayout.objectPool(className);
-        MlogProgramBuilder.Label fixed = pooled.isPresent() ? label("object_field_write_fixed") : null;
-        if (pooled.isPresent()) {
-            emitJump(fixed, JumpCondition.GREATER_THAN_EQ, target, "0");
-            PhysicalMemoryLayout.ObjectPool pool = pooled.orElseThrow();
+        for (PhysicalMemoryLayout.ObjectPool pool : objectPoolsAssignableTo(className)) {
+            MlogProgramBuilder.Label next = label("object_field_write_pool_next");
+            emitJump(next, JumpCondition.GREATER_THAN, target, Long.toString(-((long) pool.handleBase() + 1L)));
+            emitJump(next, JumpCondition.LESS_THAN, target, Long.toString(-((long) pool.handleBase() + pool.capacity())));
             PhysicalMemoryLayout.PoolField poolField = pool.field(field);
             emitPhysicalWrite(poolField.allocation(), pooledFieldIndex(target, pool, poolField, element), value);
             emitJump(end, JumpCondition.ALWAYS, "0", "0");
-            emitLabel(fixed);
+            emitLabel(next);
         }
-        for (int allocationId : allocations(className)) {
+        for (int allocationId : allocationsAssignableTo(className)) {
             MlogProgramBuilder.Label next = label("object_field_write_next");
             emitJump(next, JumpCondition.NOT_EQUAL, target, Integer.toString(allocationId));
             output.set(objectFieldSlot(allocationId, field, element), value);
@@ -1771,6 +1828,28 @@ public final class MlogCodeGenerator {
 
     private List<Integer> allocations(String className) {
         return objectAllocations.getOrDefault(className, List.of());
+    }
+
+    private List<Integer> allocationsAssignableTo(String className) {
+        return objectAllocations.entrySet().stream()
+            .filter(entry -> isSubclass(entry.getKey(), className))
+            .flatMap(entry -> entry.getValue().stream()).sorted().toList();
+    }
+
+    private List<PhysicalMemoryLayout.ObjectPool> objectPoolsAssignableTo(String className) {
+        return classes.keySet().stream().filter(candidate -> isSubclass(candidate, className))
+            .map(memoryLayout::objectPool).flatMap(java.util.Optional::stream)
+            .sorted(java.util.Comparator.comparing(PhysicalMemoryLayout.ObjectPool::className)).toList();
+    }
+
+    private boolean isSubclass(String candidate, String expected) {
+        String current = candidate;
+        while (current != null) {
+            if (current.equals(expected)) return true;
+            HirClass type = classes.get(current);
+            current = type == null ? null : type.superClass().orElse(null);
+        }
+        return false;
     }
 
     private String objectFieldSlot(int allocationId, String field, Integer element) {
