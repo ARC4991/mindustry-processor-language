@@ -16,7 +16,11 @@ public record TupleType(List<MplType> elementTypes) implements MplType {
 
     @Override
     public boolean canAssignFrom(MplType source) {
-        return equals(source);
+        if (!(source instanceof TupleType tuple) || tuple.elementTypes().size() != elementTypes.size()) return false;
+        for (int index = 0; index < elementTypes.size(); index++) {
+            if (!elementTypes.get(index).canAssignFrom(tuple.elementTypes().get(index))) return false;
+        }
+        return true;
     }
 
     @Override

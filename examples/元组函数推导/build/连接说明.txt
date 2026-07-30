@@ -1,0 +1,12 @@
+MPL 外部硬件连接说明
+蓝图：MPL-tuple-function-inference-example-0.1.0-b4c1874ef22a
+构建：b4c1874ef22ab95090e2c5096bee5e3746f2ce56808466826b73e40b8e193f1b
+
+所有外部硬件只连接 Main。Main 是蓝图最左侧处理器，Main 局部坐标为 (0, 0)。
+打开处理器代码时，首行应为：# MPL shard: Main / build: b4c1874ef22a
+
+按以下 alias 连接；多个同类建筑按数字从小到大连接：
+- Status : Message -> message1
+
+选中 Main 进入配置模式后，游戏会在已连接建筑上显示实际 alias；必须与上表一致。
+Main 会等待全部 alias 存在且类型正确后再进入顶层程序；连接完成后无需重新写入代码。

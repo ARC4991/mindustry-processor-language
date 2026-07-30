@@ -1,0 +1,16 @@
+// 由 MPL 自动生成的 MIL；请通过 mpl build 重新生成，勿直接编辑。
+// 普通结构保留为 MIL；@unit.* 与 @io.* 是由 target profile 展开的受限宏。
+fun rotate(source: (Int, Float)): (Float, Int) {
+    return (source[1], source[0]);
+}
+fun normalize(decimal: Bool): (Float, Float) {
+    if (decimal) {
+        return (1.5, 2);
+    }
+    return (1, 2.5);
+}
+val original: (Int, Float) = (3, 4.5);
+val rotated: (Float, Int) = rotate(original);
+val normalized: (Float, Float) = normalize(true);
+val mixed: Float[] = [1, 2.5, 3];
+@io.print(@message1, "rotated=", rotated[0], ",", rotated[1], " normalized=", normalized[0], ",", normalized[1], " arraySize=", 3);

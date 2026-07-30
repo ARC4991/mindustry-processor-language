@@ -184,6 +184,57 @@ class SemanticAnalyzerTest {
     }
 
     @Test
+    void infersTupleAndNumericArrayTypesAndSupportsScalarTupleFunctionAbi() {
+        Program program = parser.parse("""
+            fun rotate(source: (Int, Float)) {
+                return (source[1], source[0]);
+            }
+            fun choose(decimal: Bool) {
+                if (decimal) { return (1.5, 2); }
+                return (1, 2.5);
+            }
+            val point = (3, 4.5);
+            val rotated = rotate(point);
+            val mixed = [1, 2.5, 3];
+            val x = rotated[0];
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var function = result.program().orElseThrow().functions().stream()
+            .filter(value -> value.sourceName().equals("rotate")).findFirst().orElseThrow();
+        assertEquals(new com.arc.mpl.hir.TupleType(java.util.List.of(
+            com.arc.mpl.hir.ValueType.FLOAT, com.arc.mpl.hir.ValueType.INT)), function.returnType());
+        var choose = result.program().orElseThrow().functions().stream()
+            .filter(value -> value.sourceName().equals("choose")).findFirst().orElseThrow();
+        assertEquals(new com.arc.mpl.hir.TupleType(java.util.List.of(
+            com.arc.mpl.hir.ValueType.FLOAT, com.arc.mpl.hir.ValueType.FLOAT)), choose.returnType());
+        var declarations = result.program().orElseThrow().statements().stream()
+            .map(statement -> assertInstanceOf(HirVariableDeclaration.class, statement)).toList();
+        assertEquals(new com.arc.mpl.hir.TupleType(java.util.List.of(
+            com.arc.mpl.hir.ValueType.INT, com.arc.mpl.hir.ValueType.FLOAT)), declarations.get(0).type());
+        assertEquals(function.returnType(), declarations.get(1).type());
+        assertEquals(new CollectionType(CollectionType.Kind.ARRAY, com.arc.mpl.hir.ValueType.FLOAT),
+            declarations.get(2).type());
+        assertEquals(com.arc.mpl.hir.ValueType.FLOAT, declarations.get(3).type());
+    }
+
+    @Test
+    void rejectsArraysAndStringTuplesInFunctionAbiUntilShapeAndStringLayoutsAreAvailable() {
+        Program program = parser.parse("""
+            fun arraySize(values: Int[]): Int { return values.size; }
+            fun echo(value: (String, Int)): (String, Int) { return value; }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertEquals(2, result.diagnostics().stream()
+            .filter(diagnostic -> diagnostic.code().equals("MPL3602")).count());
+    }
+
+    @Test
     void requiresAnExplicitReturnTypeWhenInferenceCannotResolveAValue() {
         Program program = parser.parse("""
             fun readGlobal() { return later; }

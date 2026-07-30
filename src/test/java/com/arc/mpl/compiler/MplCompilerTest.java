@@ -72,6 +72,64 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesInferredTupleFunctionAbiAndRecompilesGeneratedMil(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun rotate(source: (Int, Float)) {
+                return (source[1], source[0]);
+            }
+            val original = (3, 4.5);
+            val rotated = rotate(original);
+            val direct = rotate((7, 8.5))[0];
+            val first = rotated[0];
+            val second = rotated[1];
+            rotate((9, 10.5));
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("set __mpl_fn0_arg0_e0"), mlog);
+        assertTrue(mlog.contains("set __mpl_fn0_arg0_e1"), mlog);
+        assertTrue(mlog.contains("set __mpl_fn0_result_e0"), mlog);
+        assertTrue(mlog.contains("set __mpl_fn0_result_e1"), mlog);
+        assertTrue(mlog.contains("set mpl_rotated_e0"), mlog);
+        assertTrue(mlog.contains("set mpl_rotated_e1"), mlog);
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("fun rotate(source: (Int, Float)): (Float, Int)"), mil);
+        assertTrue(mil.contains("val original: (Int, Float) = (3, 4.5);"), mil);
+        assertTrue(mil.contains("val rotated: (Float, Int) = rotate(original);"), mil);
+
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
+        assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
+        assertEquals(mlog, regenerated.mlog().orElseThrow());
+    }
+
+    @Test
+    void snapshotsNestedTupleCallBeforeWritingTheOuterArguments(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun produce(): (Int, Int) { return (40, 2); }
+            fun consume(value: (Int, Int)): Int { return value[0] + value[1]; }
+            val answer = consume(produce());
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(java.util.regex.Pattern.compile(
+            "set (__mpl_tmp\\d+) __mpl_fn0_result_e0\\R"
+                + "set (__mpl_tmp\\d+) __mpl_fn0_result_e1\\R"
+                + "set __mpl_fn1_arg0_e0 \\1\\R"
+                + "set __mpl_fn1_arg0_e1 \\2\\R")
+            .matcher(mlog).find(), mlog);
+    }
+
+    @Test
     void infersInstanceMethodReturnsAndSerializesThemIntoMil(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

@@ -51,10 +51,10 @@ export const mplLessons: TutorialLesson[] = [
   },
   {
     id: "mpl-functions", track: "mpl", number: "07", title: "函数、返回推导与后置声明",
-    summary: "组织逻辑并让函数先使用、后声明。", keywords: ["fun", "return", "后置声明", "重载"],
+    summary: "组织逻辑并让函数先使用、后声明。", keywords: ["fun", "return", "后置声明", "元组 ABI"],
     sections: [
-      { title: "返回类型也能推导", paragraphs: ["函数参数必须标注类型；返回类型可从所有 return 路径推导。函数和类支持后置声明，调用点不受源码排列顺序限制。"], terms: ["fun", "return", "返回类型", "后置声明"], code: { language: "mpl", source: "val next = advance(2);\n\nfun advance(value: Int) {\n  return value + 1;\n}" } },
-      { title: "目标层 ABI", paragraphs: ["函数最终使用 @counter 间接跳转和编译器私有返回槽。递归当前被禁止；缺失返回路径或无法稳定推导返回类型会直接报错。"], terms: ["@counter", "递归", "编译器私有返回槽"], callout: { tone: "warning", title: "不是运行时异常", text: "MPL 当前不设计可捕获的运行时失败；这些问题必须在编译期被拒绝。" } }
+      { title: "返回类型也能推导", paragraphs: ["函数参数必须标注类型；返回类型可从所有 return 路径推导。函数和类支持后置声明，调用点不受源码排列顺序限制。顶层函数还可传入并返回由 Int、Float、Bool 组成的元组。"], terms: ["fun", "return", "返回类型", "后置声明", "Int", "Float", "Bool", "元组"], code: { language: "mpl", source: "val rotated = rotate((3, 4.5)); // (Float, Int)\n\nfun rotate(source: (Int, Float)) {\n  return (source[1], source[0]);\n}" } },
+      { title: "目标层 ABI", paragraphs: ["函数最终使用 @counter 间接跳转和编译器私有返回槽。元组按位置进入独立参数与结果槽，生成的 MIL 保留原签名并可再次编译。递归当前被禁止；缺失返回路径或无法稳定推导返回类型会直接报错。"], terms: ["@counter", "元组", "MIL", "递归", "编译器私有返回槽"], callout: { tone: "warning", title: "数组形状", text: "Int[] 类型本身不携带长度；数组参数与返回要等待编译期形状特化，当前会在编译期明确拒绝。" } }
     ]
   },
   {

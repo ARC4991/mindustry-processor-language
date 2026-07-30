@@ -326,6 +326,13 @@ public final class MlogCodeGenerator {
                 output.set(mutableListSizeVariable(declaration.name()), Integer.toString(list.elements().size()));
                 return;
             }
+            if (declaration.type() instanceof TupleType tuple) {
+                List<String> values = emitTupleValues(declaration.initializer(), tuple);
+                for (int index = 0; index < values.size(); index++) {
+                    storeAggregateElement(declaration.name(), index, values.get(index));
+                }
+                return;
+            }
             if (declaration.type() == com.arc.mpl.hir.ValueType.STRING) {
                 StringRuntimeLayout.Entry target = stringVariable(declaration.name());
                 String source = emitExpression(declaration.initializer());
@@ -447,7 +454,12 @@ public final class MlogCodeGenerator {
     private void emitReturn(HirReturn returned) {
         if (currentFunction == null) throw new IllegalStateException("return 缺少函数上下文");
         returned.value().ifPresent(value -> {
-            if (value.type() == com.arc.mpl.hir.ValueType.STRING) {
+            if (value.type() instanceof TupleType tuple) {
+                List<String> values = emitTupleValues(value, tuple);
+                for (int index = 0; index < values.size(); index++) {
+                    output.set(functionResultElementSlot(currentFunction, index), values.get(index));
+                }
+            } else if (value.type() == com.arc.mpl.hir.ValueType.STRING) {
                 StringRuntimeLayout.Entry target = memoryLayout.stringRuntime().functionResult(currentFunction)
                     .orElseThrow(() -> new IllegalArgumentException("String 函数缺少返回缓冲：" + currentFunction));
                 emitStringCopy(emitExpression(value), target);
@@ -1131,6 +1143,30 @@ public final class MlogCodeGenerator {
         }
     }
 
+    private List<String> emitTupleValues(HirExpression expression, TupleType type) {
+        if (expression instanceof HirFunctionCall call) return emitTupleFunctionCall(call, type);
+        List<String> values = new java.util.ArrayList<>();
+        if (expression instanceof HirTupleLiteral tuple) {
+            for (HirExpression element : tuple.elements()) values.add(emitExpression(element));
+        } else if (expression instanceof HirVariable variable) {
+            for (int index = 0; index < type.elementTypes().size(); index++) {
+                values.add(loadAggregateElement(variable.name(), index));
+            }
+        } else {
+            throw new IllegalArgumentException("tuple value must be a literal, variable, or function call");
+        }
+        if (values.size() != type.elementTypes().size()) {
+            throw new IllegalArgumentException("tuple value shape does not match " + type.displayName());
+        }
+        List<String> snapshots = new java.util.ArrayList<>();
+        for (String value : values) {
+            String snapshot = temporary();
+            output.set(snapshot, value);
+            snapshots.add(snapshot);
+        }
+        return List.copyOf(snapshots);
+    }
+
     private String emitStringConcat(HirStringConcat concat) {
         // Evaluate both sides before mutating the reusable concatenation buffer.
         String left = temporary();
@@ -1339,7 +1375,7 @@ public final class MlogCodeGenerator {
         if (access.target() instanceof HirObjectFieldRead read && access.index() instanceof HirConstant index) {
             return emitObjectTupleElementRead(read, objectTupleIndex(read, index));
         }
-        if (!(access.target() instanceof HirVariable variable) || !(access.index() instanceof HirConstant index)) {
+        if (!(access.index() instanceof HirConstant index)) {
             throw new IllegalArgumentException("aggregate access must be statically resolved before target lowering");
         }
         int position;
@@ -1348,7 +1384,11 @@ public final class MlogCodeGenerator {
         } catch (NumberFormatException | ArithmeticException exception) {
             throw new IllegalArgumentException("invalid aggregate index: " + index.mlogLiteral(), exception);
         }
-        return loadAggregateElement(variable.name(), position);
+        if (access.target() instanceof HirVariable variable) return loadAggregateElement(variable.name(), position);
+        if (access.target().type() instanceof TupleType tuple) {
+            return emitTupleValues(access.target(), tuple).get(position);
+        }
+        throw new IllegalArgumentException("aggregate access target must be a variable or tuple value");
     }
 
     private String emitDynamicIndexAccess(HirDynamicIndexAccess access) {
@@ -1537,6 +1577,15 @@ public final class MlogCodeGenerator {
     }
 
     private String emitFunctionCall(HirFunctionCall call) {
+        HirFunction function = functions.get(call.function());
+        if (function == null) throw new IllegalArgumentException("unknown HIR function: " + call.function());
+        if (call.type() instanceof TupleType tuple) {
+            emitTupleFunctionCall(call, tuple);
+            return "0";
+        }
+        if (function.parameters().stream().anyMatch(parameter -> parameter.type() instanceof TupleType)) {
+            return emitStructuredScalarFunctionCall(call, function);
+        }
         List<String> savedArguments = new java.util.ArrayList<>();
         for (HirExpression argument : call.arguments()) {
             String saved = temporary();
@@ -1550,6 +1599,85 @@ public final class MlogCodeGenerator {
         StringRuntimeLayout.Entry target = memoryLayout.stringRuntime().callResult(call);
         emitStringCopy(result, target);
         return Integer.toString(target.handle());
+    }
+
+    private String emitStructuredScalarFunctionCall(HirFunctionCall call, HirFunction function) {
+        List<SavedFunctionArgument> arguments = saveStructuredArguments(function, call.arguments());
+        writeStructuredArguments(function, arguments);
+        invokeFunction(function);
+        if (call.type() == com.arc.mpl.hir.ValueType.VOID) return "0";
+        String result = temporary();
+        output.set(result, functionResultSlot(function.name()));
+        if (call.type() != com.arc.mpl.hir.ValueType.STRING) return result;
+        StringRuntimeLayout.Entry target = memoryLayout.stringRuntime().callResult(call);
+        emitStringCopy(result, target);
+        return Integer.toString(target.handle());
+    }
+
+    private List<String> emitTupleFunctionCall(HirFunctionCall call, TupleType returnType) {
+        HirFunction function = functions.get(call.function());
+        if (function == null) throw new IllegalArgumentException("unknown HIR function: " + call.function());
+        if (!returnType.equals(function.returnType())) {
+            throw new IllegalArgumentException("tuple call return type does not match function signature: " + call.function());
+        }
+        List<SavedFunctionArgument> arguments = saveStructuredArguments(function, call.arguments());
+        writeStructuredArguments(function, arguments);
+        invokeFunction(function);
+        List<String> results = new java.util.ArrayList<>();
+        for (int index = 0; index < returnType.elementTypes().size(); index++) {
+            String result = temporary();
+            output.set(result, functionResultElementSlot(function.name(), index));
+            results.add(result);
+        }
+        return List.copyOf(results);
+    }
+
+    private List<SavedFunctionArgument> saveStructuredArguments(HirFunction function, List<HirExpression> arguments) {
+        if (function.parameters().size() != arguments.size()) {
+            throw new IllegalArgumentException("function argument count does not match signature: " + function.name());
+        }
+        List<SavedFunctionArgument> saved = new java.util.ArrayList<>();
+        for (int index = 0; index < arguments.size(); index++) {
+            MplType parameterType = function.parameters().get(index).type();
+            HirExpression argument = arguments.get(index);
+            if (parameterType instanceof TupleType tuple) {
+                saved.add(new SavedFunctionArgument(emitTupleValues(argument, tuple)));
+                continue;
+            }
+            String value = temporary();
+            output.set(value, emitExpression(argument));
+            saved.add(new SavedFunctionArgument(List.of(value)));
+        }
+        return List.copyOf(saved);
+    }
+
+    private void writeStructuredArguments(HirFunction function, List<SavedFunctionArgument> arguments) {
+        for (int index = 0; index < arguments.size(); index++) {
+            var parameter = function.parameters().get(index);
+            List<String> values = arguments.get(index).values();
+            if (parameter.type() instanceof TupleType tuple) {
+                if (values.size() != tuple.elementTypes().size()) {
+                    throw new IllegalArgumentException("tuple argument shape does not match " + parameter.name());
+                }
+                for (int element = 0; element < values.size(); element++) {
+                    output.set(functionParameterElementSlot(function.name(), parameter.name(), element), values.get(element));
+                }
+            } else if (parameter.type() == com.arc.mpl.hir.ValueType.STRING) {
+                StringRuntimeLayout.Entry target = memoryLayout.stringRuntime()
+                    .variable(function.name(), parameter.name())
+                    .orElseThrow(() -> new IllegalArgumentException("String 参数缺少 runtime 缓冲："
+                        + function.name() + "." + parameter.name()));
+                emitStringCopy(values.get(0), target);
+                output.set(functionParameterSlot(function.name(), parameter.name()), Integer.toString(target.handle()));
+            } else {
+                output.set(functionParameterSlot(function.name(), parameter.name()), values.get(0));
+            }
+        }
+    }
+
+    private void invokeFunction(HirFunction function) {
+        output.operation(Operation.ADD, functionReturnSlot(function.name()), "@counter", "1");
+        output.setCounter(functionEntries.get(function.name()));
     }
 
     private String emitMethodCall(HirMethodCall call) {
@@ -2316,6 +2444,15 @@ public final class MlogCodeGenerator {
 
     private String functionReturnSlot(String function) { return functionPrefix(function) + "_return"; }
     private String functionResultSlot(String function) { return functionPrefix(function) + "_result"; }
+    private String functionResultElementSlot(String function, int index) {
+        if (index < 0) throw new IllegalArgumentException("tuple result index must be non-negative");
+        return functionResultSlot(function) + "_e" + index;
+    }
+
+    private String functionParameterElementSlot(String function, String parameter, int index) {
+        if (index < 0) throw new IllegalArgumentException("tuple parameter index must be non-negative");
+        return functionParameterSlot(function, parameter) + "_e" + index;
+    }
 
     private String functionPrefix(String function) {
         Integer index = functionIndexes.get(function);
@@ -2344,6 +2481,13 @@ public final class MlogCodeGenerator {
     }
 
     private record LoopTarget(MlogProgramBuilder.Label continueTarget, MlogProgramBuilder.Label breakTarget) {
+    }
+
+    private record SavedFunctionArgument(List<String> values) {
+        private SavedFunctionArgument {
+            values = List.copyOf(values);
+            if (values.isEmpty()) throw new IllegalArgumentException("saved function argument cannot be empty");
+        }
     }
 
     private record ManagedUnitQuery(String mlogType, List<HirExpression> filters, int limit, int managedId) {

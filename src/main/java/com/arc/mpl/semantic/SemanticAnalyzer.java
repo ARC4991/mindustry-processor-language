@@ -570,9 +570,10 @@ public final class SemanticAnalyzer {
             error("MPL3503", "函数参数不能使用 Void 类型", function.span());
         }
         MplType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.ERROR);
-        if (parameters.stream().anyMatch(type -> isAggregate(type) || type instanceof UnitType)
-            || isAggregate(returnType) || returnType instanceof UnitType) {
-            error("MPL3602", "第一版函数 ABI 尚不支持聚合、Set<Unit<T>> 或 UnitRef 参数及返回值", function.span());
+        if (parameters.stream().anyMatch(this::unsupportedTopLevelFunctionAbi)
+            || unsupportedTopLevelFunctionAbi(returnType)) {
+            error("MPL3602", "函数 ABI 当前支持标量及 Int/Float/Bool 元组；数组、集合、String 元组、Set<Unit<T>> 和 UnitRef 尚不支持",
+                function.span());
         }
         boolean returnsOwnedObject = returnType instanceof ObjectType object && !object.nullable()
             && ownedObjectFactoryAnalyzer.returnsFreshObject(function.body());
@@ -629,8 +630,8 @@ public final class SemanticAnalyzer {
     }
 
     private void replaceFunctionSignature(FunctionSignature previous, MplType returnType) {
-        if (isAggregate(returnType) || returnType instanceof UnitType) {
-            error("MPL3602", "第一版函数 ABI 尚不支持聚合、Set<Unit<T>> 或 UnitRef 参数及返回值",
+        if (unsupportedTopLevelFunctionAbi(returnType)) {
+            error("MPL3602", "函数 ABI 当前支持标量及 Int/Float/Bool 元组；该返回类型尚不支持",
                 previous.declaration().span());
             return;
         }
@@ -708,6 +709,31 @@ public final class SemanticAnalyzer {
         if (expression instanceof StringLiteral) return ValueType.STRING;
         if (expression instanceof NullLiteral) return ValueType.NULL;
         if (expression instanceof Identifier identifier) return locals.getOrDefault(identifier.name(), ValueType.ERROR);
+        if (expression instanceof ArrayLiteral array) {
+            if (array.elements().isEmpty()) return ValueType.ERROR;
+            List<MplType> elementTypes = array.elements().stream()
+                .map(element -> inferExpressionType(element, locals)).toList();
+            MplType elementType = commonInferredElementType(elementTypes);
+            return elementType == ValueType.ERROR ? ValueType.ERROR
+                : new CollectionType(CollectionType.Kind.ARRAY, elementType);
+        }
+        if (expression instanceof TupleLiteral tuple) {
+            List<MplType> elementTypes = tuple.elements().stream()
+                .map(element -> inferExpressionType(element, locals)).toList();
+            if (elementTypes.stream().anyMatch(type -> type == ValueType.ERROR || type == ValueType.VOID)) {
+                return ValueType.ERROR;
+            }
+            return new TupleType(elementTypes);
+        }
+        if (expression instanceof IndexExpression access) {
+            MplType target = inferExpressionType(access.target(), locals);
+            if (target instanceof TupleType tuple && access.index() instanceof IntegerLiteral index
+                && index.value() >= 0 && index.value() < tuple.elementTypes().size()) {
+                return tuple.elementTypes().get((int) index.value());
+            }
+            if (target instanceof CollectionType collection) return collection.elementType();
+            return ValueType.ERROR;
+        }
         if (expression instanceof MemberAccessExpression member) {
             MplType receiver = inferExpressionType(member.target(), locals);
             if (receiver instanceof ObjectType object && !object.nullable()) {
@@ -791,10 +817,31 @@ public final class SemanticAnalyzer {
         return left == ValueType.INT && right == ValueType.INT ? ValueType.INT : ValueType.ERROR;
     }
 
+    private MplType commonInferredElementType(List<MplType> types) {
+        if (types.isEmpty()) return ValueType.ERROR;
+        MplType result = types.get(0);
+        for (int index = 1; index < types.size(); index++) {
+            result = commonInferenceType(result, types.get(index));
+            if (result == ValueType.ERROR) return ValueType.ERROR;
+        }
+        return result;
+    }
+
     private MplType commonInferenceType(MplType left, MplType right) {
         if (left.equals(right)) return left;
         if ((left == ValueType.INT && right == ValueType.FLOAT) || (left == ValueType.FLOAT && right == ValueType.INT)) {
             return ValueType.FLOAT;
+        }
+        if (left instanceof TupleType leftTuple && right instanceof TupleType rightTuple
+            && leftTuple.elementTypes().size() == rightTuple.elementTypes().size()) {
+            List<MplType> elements = new ArrayList<>();
+            for (int index = 0; index < leftTuple.elementTypes().size(); index++) {
+                MplType element = commonInferenceType(leftTuple.elementTypes().get(index),
+                    rightTuple.elementTypes().get(index));
+                if (element == ValueType.ERROR) return ValueType.ERROR;
+                elements.add(element);
+            }
+            return new TupleType(elements);
         }
         if (left instanceof ObjectType leftObject && right instanceof ObjectType rightObject) {
             String commonClass = commonObjectSupertype(leftObject.className(), rightObject.className());
@@ -1047,9 +1094,10 @@ public final class SemanticAnalyzer {
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
                 MplType type = signature.parameterTypes().get(index);
+                Integer tupleSize = type instanceof TupleType tuple ? tuple.elementTypes().size() : null;
                 declare(parameter.name(), new Symbol(type, false,
                     type == ValueType.STRING ? profile.maxMessageUtf16CodeUnits() : null,
-                    null, null, null, false, false, parameter.span()), parameter.span());
+                    tupleSize, tupleSize, null, null, false, false, false, parameter.span()), parameter.span());
                 parameters.add(new HirFunctionParameter(parameter.name(), type));
             }
             List<HirStatement> body = analyzeBlock(function.body());
@@ -2352,7 +2400,8 @@ public final class SemanticAnalyzer {
         }
         if (isAggregate(type) && unitQuery == null && buildingQuery == null && !(initializer instanceof HirArrayLiteral)
             && !(initializer instanceof HirTupleLiteral) && !(initializer instanceof HirCollectionLiteral)
-            && !(initializer instanceof HirMutableListLiteral)) {
+            && !(initializer instanceof HirMutableListLiteral)
+            && !(type instanceof TupleType && supportedTupleFunctionAbi(type))) {
             error("MPL3601", "当前阶段不支持复制聚合值；请在声明处使用字面量或集合工厂", declaration.initializer().span());
         }
         if (unitQuery != null && declaration.mutable()) {
@@ -3811,6 +3860,7 @@ public final class SemanticAnalyzer {
     }
 
     private Integer staticAggregateSize(HirExpression expression) {
+        if (expression.type() instanceof TupleType tuple) return tuple.elementTypes().size();
         if (expression instanceof HirArrayLiteral array) return array.elements().size();
         if (expression instanceof HirTupleLiteral tuple) return tuple.elements().size();
         if (expression instanceof HirCollectionLiteral collection) return collection.elements().size();
@@ -3821,6 +3871,18 @@ public final class SemanticAnalyzer {
     private Integer aggregateCapacity(HirExpression expression) {
         if (expression instanceof HirMutableListLiteral list) return list.capacity();
         return staticAggregateSize(expression);
+    }
+
+    private boolean unsupportedTopLevelFunctionAbi(MplType type) {
+        if (type == ValueType.ERROR) return false;
+        if (type instanceof UnitType) return true;
+        if (type instanceof CollectionType) return true;
+        return type instanceof TupleType && !supportedTupleFunctionAbi(type);
+    }
+
+    private boolean supportedTupleFunctionAbi(MplType type) {
+        return type instanceof TupleType tuple && tuple.elementTypes().stream().allMatch(element ->
+            element == ValueType.INT || element == ValueType.FLOAT || element == ValueType.BOOL);
     }
 
     private record Symbol(MplType type, boolean mutable, Integer staticStringCodeUnits, Integer staticAggregateSize,
