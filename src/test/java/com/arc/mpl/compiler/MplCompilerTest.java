@@ -514,7 +514,7 @@ class MplCompilerTest {
 
         assertTrue(result.succeeded(), () -> result.diagnostics().toString());
         String mlog = result.mlog().orElseThrow();
-        assertTrue(mlog.contains("control duo1 enabled 0 0 0 0 0"), mlog);
+        assertTrue(mlog.contains("control enabled duo1 0 0 0 0"), mlog);
         assertTrue(result.mil().orElseThrow().contains("@building.each(@duo, turret"));
     }
 
@@ -1285,8 +1285,8 @@ class MplCompilerTest {
         String mlog = result.mlog().orElseThrow();
         assertTrue(mlog.contains("duo1 @health"));
         assertTrue(mlog.contains("duo2 @health"));
-        assertTrue(mlog.contains("control duo1 shoot"));
-        assertTrue(mlog.contains("control duo2 shoot"));
+        assertTrue(mlog.contains("control shoot duo1"));
+        assertTrue(mlog.contains("control shoot duo2"));
         assertTrue(result.mil().orElseThrow().contains("@building.each(@duo, turret) {"));
     }
 
@@ -1314,10 +1314,10 @@ class MplCompilerTest {
         assertTrue(mlog.contains("duo1 @health"));
         assertTrue(mlog.contains("duo2 @enabled"));
         assertTrue(mlog.contains("duo2 @health"));
-        assertTrue(mlog.contains("control duo1 enabled 0 0 0 0 0"));
-        assertTrue(mlog.contains("control duo2 enabled 0 0 0 0 0"));
-        assertTrue(mlog.indexOf("duo1 @enabled") < mlog.indexOf("control duo1 enabled"));
-        assertTrue(mlog.indexOf("duo2 @enabled") < mlog.indexOf("control duo2 enabled"));
+        assertTrue(mlog.contains("control enabled duo1 0 0 0 0"));
+        assertTrue(mlog.contains("control enabled duo2 0 0 0 0"));
+        assertTrue(mlog.indexOf("duo1 @enabled") < mlog.indexOf("control enabled duo1"));
+        assertTrue(mlog.indexOf("duo2 @enabled") < mlog.indexOf("control enabled duo2"));
         assertTrue(result.mil().orElseThrow().contains(
             "@building.each(@duo, turret, @building.read(turret, enabled), (@building.read(turret, health) > minimum)) {"));
     }
@@ -1360,10 +1360,16 @@ class MplCompilerTest {
         assertTrue(mlog.lines().anyMatch(line -> line.matches("set __mpl_tmp\\d+ duo2")), mlog);
         assertTrue(mlog.lines().anyMatch(line -> line.matches("set mpl_first __mpl_tmp\\d+")), mlog);
         assertTrue(mlog.contains("sensor __mpl_tmp"));
-        assertTrue(mlog.contains("mpl_first @health"));
-        assertTrue(mlog.contains("control mpl_first enabled 0 0 0 0 0"));
-        assertTrue(mlog.contains("control duo1 shoot 1.0 2.0 1 0 0"));
-        assertTrue(mlog.contains("control duo2 shoot 1.0 2.0 1 0 0"));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("set __mpl_tmp\\d+ 1")), mlog);
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("set __mpl_tmp\\d+ 2")), mlog);
+        assertTrue(mlog.lines().filter(line -> line.matches("jump \\S+ notEqual mpl_first [12]")).count() >= 4,
+            mlog);
+        assertFalse(mlog.contains("mpl_first @health"));
+        assertFalse(mlog.contains("control enabled mpl_first"));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("sensor __mpl_tmp\\d+ __mpl_tmp\\d+ @health")), mlog);
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("control enabled __mpl_tmp\\d+ 0 0 0 0")), mlog);
+        assertTrue(mlog.contains("control shoot duo1 1.0 2.0 1 0"));
+        assertTrue(mlog.contains("control shoot duo2 1.0 2.0 1 0"));
     }
 
     @Test
@@ -1373,6 +1379,8 @@ class MplCompilerTest {
             "const Turret: Duo = link(\"duo1\");");
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
             var mutable = Building.getAllDuo();
+            var unstable: Building<Duo>? = Building.getAllDuo().get(0);
+            val invented: Building<Duo>? = null;
             val wrongIndex = Building.getAllDuo().get(1.0);
             val missing = Building.getAllDuo().get(0);
             val health = missing.health;
@@ -1390,6 +1398,10 @@ class MplCompilerTest {
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3201".equals(diagnostic.code())
             && diagnostic.message().contains("只能使用 val")));
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3210".equals(diagnostic.code())));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3212".equals(diagnostic.code())
+            && diagnostic.message().contains("只能使用 val")));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3212".equals(diagnostic.code())
+            && diagnostic.message().contains("get(index) 初始化")));
         assertTrue(result.diagnostics().stream().filter(diagnostic -> "MPL3211".equals(diagnostic.code())).count() >= 2);
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3201".equals(diagnostic.code())
             && diagnostic.message().contains("val 标量")));
@@ -1760,8 +1772,8 @@ class MplCompilerTest {
             sensor __mpl_tmp0 switch1 @enabled
             set mpl_enabled __mpl_tmp0
             op equal __mpl_tmp1 0 mpl_enabled
-            control switch1 enabled __mpl_tmp1 0 0 0 0
-            control duo1 shoot 12.0 24.0 mpl_enabled 0 0
+            control enabled switch1 __mpl_tmp1 0 0 0
+            control shoot duo1 12.0 24.0 mpl_enabled 0
             stop
             """, result.mlog().orElseThrow());
         assertEquals("""
