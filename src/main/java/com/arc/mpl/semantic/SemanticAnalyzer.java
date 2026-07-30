@@ -162,6 +162,7 @@ public final class SemanticAnalyzer {
     private Expression allowedOwnedFactoryCall;
     private boolean currentReturnsOwnedObject;
     private MethodInfo currentMethod;
+    private String inferringClass;
     private TypeRelations typeRelations = TypeRelations.empty();
 
     /** Uses the v146 baseline when semantic analysis is invoked outside a compiler request. */
@@ -227,6 +228,7 @@ public final class SemanticAnalyzer {
         allowedOwnedFactoryCall = null;
         currentReturnsOwnedObject = false;
         currentMethod = null;
+        inferringClass = null;
         typeRelations = TypeRelations.empty();
 
         if (!program.imports().isEmpty() || !program.exports().isEmpty()) {
@@ -239,6 +241,8 @@ public final class SemanticAnalyzer {
         for (ClassDeclaration declaration : program.classes()) registerClassName(declaration);
         resolveClassHierarchy();
         for (ClassInfo type : classHierarchyOrder()) registerClassMembers(type.declaration());
+        inferImplicitMethodReturnTypes();
+        validateInferredOverrides();
         topLevelFunctionCounts = program.functions().stream().collect(java.util.stream.Collectors.groupingBy(
             FunctionDeclaration::name, LinkedHashMap::new, java.util.stream.Collectors.counting()));
         for (FunctionDeclaration function : program.functions()) registerFunction(function);
@@ -371,7 +375,7 @@ public final class SemanticAnalyzer {
             error("MPL3703", "构造器不能声明返回类型：" + type.name(), function.span());
         }
         MplType returnType = constructor ? ValueType.VOID
-            : function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.VOID);
+            : function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.ERROR);
         List<MplType> sourceParameters = function.parameters().stream()
             .map(parameter -> parseType(parameter.typeName(), parameter.span())).toList();
         if (sourceParameters.stream().anyMatch(this::isAggregate) || isAggregate(returnType)) {
@@ -395,8 +399,6 @@ public final class SemanticAnalyzer {
                     sourceParameters), function.span());
                 return;
             }
-            MethodInfo overridden = findInheritedMethod(type.parent(), method.key());
-            if (overridden != null) validateOverride(method, overridden);
         }
         List<MplType> hiddenParameters = new ArrayList<>();
         hiddenParameters.add(new ObjectType(type.name(), false));
@@ -405,6 +407,68 @@ public final class SemanticAnalyzer {
             hiddenParameters, returnType, false));
         callGraph.put(internalName, new HashSet<>());
         directGlobalDependencies.put(internalName, new HashSet<>());
+    }
+
+    private void inferImplicitMethodReturnTypes() {
+        List<MethodInfo> methods = classes.values().stream()
+            .flatMap(type -> type.methods().values().stream()).toList();
+        boolean changed;
+        int remainingPasses = methods.size() + 1;
+        do {
+            changed = false;
+            for (MethodInfo method : methods) {
+                if (method.declaration().returnType().isPresent()) continue;
+                ClassInfo owner = classes.get(method.ownerClass());
+                MethodInfo current = owner == null ? null : owner.methods().get(method.key());
+                if (current == null || current.returnType() != ValueType.ERROR) continue;
+                String previousClass = inferringClass;
+                inferringClass = current.ownerClass();
+                MplType inferred;
+                try {
+                    inferred = inferFunctionReturnType(current.declaration(), current.parameterTypes());
+                } finally {
+                    inferringClass = previousClass;
+                }
+                if (inferred == ValueType.ERROR) continue;
+                replaceMethodInfo(owner, current, inferred);
+                changed = true;
+            }
+        } while (changed && --remainingPasses > 0);
+
+        for (MethodInfo method : methods) {
+            if (method.declaration().returnType().isPresent()) continue;
+            ClassInfo owner = classes.get(method.ownerClass());
+            MethodInfo current = owner == null ? null : owner.methods().get(method.key());
+            if (current != null && current.returnType() == ValueType.ERROR) {
+                error("MPL3503", "无法推导方法 " + current.ownerClass() + "." + current.sourceName()
+                    + " 的返回类型；请显式标注类型", current.declaration().span());
+            }
+        }
+    }
+
+    private void replaceMethodInfo(ClassInfo owner, MethodInfo previous, MplType returnType) {
+        if (isAggregate(returnType) || returnType instanceof UnitType) {
+            error("MPL3602", "第一版方法 ABI 尚不支持聚合参数及返回值", previous.declaration().span());
+            return;
+        }
+        MethodInfo replacement = new MethodInfo(previous.ownerClass(), previous.sourceName(), previous.internalName(),
+            previous.declaration(), previous.parameterTypes(), returnType, previous.publicAccess(), previous.constructor(),
+            previous.receiverEscapes());
+        owner.methods().put(replacement.key(), replacement);
+        List<MplType> hiddenParameters = new ArrayList<>();
+        hiddenParameters.add(new ObjectType(replacement.ownerClass(), false));
+        hiddenParameters.addAll(replacement.parameterTypes());
+        functions.put(replacement.internalName(), new FunctionSignature(replacement.sourceName(), replacement.internalName(),
+            replacement.declaration(), hiddenParameters, replacement.returnType(), false));
+    }
+
+    private void validateInferredOverrides() {
+        for (ClassInfo type : classes.values()) {
+            for (MethodInfo method : type.methods().values()) {
+                MethodInfo overridden = findInheritedMethod(type.parent(), method.key());
+                if (overridden != null) validateOverride(method, overridden);
+            }
+        }
     }
 
     private void validateOverride(MethodInfo method, MethodInfo overridden) {
@@ -582,6 +646,7 @@ public final class SemanticAnalyzer {
 
     private MplType inferFunctionReturnType(FunctionDeclaration declaration, List<MplType> parameterTypes) {
         Map<String, MplType> locals = new HashMap<>();
+        if (inferringClass != null) locals.put("this", new ObjectType(inferringClass, false));
         for (int index = 0; index < declaration.parameters().size(); index++) {
             locals.put(declaration.parameters().get(index).name(), parameterTypes.get(index));
         }
@@ -636,6 +701,15 @@ public final class SemanticAnalyzer {
         if (expression instanceof StringLiteral) return ValueType.STRING;
         if (expression instanceof NullLiteral) return ValueType.NULL;
         if (expression instanceof Identifier identifier) return locals.getOrDefault(identifier.name(), ValueType.ERROR);
+        if (expression instanceof MemberAccessExpression member) {
+            MplType receiver = inferExpressionType(member.target(), locals);
+            if (receiver instanceof ObjectType object && !object.nullable()) {
+                ClassInfo type = classes.get(object.className());
+                FieldInfo field = type == null ? null : lookupField(type, member.member(), false);
+                return field == null ? ValueType.ERROR : field.type();
+            }
+            return ValueType.ERROR;
+        }
         if (expression instanceof NewExpression allocation) {
             return classes.containsKey(allocation.className()) ? new ObjectType(allocation.className(), false) : ValueType.ERROR;
         }
@@ -667,6 +741,20 @@ public final class SemanticAnalyzer {
                 .filter(signature -> java.util.stream.IntStream.range(0, arguments.size())
                     .allMatch(index -> canAssign(signature.parameterTypes().get(index), arguments.get(index))))
                 .filter(signature -> signature.returnType() != ValueType.ERROR)
+                .toList();
+            return candidates.size() == 1 ? candidates.get(0).returnType() : ValueType.ERROR;
+        }
+        if (expression instanceof CallExpression call && call.callee() instanceof MemberAccessExpression member) {
+            MplType receiver = inferExpressionType(member.target(), locals);
+            if (!(receiver instanceof ObjectType object) || object.nullable()) return ValueType.ERROR;
+            ClassInfo type = classes.get(object.className());
+            if (type == null) return ValueType.ERROR;
+            List<MplType> arguments = call.arguments().stream().map(value -> inferExpressionType(value, locals)).toList();
+            List<MethodInfo> candidates = methodCandidates(type, member.member()).stream()
+                .filter(method -> method.parameterTypes().size() == arguments.size())
+                .filter(method -> java.util.stream.IntStream.range(0, arguments.size())
+                    .allMatch(index -> canAssign(method.parameterTypes().get(index), arguments.get(index))))
+                .filter(method -> method.returnType() != ValueType.ERROR)
                 .toList();
             return candidates.size() == 1 ? candidates.get(0).returnType() : ValueType.ERROR;
         }
