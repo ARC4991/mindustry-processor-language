@@ -1,6 +1,9 @@
 # Java / Gradle
 .gradle/
 build/
+releases/
+website/node_modules/
+website/dist/
 out/
 src/main/gen/
 *.class

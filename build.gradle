@@ -45,3 +45,66 @@ generateGrammarSource {
 tasks.withType(Test).configureEach {
     useJUnitPlatform()
 }
+
+def releaseDirectory = layout.projectDirectory.dir("releases").asFile
+
+tasks.register("releaseCli") {
+    dependsOn tasks.named("installDist")
+    group = "distribution"
+    description = "构建无需 Gradle 前缀即可运行的 MPL CLI 到 releases。"
+    doLast {
+        def distribution = tasks.named("installDist").get().destinationDir
+        if (releaseDirectory.exists()) {
+            delete releaseDirectory
+        }
+        releaseDirectory.mkdirs()
+        copy {
+            from new File(distribution, "lib")
+            into new File(releaseDirectory, "lib")
+        }
+        def unix = new File(releaseDirectory, "mpl")
+        unix.text = """#!/usr/bin/env sh
+set -eu
+MPL_DIR=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
+exec java -Dfile.encoding=UTF-8 -cp "\$MPL_DIR/lib/*" com.arc.mpl.cli.MplCli "\$@"
+"""
+        unix.setExecutable(true, false)
+        def windows = new File(releaseDirectory, "mpl.bat")
+        windows.text = """@echo off
+setlocal
+set MPL_DIR=%~dp0
+java -Dfile.encoding=UTF-8 -cp "%MPL_DIR%lib/*" com.arc.mpl.cli.MplCli %*
+"""
+        def versionFile = new File(releaseDirectory, "VERSION")
+        versionFile.text = "${project.version}\n"
+        def readme = new File(releaseDirectory, "README.txt")
+        readme.text = ("MPL CLI ${project.version}\n\n"
+            + "Requires Java 17 or newer.\n"
+            + "Linux/macOS: ./mpl --version\n"
+            + "Windows: mpl.bat --version\n")
+        def checksums = new File(releaseDirectory, "SHA256SUMS")
+        def files = [unix, windows, versionFile, readme]
+        checksums.text = files.collect { file ->
+            def digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(file.bytes).encodeHex().toString()
+            "${digest}  ${file.name}"
+        }.join("\n") + "\n"
+        println "MPL CLI 已生成：${releaseDirectory}"
+    }
+}
+
+tasks.register("releaseArchive", Zip) {
+    dependsOn tasks.named("releaseCli")
+    group = "distribution"
+    description = "打包包含 Unix 和 Windows 启动器的跨平台 MPL CLI。"
+    from releaseDirectory
+    exclude("*.zip")
+    archiveFileName = "mpl-${project.version}-universal-jdk17.zip"
+    destinationDirectory = layout.buildDirectory.dir("release-archives")
+    doLast {
+        copy {
+            from archiveFile
+            into releaseDirectory
+        }
+    }
+}
