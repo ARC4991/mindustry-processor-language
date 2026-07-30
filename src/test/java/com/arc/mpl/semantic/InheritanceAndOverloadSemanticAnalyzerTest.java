@@ -120,6 +120,33 @@ class InheritanceAndOverloadSemanticAnalyzerTest {
     }
 
     @Test
+    void infersAnOverridingMethodReturnTypeFromSuper() {
+        Program source = parser.parse("""
+            class Animal {
+                public value: Int;
+                public fun Animal(value: Int) { this.value = value; }
+                public fun score(amount: Int) { return this.value + amount; }
+            }
+            class Dog extends Animal {
+                public bonus: Int;
+                public fun Dog(value: Int, bonus: Int) { super(value); this.bonus = bonus; }
+                public fun score(amount: Int) { return super.score(amount) + this.bonus; }
+            }
+            val animal: Animal = new Dog(3, 4);
+            val result = animal.score(2);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(source, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var functions = result.program().orElseThrow().functions();
+        assertEquals(com.arc.mpl.hir.ValueType.INT, functions.stream()
+            .filter(function -> function.name().equals("__mpl_class_Animal_score")).findFirst().orElseThrow().returnType());
+        assertEquals(com.arc.mpl.hir.ValueType.INT, functions.stream()
+            .filter(function -> function.name().equals("__mpl_class_Dog_score")).findFirst().orElseThrow().returnType());
+    }
+
+    @Test
     void rejectsInvalidInheritanceAndAmbiguousOverloadContracts() {
         assertDiagnostic("""
             class Child extends Missing { public fun Child() { super(); } }

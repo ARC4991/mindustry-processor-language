@@ -52,6 +52,41 @@ class SemanticAnalyzerTest {
     }
 
     @Test
+    void infersVariableDeclarationTypesFromInitializers() {
+        Program program = parser.parse("""
+            class Counter {
+                public value: Int;
+                public fun Counter(value: Int) { this.value = value; }
+            }
+            val count = 3;
+            var ratio = count + 0.5;
+            val enabled = ratio > 0.0;
+            val name = "mpl";
+            val counter = new Counter(count);
+            val values = [1, 2, 3];
+            val labels = listOf("a", "b");
+            val allowed = Set.of(1, 3);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var declarations = result.program().orElseThrow().statements().stream()
+            .map(statement -> assertInstanceOf(HirVariableDeclaration.class, statement)).toList();
+        assertEquals(com.arc.mpl.hir.ValueType.INT, declarations.get(0).type());
+        assertEquals(com.arc.mpl.hir.ValueType.FLOAT, declarations.get(1).type());
+        assertEquals(com.arc.mpl.hir.ValueType.BOOL, declarations.get(2).type());
+        assertEquals(com.arc.mpl.hir.ValueType.STRING, declarations.get(3).type());
+        assertEquals(new com.arc.mpl.hir.ObjectType("Counter", false), declarations.get(4).type());
+        assertEquals(new com.arc.mpl.hir.CollectionType(com.arc.mpl.hir.CollectionType.Kind.ARRAY,
+            com.arc.mpl.hir.ValueType.INT), declarations.get(5).type());
+        assertEquals(new com.arc.mpl.hir.CollectionType(com.arc.mpl.hir.CollectionType.Kind.LIST,
+            com.arc.mpl.hir.ValueType.STRING), declarations.get(6).type());
+        assertEquals(new com.arc.mpl.hir.CollectionType(com.arc.mpl.hir.CollectionType.Kind.SET,
+            com.arc.mpl.hir.ValueType.INT), declarations.get(7).type());
+    }
+
+    @Test
     void rejectsReassignmentOfVal() {
         Program program = parser.parse("val enabled = true;\nenabled = false;", Path.of("main.mpl")).program().orElseThrow();
 

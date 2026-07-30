@@ -98,6 +98,33 @@ class MplCompilerTest {
     }
 
     @Test
+    void infersOverridingMethodReturnsFromSuperAndKeepsVirtualDispatch(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            class Animal {
+                public value: Int;
+                public fun Animal(value: Int) { this.value = value; }
+                public fun score(amount: Int) { return this.value + amount; }
+            }
+            class Dog extends Animal {
+                public bonus: Int;
+                public fun Dog(value: Int, bonus: Int) { super(value); this.bonus = bonus; }
+                public fun score(amount: Int) { return super.score(amount) + this.bonus; }
+            }
+            val animal: Animal = new Dog(3, 4);
+            val result = animal.score(2);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("fun score(amount: Int): Int"), mil);
+        assertTrue(mil.contains("super.score(amount)"), mil);
+        assertTrue(result.mlog().orElseThrow().contains("virtual_method_"));
+    }
+
+    @Test
     void exposesWorkerHelperEffectAnalysisAtTheCompilerBoundary(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
