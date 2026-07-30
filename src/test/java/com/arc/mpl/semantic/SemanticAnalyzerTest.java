@@ -121,6 +121,47 @@ class SemanticAnalyzerTest {
     }
 
     @Test
+    void infersTopLevelFunctionReturnTypesToAFixedPoint() {
+        Program program = parser.parse("""
+            fun increment(value: Int) {
+                val doubled = value * 2;
+                return doubled + 1;
+            }
+            fun halfAfterIncrement(value: Int) {
+                return increment(value) / 2.0;
+            }
+            fun record(value: Int) { val copied = value; }
+            val first = increment(3);
+            val second = halfAfterIncrement(3);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var functions = result.program().orElseThrow().functions();
+        assertEquals(com.arc.mpl.hir.ValueType.INT, functions.stream()
+            .filter(function -> function.sourceName().equals("increment")).findFirst().orElseThrow().returnType());
+        assertEquals(com.arc.mpl.hir.ValueType.FLOAT, functions.stream()
+            .filter(function -> function.sourceName().equals("halfAfterIncrement")).findFirst().orElseThrow().returnType());
+        assertEquals(com.arc.mpl.hir.ValueType.VOID, functions.stream()
+            .filter(function -> function.sourceName().equals("record")).findFirst().orElseThrow().returnType());
+    }
+
+    @Test
+    void requiresAnExplicitReturnTypeWhenInferenceCannotResolveAValue() {
+        Program program = parser.parse("""
+            fun readGlobal() { return later; }
+            val later: Int = 1;
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3503")
+            && diagnostic.message().contains("无法推导")), () -> result.diagnostics().toString());
+    }
+
+    @Test
     void rejectsReturnAtTopLevel() {
         Program program = parser.parse("return 1;", Path.of("main.mpl")).program().orElseThrow();
 

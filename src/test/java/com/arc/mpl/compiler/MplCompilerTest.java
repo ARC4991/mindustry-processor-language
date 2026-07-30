@@ -50,6 +50,28 @@ class MplCompilerTest {
     }
 
     @Test
+    void infersTopLevelFunctionReturnsAndSerializesThemIntoMil(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun increment(value: Int) { return value + 1; }
+            fun displayValue(value: Int) { val copied = value; }
+            val result = increment(41);
+            displayValue(result);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("fun increment(value: Int): Int"), mil);
+        assertTrue(mil.contains("fun displayValue(value: Int) {"), mil);
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
+        assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
+    }
+
+    @Test
     void exposesWorkerHelperEffectAnalysisAtTheCompilerBoundary(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
