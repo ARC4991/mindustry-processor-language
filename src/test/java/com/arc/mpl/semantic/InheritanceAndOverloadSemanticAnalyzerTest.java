@@ -174,6 +174,35 @@ class InheritanceAndOverloadSemanticAnalyzerTest {
     }
 
     @Test
+    void appliesMostSpecificOverloadRulesDuringReturnInference() {
+        Program source = parser.parse("""
+            class Animal { public fun Animal() {} }
+            class Dog extends Animal { public fun Dog() { super(); } }
+            fun classify(value: Animal): Int { return 1; }
+            fun classify(value: Dog): Int { return 2; }
+            fun bestGlobal(value: Dog) { return classify(value); }
+            class Printer {
+                public fun Printer() {}
+                public fun write(value: Animal): Int { return 3; }
+                public fun write(value: Dog): Int { return 4; }
+                public fun best(value: Dog) { return this.write(value); }
+            }
+            val printer = new Printer();
+            val global = bestGlobal(new Dog());
+            val method = printer.best(new Dog());
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(source, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var functions = result.program().orElseThrow().functions();
+        assertEquals(com.arc.mpl.hir.ValueType.INT, functions.stream()
+            .filter(function -> function.sourceName().equals("bestGlobal")).findFirst().orElseThrow().returnType());
+        assertEquals(com.arc.mpl.hir.ValueType.INT, functions.stream()
+            .filter(function -> function.name().equals("__mpl_class_Printer_best")).findFirst().orElseThrow().returnType());
+    }
+
+    @Test
     void rejectsInvalidInheritanceAndAmbiguousOverloadContracts() {
         assertDiagnostic("""
             class Child extends Missing { public fun Child() { super(); } }
