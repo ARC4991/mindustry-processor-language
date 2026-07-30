@@ -37,7 +37,7 @@ class MplCliTest {
         Files.writeString(library.resolve("index.mpl"), "export val value: Int = 1;\n");
         Files.writeString(library.resolve("hardware.mplh"), "");
 
-        MplCli.main(new String[]{"install", "--lang=zh-CN", app.getParent().toString()});
+        MplCli.execute(new String[]{"install", "--lang=zh-CN"}, app.getParent());
 
         assertTrue(Files.isRegularFile(app.getParent().resolve("mpl.lock")));
         assertEquals(1, new ObjectMapper().readTree(Files.readString(app.getParent().resolve("mpl.lock")))
@@ -56,9 +56,9 @@ class MplCliTest {
             "@io.print(@message1, \"MIL ready\");\n");
         Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
 
-        MplCli.main(new String[]{
-            "build", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
-        });
+        MplCli.execute(new String[]{
+            "build", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+        }, project);
 
         assertTrue(Files.readString(outputDirectory.resolve("Main.mlog")).contains("print \"MIL ready\""));
         assertTrue(Files.isRegularFile(outputDirectory.resolve("Main.mil")));
@@ -75,9 +75,9 @@ class MplCliTest {
         Path mlog = outputDirectory.resolve("Main.mlog");
         Path mil = outputDirectory.resolve("Main.mil");
 
-        MplCli.main(new String[]{
-            "build", "--debug", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
-        });
+        MplCli.execute(new String[]{
+            "build", "--debug", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+        }, project);
 
         String deployedMlog = Files.readString(mlog);
         assertTrue(deployedMlog.startsWith("# MPL shard: Main / build: "));
@@ -127,9 +127,9 @@ class MplCliTest {
             """);
         Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
 
-        MplCli.main(new String[]{
-            "build", "--debug", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
-        });
+        MplCli.execute(new String[]{
+            "build", "--debug", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+        }, project);
 
         assertTrue(Files.isRegularFile(outputDirectory.resolve("Main.mlog")));
         assertTrue(Files.isRegularFile(outputDirectory.resolve("Worker-0.mlog")));
@@ -174,9 +174,9 @@ class MplCliTest {
             """);
         Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
 
-        MplCli.main(new String[]{
-            "build", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
-        });
+        MplCli.execute(new String[]{
+            "build", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+        }, project);
 
         assertTrue(Files.isRegularFile(outputDirectory.resolve("Worker-0.mlog")));
         assertTrue(Files.isRegularFile(outputDirectory.resolve("Worker-1.mlog")));
@@ -207,9 +207,9 @@ class MplCliTest {
             """);
         Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
 
-        MplCli.main(new String[]{
-            "build", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
-        });
+        MplCli.execute(new String[]{
+            "build", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+        }, project);
 
         String mlog = Files.readString(outputDirectory.resolve("Main.mlog"));
         JsonNode report = new ObjectMapper().readTree(Files.readString(outputDirectory.resolve("report.json")));
@@ -237,9 +237,9 @@ class MplCliTest {
             """);
         Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
 
-        MplCli.main(new String[]{
-            "build", "--lang=zh-CN", "--target=v146", project.toString(), outputDirectory.toString()
-        });
+        MplCli.execute(new String[]{
+            "build", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+        }, project);
 
         String mlog = Files.readString(outputDirectory.resolve("Main.mlog"));
         JsonNode report = new ObjectMapper().readTree(Files.readString(outputDirectory.resolve("report.json")));

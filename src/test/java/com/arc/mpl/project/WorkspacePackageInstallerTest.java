@@ -6,6 +6,8 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -69,7 +71,7 @@ class WorkspacePackageInstallerTest {
             "\"registry\": \"^1.0.0\"", ""));
         IllegalArgumentException registry = assertThrows(IllegalArgumentException.class,
             () -> new WorkspacePackageInstaller().install(app));
-        assertTrue(registry.getMessage().contains("registry 依赖尚未实现"));
+        assertTrue(registry.getMessage().contains("依赖来源必须以 workspace:、registry: 或 git:"));
 
         Files.writeString(app.resolve("mpl.json"), manifest("app", "0.1.0", "v146",
             "\"absolute\": \"workspace:" + workspace.resolve("a") + "\"", ""));
@@ -103,6 +105,36 @@ class WorkspacePackageInstallerTest {
             () -> new WorkspacePackageInstaller().install(app));
 
         assertTrue(conflict.getMessage().contains("只能锁定一个包版本"));
+    }
+
+    @Test
+    void installsAndResolvesRegistryArchiveFromFileUri(@TempDir Path workspace) throws Exception {
+        Path packageRoot = project(workspace.resolve("registry-lib"), "registry-lib", "1.2.3", null, "", "");
+        Path archive = workspace.resolve("registry-lib.mplpkg");
+        zipDirectory(packageRoot, archive);
+        Path app = project(workspace.resolve("app"), "app", "0.1.0", "v146",
+            "\"registry-lib\": \"registry:" + archive.toUri() + "\"", "");
+
+        PackageLock lock = new WorkspacePackageInstaller().install(app);
+        assertEquals("registry:" + archive.toUri(), lock.packages().get(0).source());
+        assertTrue(Files.isDirectory(app.resolve(".mpl/registry").resolve(lock.packages().get(0).contentSha256())));
+
+        ResolvedPackageGraph graph = new LockedPackageResolver().resolve(app,
+            com.arc.mpl.profile.KnownProfiles.find("v146").orElseThrow());
+        assertEquals(List.of("registry-lib"), graph.packages().keySet().stream().toList());
+    }
+
+    private void zipDirectory(Path source, Path archive) throws Exception {
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {
+            try (var paths = Files.walk(source)) {
+                for (Path path : paths.filter(Files::isRegularFile).toList()) {
+                    String entry = source.relativize(path).toString().replace('\\', '/');
+                    zip.putNextEntry(new ZipEntry(entry));
+                    zip.write(Files.readAllBytes(path));
+                    zip.closeEntry();
+                }
+            }
+        }
     }
 
     private Path project(Path root, String name, String version, String target, String dependencies,

@@ -21,6 +21,8 @@ public final class WorkspacePackageInstaller {
     private final PackageContentHasher hashes = new PackageContentHasher();
     private final PackageLockFile lockFile = new PackageLockFile();
     private final HardwareLoader hardware = new HardwareLoader();
+    private final RegistryPackageCache registry = new RegistryPackageCache();
+    private final GitPackageCache git = new GitPackageCache();
 
     public PackageLock install(Path projectDirectory) throws IOException {
         Path root = projectDirectory.toAbsolutePath().normalize();
@@ -58,20 +60,31 @@ public final class WorkspacePackageInstaller {
         }
 
         private Resolved resolve(Path owner, String requestedName, String specification) throws IOException {
-            if (!specification.startsWith("workspace:")) {
-                throw new IllegalArgumentException("registry 依赖尚未实现，请改用 workspace:：" + requestedName + " -> " + specification);
+            boolean workspace = specification.startsWith("workspace:");
+            boolean registrySource = specification.startsWith("registry:");
+            boolean gitSource = specification.startsWith("git:");
+            if (!workspace && !registrySource && !gitSource) {
+                throw new IllegalArgumentException("依赖来源必须以 workspace:、registry: 或 git: 开头：" + requestedName);
             }
-            String sourceText = specification.substring("workspace:".length());
-            if (sourceText.isBlank()) throw new IllegalArgumentException("workspace 依赖路径不能为空：" + requestedName);
-            Path sourcePath = Path.of(sourceText);
-            if (sourcePath.isAbsolute()) throw new IllegalArgumentException("workspace 依赖必须使用相对路径：" + requestedName);
-            Path packageRoot = owner.resolve(sourcePath).toAbsolutePath().normalize();
+            String sourcePrefix = workspace ? "workspace:" : registrySource ? "registry:" : "git:";
+            String sourceText = specification.substring(sourcePrefix.length());
+            if (sourceText.isBlank()) throw new IllegalArgumentException("包来源不能为空：" + requestedName);
+            Path packageRoot;
+            if (workspace) {
+                Path sourcePath = Path.of(sourceText);
+                if (sourcePath.isAbsolute()) throw new IllegalArgumentException("workspace 依赖必须使用相对路径：" + requestedName);
+                packageRoot = owner.resolve(sourcePath).toAbsolutePath().normalize();
+            } else if (registrySource) {
+                packageRoot = registry.materialize(root, specification);
+            } else {
+                packageRoot = git.materialize(root, specification);
+            }
             if (!Files.isDirectory(packageRoot) || !Files.isRegularFile(packageRoot.resolve("mpl.json"))) {
-                throw new IllegalArgumentException("找不到 workspace 包：" + requestedName + " -> " + packageRoot);
+                throw new IllegalArgumentException("找不到依赖包：" + requestedName + " -> " + packageRoot);
             }
             ProjectManifest manifest = manifests.load(packageRoot);
             if (!manifest.name().equals(requestedName)) {
-                throw new IllegalArgumentException("workspace 包名不匹配：依赖声明为 " + requestedName + "，manifest 为 " + manifest.name());
+                throw new IllegalArgumentException("依赖包名不匹配：依赖声明为 " + requestedName + "，manifest 为 " + manifest.name());
             }
             PackageCompatibility.requireSemanticVersion(manifest.version(), manifest.name());
             PackageCompatibility.validate(manifest, target);
@@ -105,9 +118,11 @@ public final class WorkspacePackageInstaller {
             } finally {
                 stack.removeLast();
             }
-            String relative = root.relativize(packageRoot).toString().replace('\\', '/');
+            String lockedSource = workspace
+                ? "workspace:" + root.relativize(packageRoot).toString().replace('\\', '/')
+                : specification;
             Resolved value = new Resolved(packageRoot, manifest,
-                new PackageLock.LockedPackage(manifest.name(), manifest.version(), "workspace:" + relative,
+                new PackageLock.LockedPackage(manifest.name(), manifest.version(), lockedSource,
                     hashes.packageDigest(packageRoot), hashes.fileDigest(hardware), dependencies));
             resolved.put(requestedName, value);
             return value;

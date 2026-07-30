@@ -24,6 +24,8 @@ public final class LockedPackageResolver {
     private final PackageContentHasher hashes = new PackageContentHasher();
     private final PackageLockFile lockFiles = new PackageLockFile();
     private final HardwareLoader hardware = new HardwareLoader();
+    private final RegistryPackageCache registry = new RegistryPackageCache();
+    private final GitPackageCache git = new GitPackageCache();
 
     public ResolvedPackageGraph resolve(Path projectDirectory, TargetProfile profile) throws IOException {
         Path root = projectDirectory.toAbsolutePath().normalize();
@@ -75,21 +77,43 @@ public final class LockedPackageResolver {
         }
 
         private void resolve(Path owner, String name, String specification) throws IOException {
-            if (!specification.startsWith("workspace:")) {
-                throw new IllegalArgumentException("当前锁文件只支持 workspace 依赖：" + name + " -> " + specification);
-            }
-            String sourceText = specification.substring("workspace:".length());
-            if (sourceText.isBlank()) throw new IllegalArgumentException("workspace 依赖路径不能为空：" + name);
-            Path sourcePath = Path.of(sourceText);
-            if (sourcePath.isAbsolute()) throw new IllegalArgumentException("workspace 依赖必须使用相对路径：" + name);
-            Path requestedRoot = owner.resolve(sourcePath).toAbsolutePath().normalize();
             PackageLock.LockedPackage locked = locks.get(name);
             if (locked == null) throw new IllegalArgumentException("mpl.lock 未锁定依赖：" + name);
-            Path lockedPath = Path.of(locked.source().substring("workspace:".length()));
-            if (lockedPath.isAbsolute()) throw new IllegalArgumentException("mpl.lock workspace 来源必须是相对路径：" + name);
-            Path lockedRoot = root.resolve(lockedPath).toAbsolutePath().normalize();
-            if (!requestedRoot.equals(lockedRoot)) {
-                throw new IllegalArgumentException("mpl.lock 来源与 manifest 不一致：" + name);
+            Path packageRoot;
+            if (specification.startsWith("workspace:")) {
+                if (!locked.source().startsWith("workspace:")) {
+                    throw new IllegalArgumentException("mpl.lock 来源与 manifest 不一致：" + name);
+                }
+                String sourceText = specification.substring("workspace:".length());
+                if (sourceText.isBlank()) throw new IllegalArgumentException("workspace 依赖路径不能为空：" + name);
+                Path sourcePath = Path.of(sourceText);
+                if (sourcePath.isAbsolute()) throw new IllegalArgumentException("workspace 依赖必须使用相对路径：" + name);
+                Path requestedRoot = owner.resolve(sourcePath).toAbsolutePath().normalize();
+                Path lockedPath = Path.of(locked.source().substring("workspace:".length()));
+                if (lockedPath.isAbsolute()) throw new IllegalArgumentException("mpl.lock workspace 来源必须是相对路径：" + name);
+                Path lockedRoot = root.resolve(lockedPath).toAbsolutePath().normalize();
+                if (!requestedRoot.equals(lockedRoot)) {
+                    throw new IllegalArgumentException("mpl.lock 来源与 manifest 不一致：" + name);
+                }
+                packageRoot = lockedRoot;
+            } else if (specification.startsWith("registry:")) {
+                if (!specification.equals(locked.source())) {
+                    throw new IllegalArgumentException("mpl.lock registry 来源与 manifest 不一致：" + name);
+                }
+                packageRoot = registry.cached(root, locked.contentSha256());
+                if (!Files.isDirectory(packageRoot)) {
+                    throw new IllegalArgumentException("缺少锁定 registry 包缓存：" + name + "，请先执行 mpl install");
+                }
+            } else if (specification.startsWith("git:")) {
+                if (!specification.equals(locked.source())) {
+                    throw new IllegalArgumentException("mpl.lock git 来源与 manifest 不一致：" + name);
+                }
+                packageRoot = git.cached(root, locked.contentSha256());
+                if (!Files.isDirectory(packageRoot)) {
+                    throw new IllegalArgumentException("缺少锁定 Git 包缓存：" + name + "，请先执行 mpl install");
+                }
+            } else {
+                throw new IllegalArgumentException("依赖来源必须以 workspace:、registry: 或 git: 开头：" + name);
             }
 
             VisitState state = states.get(name);
@@ -102,7 +126,7 @@ public final class LockedPackageResolver {
             states.put(name, VisitState.VISITING);
             stack.addLast(name);
             try {
-                verifyAndResolve(locked, lockedRoot);
+                verifyAndResolve(locked, packageRoot);
                 states.put(name, VisitState.COMPLETE);
             } finally {
                 stack.removeLast();
@@ -111,7 +135,7 @@ public final class LockedPackageResolver {
 
         private void verifyAndResolve(PackageLock.LockedPackage locked, Path packageRoot) throws IOException {
             if (!Files.isDirectory(packageRoot) || !Files.isRegularFile(packageRoot.resolve("mpl.json"))) {
-                throw new IllegalArgumentException("锁定的 workspace 包不存在：" + locked.name() + " -> " + packageRoot);
+                throw new IllegalArgumentException("锁定包不存在：" + locked.name() + " -> " + packageRoot);
             }
             ProjectManifest manifest = manifests.load(packageRoot);
             if (!manifest.name().equals(locked.name()) || !manifest.version().equals(locked.version())) {

@@ -25,7 +25,9 @@ public record PackageLock(int schemaVersion, String rootManifestSha256, List<Loc
         public LockedPackage {
             if (name == null || name.isBlank()) throw new IllegalArgumentException("mpl.lock 包名不能为空");
             if (version == null || version.isBlank()) throw new IllegalArgumentException("mpl.lock 包版本不能为空：" + name);
-            if (source == null || !source.startsWith("workspace:") || source.length() == "workspace:".length()) {
+            if (source == null || (!source.startsWith("workspace:") && !source.startsWith("registry:")
+                && !source.startsWith("git:"))
+                || source.length() == sourcePrefixLength(source)) {
                 throw new IllegalArgumentException("mpl.lock 包来源无效：" + name);
             }
             contentSha256 = requireDigest(contentSha256, name + ".contentSha256");
@@ -40,5 +42,11 @@ public record PackageLock(int schemaVersion, String rootManifestSha256, List<Loc
             throw new IllegalArgumentException("mpl.lock 的 " + field + " 必须是小写 SHA-256");
         }
         return value;
+    }
+
+    private static int sourcePrefixLength(String source) {
+        if (source.startsWith("workspace:")) return "workspace:".length();
+        if (source.startsWith("registry:")) return "registry:".length();
+        return "git:".length();
     }
 }
