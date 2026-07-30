@@ -1,4 +1,4 @@
-# 动态聚合 Memory 运行时（讨论稿）
+# 动态聚合 Memory 运行时
 
 > 状态：受证明的定长 Array 动态读写、固定容量 MutableList、物理分段、唯一所有权对象池、mlog lowering 与蓝图部署已实现。MutableSet 和嵌套聚合尚未实现。
 

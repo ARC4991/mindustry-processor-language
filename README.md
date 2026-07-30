@@ -6,20 +6,23 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 ## 快速试用
 
-当前原型支持初始化项目、基础数值/控制流、项目内及锁定工作区包的 MPL/MIL 混合模块、Kotlin 风格的初始化器与顶层函数返回类型推导、单继承 `class/new`、Java/Kotlin 风格按签名重载、Message/Display I/O，以及 Unit/Building 对象查询。顶层 `new` 使用编译器管理的静态对象槽；函数和循环内可证明不逃逸的局部 `val` 按分配点复用固定槽；`return new Type(...)` 工厂还可把新对象转移给唯一 `val` 所有者，由物理 Memory 对象池和词法作用域回收管理。不可变 String 值已支持运行时拼接、`length`、内容相等、函数传递和按值赋值，Message 输出通过编译器管理的 UTF-16 地址表自动完成。构造器、public/private、可空用户对象、虚方法和 `super` 已经接通 MIL/mlog。`Set<Unit<T>>` 与 `Set<Building<T>>` 均可保存、过滤、计数、索引和遍历；查询来源与重连元数据是编译器私有实现，不形成额外的 MPL 类型。可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
+当前原型支持初始化项目、基础数值/控制流、锁定的 workspace/Git/registry 包、MPL/MIL 混合模块、Kotlin 风格类型推导、单继承 `class/new`、Java/Kotlin 风格按签名重载、Message/Display I/O，以及 Unit/Building 对象查询。`LinkedBuildingSet` 等实现类型不会出现在 MPL 表面，用户统一使用 `Set<Unit<T>>` 或 `Set<Building<T>>`。字符串、对象、MutableList、跨 tick Runtime 和多处理器蓝图均由编译器统一规划。需要 JDK 17；发行目录同时提供 Unix shell 与 Windows `.bat` 启动器：
 
 ```bash
-# 默认使用 v146；目录必须不存在或为空。
-./gradlew run --args='init my-mpl-project'
+# 本地发行包可通过 ./gradlew releaseArchive 生成；GitHub CD 会自动生成同样的 releases 产物。
+
+# CLI 始终以当前目录为项目根。
+mkdir my-mpl-project && cd my-mpl-project
+../releases/mpl init
 
 # 依赖非空时先生成确定性的 mpl.lock。
-./gradlew run --args='install my-mpl-project'
+../releases/mpl install
 
 # 生成蓝图、Main.mlog、Main.mil 及格式化的构建清单。
-./gradlew run --args='build --target=v146 my-mpl-project my-mpl-project/build'
+../releases/mpl build --target=v146 build
 ```
 
-`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。入口可用 `import { name } from "./module";` 递归链接 `src` 内显式 `export class` / `export fun` / `export val` 的 MPL 或 MIL 模块；依赖顶层初始化只执行一次，私有符号由链接器隔离。`workspace:` 依赖由 `mpl install` 递归锁定到格式化的 `mpl.lock`，`check/build` 会验证根清单、包源码、`.mplh` 摘要、单版本约束和 target 能力，绝不自动更新锁文件。包可在自己的 `.mplh` 中用 `require` 声明命名硬件，并由调用方通过 `with` 严格注入；组合 Display 的尺寸约束也会在链接期验证。registry 下载尚未实现。
+`mpl.json` 的 `entry` 可指向 `src` 下的 `.mpl` 或 `.mil`。入口可用 `import { name } from "./module";` 递归链接 `src` 内显式 `export class` / `export fun` / `export val` 的 MPL 或 MIL 模块；依赖顶层初始化只执行一次，私有符号由链接器隔离。`workspace:`、`git:` 和 `registry:` 依赖由 `mpl install` 递归锁定到格式化的 `mpl.lock`，`check/build` 会验证根清单、包源码、`.mplh` 摘要、单版本约束和 target 能力，绝不自动更新锁文件。`mpl install <包名>` 从 IO 网络清单安装，`mpl install 名称=<git-url|mplpkg>` 支持直连 Git 和 `.mplpkg`；`mpl search` 搜索清单。包可在自己的 `.mplh` 中用 `require` 声明命名硬件，并由调用方通过 `with` 严格注入；组合 Display 的尺寸约束也会在链接期验证。
 
 手写 MIL 使用独立 ANTLR 前端，只能调用 target profile 公开宏；它与 MPL 一样经过严格类型、硬件契约、优化、Runtime、内存规划和 mlog 限制校验。
 
@@ -30,7 +33,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 默认构建在最终 `.mlog` 中使用最短的 `_0`、`_1` … 跳转标签以节省代码空间；排查生成逻辑时可加 `--debug`，让最终 target lowering 使用可读的完整标签名。源级 `.mil` 保留结构化控制流，通常不需要展示这些标签：
 
 ```bash
-./gradlew run --args='build --debug --target=v146 my-mpl-project my-mpl-project/build'
+./releases/mpl build --debug --target=v146 build
 ```
 
 编译信息默认使用中文；`--lang=zh-CN` 可显式指定该 catalogue，并为后续语言目录保留稳定的命令行接口。错误码不随翻译改变。
@@ -39,26 +42,23 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 ## 文档
 
-- [MPL 语言规范（讨论稿）](docs/语法设计/语言规范（讨论稿）.md)：语法、类型、控制流、优先级及待决议题。
-- [聚合类型与静态容器（讨论稿）](docs/语法设计/聚合类型与静态容器（讨论稿）.md)：元组、`T[]`、`List<T>`、`Set<T>` 的字面量、元素访问、遍历与受证明 Array 动态下标。
-- [动态聚合 Memory 运行时（讨论稿）](docs/开发设计/动态聚合Memory运行时（讨论稿）.md)：边界证明、物理 Cell/Bank 分段、mlog `read`/`write` 与蓝图拓扑。
-- [单位遍历与私有运行时（讨论稿）](docs/语法设计/单位遍历与私有运行时（讨论稿）.md)：以 Unit.getAll类型() / Building.getAll类型() 遍历游戏对象的语义与实现边界。
-- [字符串与输出运行时（讨论稿）](docs/语法设计/字符串与输出运行时（讨论稿）.md)：全局字符输出表、字符串序列与拼接边界。
-- [硬件声明、内存与图形接口（讨论稿）](docs/语法设计/硬件声明、内存与图形接口（讨论稿）.md)：只含声明语句的 .mplh、组合屏幕、编译器统一管理的内存和绘制接口。
-- [模块、包与对象模型（讨论稿）](docs/语法设计/模块、包与对象模型（讨论稿）.md)：import/export、硬件依赖注入、单继承、重载、访问控制与 C++ 风格对象生命周期。
-- [宏中间语言设计（讨论稿）](docs/开发设计/宏中间语言设计（讨论稿）.md)：可由性能敏感用户直接编写的宏语言与两阶段编译边界。
-- [编译器路线图](docs/开发设计/编译器路线图.md)：Java 编译器的分层设计与阶段目标。
-- [编译器架构（实现稿）](docs/开发设计/编译器架构（实现稿）.md)：Java 模块边界、IR、v146 函数 ABI、内存布局与最小闭环。
-- [运行时存储、函数与跨 Tick 语义（讨论稿）](docs/开发设计/运行时存储、函数与跨Tick语义（讨论稿）.md)：处理器变量与物理内存的边界、`@counter` 函数 ABI、跨 tick 可观察行为及生成预算。
-- [多处理器协作、分片与共享内存（讨论稿）](docs/开发设计/多处理器协作、分片与共享内存（讨论稿）.md)：单处理器优先的分片部署、共享 Memory 邮箱、每片指令限制、I/O/Unit 所有权与优化策略。
-- [蓝图处理器识别与手动连接（讨论稿）](docs/开发设计/蓝图处理器识别与手动连接（讨论稿）.md)：`Main` 固定位置、代码头标识、外部 alias 核验与链接就绪启动门。
-- [语言设计完备性审查（讨论稿）](docs/开发设计/语言设计完备性审查（讨论稿）.md)：已冻结规则、阻塞实现的决议与建议冻结顺序。
-- [V146 目标配置（讨论稿）](docs/开发设计/V146目标配置（讨论稿）.md)：基线 Mindustry v146 profile，以及由源码确认的执行、内存和 I/O 限制。
-- [V159.7 目标配置（讨论稿）](docs/开发设计/V159.7目标配置（讨论稿）.md)：最新支持版本的 Logic 增量、特权边界和硬件限制。
-- [目标版本与优化策略（讨论稿）](docs/开发设计/目标版本与优化策略（讨论稿）.md)：多 profile 构建、包兼容性与新指令专用优化的规则。
-- [Profile 与构建产物 Schema（讨论稿）](docs/开发设计/数据格式/Profile与构建产物Schema（讨论稿）.md)：机器可读 target profile、构建报告、部署清单与只含处理器/Memory 的运行时蓝图契约。
-- [基于官方 Wiki 的设计审查（讨论稿）](docs/开发设计/基于官方Wiki的设计审查（讨论稿）.md)：将当前设计与官方 Logic Wiki 对照，记录目标层约束、缺失语义与原型优先级。
-- [基于 V146 源码的指令审查（讨论稿）](docs/开发设计/基于V146源码的指令审查（讨论稿）.md)：逐项记录 v146 指令的权限、缓冲、暂停与静默失败行为，以及对应的 MPL 约束。
+- [MPL 语言规范](docs/语法设计/稳定/语言规范.md)：语法、类型、控制流、优先级与稳定规则。
+- [聚合类型与静态容器](docs/语法设计/稳定/聚合类型与静态容器.md)：元组、`T[]`、`List<T>`、`Set<T>` 与 `MutableList`。
+- [动态聚合 Memory 运行时](docs/开发设计/稳定/动态聚合Memory运行时.md)：边界证明、物理 Cell/Bank 分段与蓝图拓扑。
+- [单位遍历与运行时](docs/语法设计/稳定/单位遍历与运行时.md)：Unit/Building 查询、Set API 和私有 flag 管理。
+- [字符串与输出运行时](docs/语法设计/稳定/字符串与输出运行时.md)：字符表、拼接和自动 flush。
+- [硬件声明、内存与图形接口](docs/语法设计/稳定/硬件声明、内存与图形接口.md)：`.mplh`、组合 Display 和自动资源规划。
+- [模块、包与对象模型](docs/语法设计/稳定/模块、包与对象模型.md)：import/export、包、继承、重载与对象生命周期。
+- [宏中间语言设计](docs/开发设计/稳定/宏中间语言设计.md)：MIL 宏边界与两阶段编译。
+- [编译器路线图](docs/开发设计/稳定/编译器路线图.md)：Java 编译器的分层设计与实现状态。
+- [编译器架构](docs/开发设计/稳定/编译器架构.md)：Java 模块边界、IR、ABI、内存布局与 Runtime。
+- [运行时存储、函数与跨 Tick 语义](docs/开发设计/稳定/运行时存储、函数与跨Tick语义.md)：变量、Memory、函数 ABI 和预算。
+- [多处理器协作与共享内存](docs/开发设计/稳定/多处理器协作、分片与共享内存.md)：分片、邮箱和资源均衡。
+- [蓝图处理器识别与手动连接](docs/开发设计/稳定/蓝图处理器识别与手动连接.md)：处理器身份、Memory 连接与部署提示。
+- [目标版本与优化策略](docs/开发设计/稳定/目标版本与优化策略.md)：v146 基线、v159.7 增量和 profile 优化。
+- [Profile 与构建产物 Schema](docs/开发设计/稳定/Profile与构建产物Schema.md)：报告、部署清单与蓝图契约。
+- [CLI 与包管理](docs/开发设计/稳定/CLI与包管理.md)：当前目录命令、锁文件、Git、`.mplpkg`、包索引与跨平台发行。
+- 源码和 Wiki 审查请见 [归档](docs/归档/README.md)。
 - [基础语法示例](docs/示例/基础语法示例.mpl)：讨论中的最小表面语法示例，未承诺可编译。
 - [完整语法示例](docs/示例/完整语法示例.mpl)：以一个顶层程序串联模块注入、类、函数、严格数值类型、控制流、单位遍历、内存、绘图与消息输出。
 - [完整示例：项目配置](docs/示例/完整项目配置示例.json)、[硬件声明](docs/示例/完整硬件声明.mplh)、[主程序](docs/示例/完整主程序.mpl)、[外部包源码](docs/示例/外部包需求示例.mpl) 与 [外部包硬件声明](docs/示例/外部包硬件声明示例.mplh)：展示硬件注入、全局内存预算、对象、单位遍历和图形输出如何协作。
@@ -76,14 +76,14 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - 明确 MPL 与 mlog 的映射边界；
 - 规划 Java 编译器的前端、IR 与代码生成阶段。
 
-动态长度/泛型可变容器、接口与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。工作区包解析、严格硬件注入、组合屏幕尺寸匹配、绘制分发、有界动态 String、单继承/签名重载 class/new、非逃逸局部分配点复用、唯一所有权物理对象池，以及纯数值函数的自动多 Worker Runtime 已实现；registry、共享对象引用、用户并发和通用跨 shard 所有权转移仍在后续阶段。
+动态长度/泛型可变容器、接口与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List、Set 与容量化 MutableList，以及标准计数循环中受证明的动态下标；物理 Memory 由编译器规划并写入蓝图。workspace、Git 和 `.mplpkg` registry 包均可锁定校验；网络索引、跨 shard 所有权转移和原生运行时仍在持续完善。
 
 ## 开发约定
 
 - 源码使用 UTF-8，MPL 文件使用 .mpl 扩展名。
 - 目标 JDK 为 17。
 - 新增或修改已确认语法时，应同时添加正向和反向测试。
-- 在语法冻结前，示例中的数组、元组、属性访问和方法调用不得视为稳定功能。
+- 稳定语法和构建产物以 `docs/语法设计/稳定`、`docs/开发设计/稳定` 为准；历史讨论统一放在 `docs/归档`。
 
 ## 仓库状态
 

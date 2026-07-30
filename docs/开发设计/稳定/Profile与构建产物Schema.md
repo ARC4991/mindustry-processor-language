@@ -1,4 +1,4 @@
-# Profile 与构建产物 Schema（讨论稿）
+# Profile 与构建产物 Schema
 
 > 状态：本文冻结编译器内部/产物 JSON 的第一版边界。字段可在 `schemaVersion` 递增后扩展；同一版本不得改变字段含义。
 
