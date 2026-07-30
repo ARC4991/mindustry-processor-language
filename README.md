@@ -25,6 +25,8 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 `build` 的最后一个参数是构建目录。编译器在其中生成最终 `runtime.msch` 蓝图，以及 `Main.mlog`、`Main.mil`、`report.json`、`deployment.json` 和连接说明等可检查的中间产物。`.mil` 保留普通变量、表达式及 `if`/`while`/`for` 等结构化写法，只有需要映射游戏能力的高级糖变为所选 profile 的宏调用；它不是逐条包装 mlog。正常部署时把蓝图导入游戏，`.mlog` 用于排查单个处理器代码。
 
+当 `runtime.goal` 为 `maxPerformance`、允许至少两个处理器，且调用图中存在可达的纯数值函数时，编译器会自动生成 `Worker-N.mlog/.mil`。效果分析只接受无捕获、无 I/O、无 Unit/Building、无物理 Memory/对象分配，且参数与返回值均为 `Int` / `Float` / `Bool` 的函数；有调用关系的 helper 固定同片，互不依赖的分量会在允许的 Worker 间确定性均衡。Main 通过编译器私有的共享 Memory 邮箱同步调用这些函数，最后确认关闭全部 Worker。普通顺序控制流不会按行硬切。
+
 默认构建在最终 `.mlog` 中使用最短的 `_0`、`_1` … 跳转标签以节省代码空间；排查生成逻辑时可加 `--debug`，让最终 target lowering 使用可读的完整标签名。源级 `.mil` 保留结构化控制流，通常不需要展示这些标签：
 
 ```bash
@@ -73,7 +75,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 - 明确 MPL 与 mlog 的映射边界；
 - 规划 Java 编译器的前端、IR 与代码生成阶段。
 
-动态长度/泛型可变容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。工作区包解析、严格硬件注入、组合屏幕尺寸匹配、绘制分发、有界动态 String、顶层静态 class/new、非逃逸局部分配点复用和唯一所有权物理对象池已实现；registry、共享对象引用和跨 shard Runtime 仍在后续阶段。
+动态长度/泛型可变容器、继承与闭包、用户并发、跨重新部署持久化，以及完整 profile 指令签名表仍在后续范围。当前已支持元组、定长数组、List 与 Set 的静态布局，以及标准计数循环中受证明的 Array 动态下标；后者由编译器自动规划物理 Memory 并写入蓝图。嵌套容器、任意动态下标和可变 List/Set 尚未实现。工作区包解析、严格硬件注入、组合屏幕尺寸匹配、绘制分发、有界动态 String、顶层静态 class/new、非逃逸局部分配点复用、唯一所有权物理对象池，以及纯数值函数的自动多 Worker Runtime 已实现；registry、共享对象引用、用户并发和通用跨 shard 所有权转移仍在后续阶段。
 
 ## 开发约定
 
