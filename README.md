@@ -6,7 +6,7 @@ MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处�
 
 ## 快速试用
 
-当前原型支持初始化项目、基础数值/控制流、项目内及锁定工作区包的 MPL/MIL 混合模块、单继承 `class/new`、Java/Kotlin 风格按签名重载、Message/Display I/O，以及 Unit/Building 对象查询。顶层 `new` 使用编译器管理的静态对象槽；函数和循环内可证明不逃逸的局部 `val` 按分配点复用固定槽；`return new Type(...)` 工厂还可把新对象转移给唯一 `val` 所有者，由物理 Memory 对象池和词法作用域回收管理。不可变 String 值已支持运行时拼接、`length`、内容相等、函数传递和按值赋值，Message 输出通过编译器管理的 UTF-16 地址表自动完成。构造器、public/private、可空用户对象、虚方法和 `super` 已经接通 MIL/mlog。`Set<Unit<T>>` 与 `Set<Building<T>>` 均可保存、过滤、计数、索引和遍历；查询来源与重连元数据是编译器私有实现，不形成额外的 MPL 类型。可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
+当前原型支持初始化项目、基础数值/控制流、项目内及锁定工作区包的 MPL/MIL 混合模块、Kotlin 风格的初始化器与顶层函数返回类型推导、单继承 `class/new`、Java/Kotlin 风格按签名重载、Message/Display I/O，以及 Unit/Building 对象查询。顶层 `new` 使用编译器管理的静态对象槽；函数和循环内可证明不逃逸的局部 `val` 按分配点复用固定槽；`return new Type(...)` 工厂还可把新对象转移给唯一 `val` 所有者，由物理 Memory 对象池和词法作用域回收管理。不可变 String 值已支持运行时拼接、`length`、内容相等、函数传递和按值赋值，Message 输出通过编译器管理的 UTF-16 地址表自动完成。构造器、public/private、可空用户对象、虚方法和 `super` 已经接通 MIL/mlog。`Set<Unit<T>>` 与 `Set<Building<T>>` 均可保存、过滤、计数、索引和遍历；查询来源与重连元数据是编译器私有实现，不形成额外的 MPL 类型。可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
 
 ```bash
 # 默认使用 v146；目录必须不存在或为空。
