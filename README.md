@@ -1,12 +1,12 @@
 # mindustry-processor-language
 
-MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处理器的高级语言与编译器项目。它先将 MPL 源码降级为支持 profile 宏的 MIL（Macro Intermediate Language），再生成游戏可执行的 mlog 指令。MIL 保留变量、表达式、函数和结构化控制流等 MPL 基础语法，只展开 Unit Set/Unit/Building、字符串运行时等高级糖及其运行时需求。
+MPL（Mindustry Processor Language）是一个面向 Mindustry 游戏逻辑处理器的高级语言与编译器项目。它先将 MPL 源码降级为支持 profile 宏的 MIL（Macro Intermediate Language），再生成游戏可执行的 mlog 指令。MIL 保留变量、表达式、函数和结构化控制流等 MPL 基础语法，只展开 Unit/Building 查询、字符串运行时等高级糖及其运行时需求。
 
 项目目前处于原型实现阶段，尚未提供稳定的编译器版本。编译器使用 Java（JDK 17），MPL 与 MIL 均使用拆分的 ANTLR 4 词法/语法文件；任何标记为“讨论基线”的语法仍可能调整。v146 使用兼容的 String 字符跳转表，v159.7 已自动选择 `printchar` 专用 lowering，并在构建报告中给出相对 baseline 的指令与标签差值。
 
 ## 快速试用
 
-当前原型支持初始化项目、基础数值/控制流、项目内及锁定工作区包的 MPL/MIL 混合模块、无继承 class/new、Message/Display I/O，以及 Unit/Building 对象查询。顶层 `new` 使用编译器管理的静态对象槽；函数和循环内可证明不逃逸的局部 `val` 按分配点复用固定槽；`return new Type(...)` 工厂还可把新对象转移给唯一 `val` 所有者，由物理 Memory 对象池和词法作用域回收管理。不可变 String 值已支持运行时拼接、`length`、内容相等、函数传递和按值赋值，Message 输出通过编译器管理的 UTF-16 地址表自动完成。构造器、public/private、可空用户对象和实例方法已经接通 MIL/mlog。`Set<Unit<T>>` 与 `LinkedBuildingSet<T>` 均可保存、过滤、计数、索引和遍历；可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
+当前原型支持初始化项目、基础数值/控制流、项目内及锁定工作区包的 MPL/MIL 混合模块、无继承 class/new、Message/Display I/O，以及 Unit/Building 对象查询。顶层 `new` 使用编译器管理的静态对象槽；函数和循环内可证明不逃逸的局部 `val` 按分配点复用固定槽；`return new Type(...)` 工厂还可把新对象转移给唯一 `val` 所有者，由物理 Memory 对象池和词法作用域回收管理。不可变 String 值已支持运行时拼接、`length`、内容相等、函数传递和按值赋值，Message 输出通过编译器管理的 UTF-16 地址表自动完成。构造器、public/private、可空用户对象和实例方法已经接通 MIL/mlog。`Set<Unit<T>>` 与 `Set<Building<T>>` 均可保存、过滤、计数、索引和遍历；查询来源与重连元数据是编译器私有实现，不形成额外的 MPL 类型。可空 Unit/Building 引用在判空后可读取和控制。需要 JDK 17：
 
 ```bash
 # 默认使用 v146；目录必须不存在或为空。
