@@ -5,7 +5,7 @@
     "name" : "@example/notifier",
     "version" : "1.0.0",
     "source" : "workspace:../通知包",
-    "contentSha256" : "9d080bd37e5c338216066f941ff699fad9d9d975d5bca6f037fef5e16aa88301",
+    "contentSha256" : "289dd6a6492a1e1d47ac94c5cfb7fba7d170303c397d06da10c8559569d939aa",
     "hardwareSha256" : "19545037b315dc7894f063e308c98ed02df1b83548358df2033e6ea67def31db",
     "dependencies" : { }
   } ]

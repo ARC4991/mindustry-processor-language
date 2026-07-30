@@ -9,5 +9,6 @@
 构建命令：
 
 ```bash
-./gradlew run --args='build --target=v146 examples/建筑重连 examples/建筑重连/build'
+cd examples/建筑重连
+mpl build --target=v146
 ```

@@ -3,8 +3,9 @@
 该示例覆盖可重新赋值的 `var String`、运行时拼接、函数参数/返回值的按值复制、UTF-16 `length`、内容相等比较和 Message 自动刷新。
 
 ~~~bash
-./gradlew run --args='build --target=v146 examples/字符串运行时 examples/字符串运行时/build'
-./gradlew run --args='build --target=v159.7 examples/字符串运行时 examples/字符串运行时/build-v159.7'
+cd examples/字符串运行时
+mpl build --target=v146
+mpl build --target=v159.7 build-v159.7
 ~~~
 
 构建产物中的 `runtime.msch` 会自动包含 String 描述符表和代码单元序列所需的 Memory。导入游戏后，只需把 Message 建筑连接到 `Main` 处理器，并确认游戏链接名为 `message1`。程序应输出：

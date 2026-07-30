@@ -3,7 +3,8 @@
 该示例创建两个长期存活的 `Counter`，分别得到 `3` 和 `15`，并通过 `!==` 验证对象身份不同。`temporaryTotal` 在函数内创建一个不逃逸的固定分配点对象并得到 `24`；`pooledTotal` 通过 `createCounter` 工厂同时持有两个对象并得到 `5`。构造器、private 字段和实例方法会保留在 `Main.mil`；固定对象降级为正整数句柄和虚拟字段槽，工厂对象降级为负整数句柄和编译器规划的物理 Memory 池。
 
 ~~~bash
-./gradlew run --args='build --target=v146 examples/对象模型 examples/对象模型/build'
+cd examples/对象模型
+mpl build --target=v146
 ~~~
 
 将生成的 `runtime.msch` 导入游戏后，把一个 Message 建筑连接到蓝图中的 `Main` 处理器，并确保游戏分配的链接名为 `message1`。程序执行一次，输出 `first=3, second=15, temporary=24, pooled=5, distinct=1` 后停止；目标 mlog 以 `1` 表示 true。对象池所需 Memory 已包含在蓝图内，不需要手动连接。
