@@ -52,13 +52,14 @@
     },
     "memory": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "kind", "capacity", "usedSlots", "bindings"],
+      "required": ["id", "kind", "capacity", "usedSlots", "blueprintPosition", "bindings"],
       "properties": {
         "id": { "type": "string" },
         "kind": { "enum": ["cell", "bank"] },
         "capacity": { "type": "integer", "minimum": 1 },
         "usedSlots": { "type": "integer", "minimum": 0 },
-        "bindings": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["shard", "alias", "access"], "properties": { "shard": { "type": "string" }, "alias": { "type": "string" }, "access": { "enum": ["read", "write", "readWrite"] } } } }
+        "blueprintPosition": { "$ref": "#/$defs/position" },
+        "bindings": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["shard", "alias", "access", "autoConnected"], "properties": { "shard": { "type": "string" }, "alias": { "type": "string" }, "access": { "enum": ["read", "write", "readWrite"] }, "autoConnected": { "type": "boolean" } } } }
       }
     },
     "externalHardware": {
