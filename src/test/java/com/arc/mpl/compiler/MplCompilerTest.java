@@ -1299,9 +1299,38 @@ class MplCompilerTest {
         assertTrue(mlog.contains("read "), mlog);
         assertTrue(mlog.contains("write "), mlog);
         assertTrue(mlog.contains("set @counter __mpl_tmp"), mlog);
+        assertFalse(mlog.contains("printchar "), mlog);
         assertTrue(mlog.contains("printflush message1"), mlog);
         assertTrue(result.mil().orElseThrow().contains("val banner: String = (title + \" v1\");"));
         assertTrue(result.physicalMemoryLayout().stringRuntime().slots() > 0);
+    }
+
+    @Test
+    void usesV159PrintCharForDynamicStringOutput(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("hardware.mplh"),
+            "const Status: Message = link(\"message1\");");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var title: String = "😀";
+            title = title + "PL";
+            Status.print(title);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v159.7"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("printchar "), mlog);
+        assertFalse(mlog.contains("__mpl_string_return"), mlog);
+        assertFalse(mlog.contains("string_unit"), mlog);
+        assertTrue(mlog.contains("write 55357 "), mlog);
+        assertTrue(mlog.contains("write 56832 "), mlog);
+        assertTrue(mlog.contains("printflush message1"), mlog);
+        var optimization = result.optimizationReport().profileOptimizations().stream()
+            .filter(value -> value.name().equals("printcharStringOutput")).findFirst().orElseThrow();
+        assertEquals(1, optimization.applied());
+        assertTrue(optimization.estimatedInstructionsSaved() > 0);
+        assertTrue(optimization.estimatedLabelsSaved() > 0);
     }
 
     @Test

@@ -5,6 +5,7 @@ import com.arc.mpl.hir.ValueType;
 import com.arc.mpl.profile.KnownProfiles;
 import com.arc.mpl.profile.TargetProfile;
 import com.arc.mpl.optimization.OptimizationReport;
+import com.arc.mpl.optimization.ProfileOptimization;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -82,6 +83,26 @@ class BuildArtifactWriterTest {
         assertEquals(1, report.path("optimizations").get(2).path("applied").asInt());
         assertEquals(4, report.path("optimizations").get(3).path("applied").asInt());
         assertTrue(report.path("optimizations").get(0).path("estimatedInstructionsSaved").isMissingNode());
+    }
+
+    @Test
+    void recordsProfileSpecificLoweringSavingsInTheBuildReport() throws Exception {
+        TargetProfile profile = KnownProfiles.find("v159.7").orElseThrow();
+        RuntimePlan plan = new RuntimePlanner().plan("printchar 65\nstop\n", profile);
+        OptimizationReport optimizations = OptimizationReport.NONE.withProfileOptimization(
+            new ProfileOptimization("printcharStringOutput", 1, 9, 4));
+
+        new BuildArtifactWriter().write(temporaryDirectory, "printchar 65\nstop\n", "", profile,
+            new HardwareContract(List.of(), Map.of()), plan, new ProjectMetadata("profile-demo", "1.0.0"),
+            optimizations);
+
+        JsonNode report = new ObjectMapper().readTree(
+            java.nio.file.Files.readString(temporaryDirectory.resolve("report.json")));
+        JsonNode optimization = report.path("optimizations").get(4);
+        assertEquals("printcharStringOutput", optimization.path("name").asText());
+        assertEquals(1, optimization.path("applied").asInt());
+        assertEquals(9, optimization.path("estimatedInstructionsSaved").asInt());
+        assertEquals(4, optimization.path("estimatedLabelsSaved").asInt());
     }
 
     @Test

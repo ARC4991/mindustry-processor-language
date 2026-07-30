@@ -35,4 +35,13 @@ class MlogProgramBuilderTest {
 
         assertEquals("write value __mpl_mem0 7\nread result __mpl_mem0 7\n", builder.render());
     }
+
+    @Test
+    void rendersProfileSpecificPrintCharInstruction() {
+        MlogProgramBuilder builder = new MlogProgramBuilder(MlogLabelStyle.RELEASE);
+
+        builder.printChar("__mpl_tmp0");
+
+        assertEquals("printchar __mpl_tmp0\n", builder.render());
+    }
 }
