@@ -29,7 +29,7 @@
     },
     "sharedRuntime": {
       "type": "object", "additionalProperties": false,
-      "required": ["magic", "abiVersion", "fingerprint", "epoch", "mainShard", "workers", "slots", "readyIndex", "heartbeatIndexes", "slices"],
+      "required": ["magic", "abiVersion", "fingerprint", "epoch", "mainShard", "workers", "slots", "readyIndex", "heartbeatIndexes", "slices", "mailboxes"],
       "properties": {
         "magic": { "type": "integer", "minimum": 1 },
         "abiVersion": { "type": "integer", "minimum": 1 },
@@ -40,6 +40,19 @@
         "slots": { "type": "integer", "minimum": 6 },
         "readyIndex": { "type": "integer", "minimum": 0 },
         "heartbeatIndexes": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "slices": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/runtimeSlice" } },
+        "mailboxes": { "type": "array", "items": { "$ref": "#/$defs/mailbox" } }
+      }
+    },
+    "mailbox": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "producer", "consumer", "payloadSlots", "slots", "slices"],
+      "properties": {
+        "id": { "type": "string" },
+        "producer": { "type": "string" },
+        "consumer": { "type": "string" },
+        "payloadSlots": { "type": "integer", "minimum": 0 },
+        "slots": { "type": "integer", "minimum": 3 },
         "slices": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/runtimeSlice" } }
       }
     },

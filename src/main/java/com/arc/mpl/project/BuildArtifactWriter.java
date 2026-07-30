@@ -176,6 +176,23 @@ public final class BuildArtifactWriter {
                 item.put("logicalStart", slice.logicalStart());
                 item.put("length", slice.length());
             });
+            ArrayNode mailboxes = runtime.putArray("mailboxes");
+            shared.mailboxes().forEach(mailbox -> {
+                ObjectNode item = mailboxes.addObject();
+                item.put("id", mailbox.id());
+                item.put("producer", mailbox.producer());
+                item.put("consumer", mailbox.consumer());
+                item.put("payloadSlots", mailbox.payloadSlots());
+                item.put("slots", mailbox.slots());
+                ArrayNode mailboxSlices = item.putArray("slices");
+                mailbox.allocation().slices().forEach(slice -> {
+                    ObjectNode part = mailboxSlices.addObject();
+                    part.put("memory", plan.physicalMemoryLayout().segments().get(slice.segmentIndex()).alias());
+                    part.put("offset", slice.offset());
+                    part.put("logicalStart", slice.logicalStart());
+                    part.put("length", slice.length());
+                });
+            });
         });
 
         ObjectNode deployment = artifactHeader(profile, digest);

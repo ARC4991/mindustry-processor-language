@@ -179,7 +179,8 @@ class BuildArtifactWriterTest {
             new RuntimePlanner.ShardSource("Worker-0", List.of("worker"), "worker-seed"));
         RuntimePlanner planner = new RuntimePlanner();
         SharedRuntimeLayoutPlanner.Result prepared = planner.prepareSharedRuntime(
-            seeds, profile, RuntimePreferences.defaults(), layout);
+            seeds, profile, RuntimePreferences.defaults(), layout, List.of(
+                new SharedRuntimeLayoutPlanner.MailboxRequirement("MainToWorker", "Main", "Worker-0", 1)));
         String mainMlog = new MlogCodeGenerator(MlogLabelStyle.RELEASE, prepared.physicalMemoryLayout(), List.of(),
             profile.capabilities(), MlogRuntimeContext.shared("Main", prepared.sharedRuntime()))
             .generate(new HirProgram(List.of()));
@@ -205,8 +206,8 @@ class BuildArtifactWriterTest {
             java.nio.file.Files.readString(temporaryDirectory.resolve("report.json")));
         assertEquals(2, report.path("shards").size());
         assertEquals(plan.instructions(), report.path("totals").path("instructions").asInt());
-        assertEquals(7, report.path("totals").path("physicalSlots").asInt());
-        assertEquals(6, report.path("totals").path("runtimeSlots").asInt());
+        assertEquals(11, report.path("totals").path("physicalSlots").asInt());
+        assertEquals(10, report.path("totals").path("runtimeSlots").asInt());
         assertEquals(0, report.path("shards").get(1).path("resources").path("physicalSlots").asInt());
         JsonNode deployment = new ObjectMapper().readTree(
             java.nio.file.Files.readString(temporaryDirectory.resolve("deployment.json")));
@@ -215,8 +216,10 @@ class BuildArtifactWriterTest {
             .map(value -> value.path("shard").asText()).toList());
         JsonNode sharedRuntime = deployment.path("runtimeTopology").path("sharedRuntime");
         assertEquals(1, sharedRuntime.path("abiVersion").asInt());
-        assertEquals(6, sharedRuntime.path("slots").asInt());
+        assertEquals(10, sharedRuntime.path("slots").asInt());
         assertEquals(5, sharedRuntime.path("heartbeatIndexes").path("Worker-0").asInt());
+        assertEquals("MainToWorker", sharedRuntime.path("mailboxes").get(0).path("id").asText());
+        assertEquals(1, sharedRuntime.path("mailboxes").get(0).path("payloadSlots").asInt());
         assertTrue(java.nio.file.Files.readString(temporaryDirectory.resolve("连接说明.txt"))
             .contains("Runtime Memory 已自动连接到所有 shard"));
         assertEquals(List.of(
