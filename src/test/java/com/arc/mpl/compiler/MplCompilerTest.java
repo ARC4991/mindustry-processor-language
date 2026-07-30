@@ -67,7 +67,7 @@ class MplCompilerTest {
         assertTrue(mil.contains("fun displayValue(value: Int) {"), mil);
         java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
         java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
-        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146"));
         assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
     }
 
@@ -2284,6 +2284,40 @@ class MplCompilerTest {
         assertTrue(mlog.lines().anyMatch(line -> line.matches("read __mpl_tmp\\d+ bank1 mpl_i")));
         assertTrue(mlog.lines().anyMatch(line -> line.matches("write __mpl_tmp\\d+ bank1 __mpl_tmp\\d+")));
         assertFalse(mlog.contains("mpl_values_e"));
+    }
+
+    @Test
+    void compilesMutableListsIntoPhysicalMemoryAndStructuredMil(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            var values: MutableList<Int> = MutableList.withCapacity(4);
+            values.add(3);
+            values.add(5);
+            values.removeAt(0);
+            values.set(0, 8);
+            var size: Int = values.size;
+            var first: Int = values.get(0);
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146"));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        assertEquals(4, result.physicalMemoryLayout().physicalSlots());
+        assertEquals(1, result.physicalMemoryLayout().memoryBanks());
+        assertTrue(result.mil().orElseThrow().contains("MutableList.withCapacity(4)"));
+        assertTrue(result.mil().orElseThrow().contains("values.set(0, 8);"));
+        assertTrue(result.mil().orElseThrow().contains("values.removeAt(0);"));
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("set mpl___mpl_mutableList_size_values 0"));
+        assertTrue(mlog.lines().anyMatch(line -> line.matches("write 3 bank1 __mpl_tmp\\d+")));
+        assertTrue(mlog.contains("set mpl_size mpl___mpl_mutableList_size_values"));
+        assertTrue(mlog.contains("read __mpl_tmp"));
+
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), result.mil().orElseThrow());
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146"));
+        assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
+        assertEquals(result.mlog(), regenerated.mlog());
     }
 
     @Test

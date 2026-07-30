@@ -8,6 +8,7 @@ import com.arc.mpl.hir.HirDynamicIndexAccess;
 import com.arc.mpl.hir.HirFor;
 import com.arc.mpl.hir.HirIf;
 import com.arc.mpl.hir.HirMemberAccess;
+import com.arc.mpl.hir.HirMutableListLiteral;
 import com.arc.mpl.hir.HirUnitControl;
 import com.arc.mpl.hir.HirUnitIteration;
 import com.arc.mpl.hir.HirUnitQuery;
@@ -431,6 +432,49 @@ class SemanticAnalyzerTest {
         assertTrue(result.program().isEmpty());
         assertEquals(2, result.diagnostics().stream().filter(diagnostic -> diagnostic.code().equals("MPL3501")
             && diagnostic.message().contains("未声明的函数")).count());
+    }
+
+    @Test
+    void supportsFixedCapacityMutableListsOnAProvableLinearPath() {
+        Program program = parser.parse("""
+            var values: MutableList<Int> = MutableList.withCapacity(3);
+            values.add(4);
+            values.add(8);
+            values.removeAt(0);
+            values.set(0, 9);
+            values.clear();
+            values.add(2);
+            var size: Int = values.size;
+            var first: Int = values.get(0);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var declarations = result.program().orElseThrow().statements().stream()
+            .filter(HirVariableDeclaration.class::isInstance).map(HirVariableDeclaration.class::cast).toList();
+        assertEquals(new CollectionType(CollectionType.Kind.MUTABLE_LIST, com.arc.mpl.hir.ValueType.INT),
+            declarations.get(0).type());
+        HirMutableListLiteral literal = assertInstanceOf(HirMutableListLiteral.class, declarations.get(0).initializer());
+        assertEquals(3, literal.capacity());
+        assertEquals(0, literal.elements().size());
+        assertInstanceOf(HirMemberAccess.class, declarations.get(1).initializer());
+    }
+
+    @Test
+    void rejectsMutableListGrowthPastItsDeclaredCapacityOrInsideABranch() {
+        Program program = parser.parse("""
+            var values: MutableList<Int> = MutableList.withCapacity(1);
+            values.add(1);
+            values.add(2);
+            if (true) { values.clear(); }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.message().contains("超出已声明容量")));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.message().contains("不能位于条件或循环中")));
     }
 
     @Test
