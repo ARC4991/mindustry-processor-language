@@ -100,9 +100,9 @@ final class MlogProgramBuilder {
 
     /** Emits the fixed-width target control instruction for a statically declared building link. */
     void buildingControl(String target, String action, List<String> arguments) {
-        if (arguments.size() > 5) throw new IllegalArgumentException("control 指令至多接受五个参数");
+        if (arguments.size() > 4) throw new IllegalArgumentException("control 指令至多接受四个参数");
         List<String> operands = new ArrayList<>(arguments);
-        while (operands.size() < 5) operands.add("0");
+        while (operands.size() < 4) operands.add("0");
         add(new BuildingControlInstruction(target, action, List.copyOf(operands)));
     }
 
@@ -310,7 +310,8 @@ final class MlogProgramBuilder {
 
     private record BuildingControlInstruction(String target, String action, List<String> arguments) implements Instruction {
         @Override public String render() {
-            return "control " + target + " " + action + " " + String.join(" ", arguments);
+            // Official LogicIO order is: access/action, target, p1, p2, p3, p4.
+            return "control " + action + " " + target + " " + String.join(" ", arguments);
         }
     }
 

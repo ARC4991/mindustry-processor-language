@@ -2,6 +2,8 @@ package com.arc.mpl.codegen;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class MlogProgramBuilderTest {
@@ -43,5 +45,18 @@ class MlogProgramBuilderTest {
         builder.printChar("__mpl_tmp0");
 
         assertEquals("printchar __mpl_tmp0\n", builder.render());
+    }
+
+    @Test
+    void rendersBuildingControlInTheOfficialActionTargetOrder() {
+        MlogProgramBuilder builder = new MlogProgramBuilder(MlogLabelStyle.RELEASE);
+
+        builder.buildingControl("duo1", "shoot", List.of("10", "20", "1"));
+        builder.buildingControl("switch1", "enabled", List.of("0"));
+
+        assertEquals("""
+            control shoot duo1 10 20 1 0
+            control enabled switch1 0 0 0 0
+            """, builder.render());
     }
 }
