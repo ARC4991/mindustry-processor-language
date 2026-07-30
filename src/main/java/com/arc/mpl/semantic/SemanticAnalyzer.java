@@ -745,11 +745,24 @@ public final class SemanticAnalyzer {
             return candidates.size() == 1 ? candidates.get(0).returnType() : ValueType.ERROR;
         }
         if (expression instanceof CallExpression call && call.callee() instanceof MemberAccessExpression member) {
+            List<MplType> arguments = call.arguments().stream().map(value -> inferExpressionType(value, locals)).toList();
+            if (member.target() instanceof Identifier identifier && "super".equals(identifier.name()) && inferringClass != null) {
+                ClassInfo owner = classes.get(inferringClass);
+                ClassInfo parent = owner == null ? null : owner.parent();
+                if (parent == null) return ValueType.ERROR;
+                List<MethodInfo> candidates = methodCandidates(parent, member.member()).stream()
+                    .filter(MethodInfo::publicAccess)
+                    .filter(method -> method.parameterTypes().size() == arguments.size())
+                    .filter(method -> java.util.stream.IntStream.range(0, arguments.size())
+                        .allMatch(index -> canAssign(method.parameterTypes().get(index), arguments.get(index))))
+                    .filter(method -> method.returnType() != ValueType.ERROR)
+                    .toList();
+                return candidates.size() == 1 ? candidates.get(0).returnType() : ValueType.ERROR;
+            }
             MplType receiver = inferExpressionType(member.target(), locals);
             if (!(receiver instanceof ObjectType object) || object.nullable()) return ValueType.ERROR;
             ClassInfo type = classes.get(object.className());
             if (type == null) return ValueType.ERROR;
-            List<MplType> arguments = call.arguments().stream().map(value -> inferExpressionType(value, locals)).toList();
             List<MethodInfo> candidates = methodCandidates(type, member.member()).stream()
                 .filter(method -> method.parameterTypes().size() == arguments.size())
                 .filter(method -> java.util.stream.IntStream.range(0, arguments.size())
