@@ -50,6 +50,12 @@ public final class MplCli {
         args = invocation.arguments();
         DiagnosticLanguage language = invocation.language();
 
+        if (args.length == 0) {
+            printUsage(language);
+            System.exit(2);
+            return;
+        }
+
         if (args.length == 1 && "--version".equals(args[0])) {
             System.out.println("mpl 0.1.0-SNAPSHOT");
             return;
