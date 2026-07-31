@@ -57,9 +57,11 @@ jobs:
 
   部署官方网站与包索引:
     name: 部署 IO
-    if: github.ref == 'refs/heads/master' && secrets.IO_DEPLOY_TOKEN != ''
+    if: github.ref == 'refs/heads/master'
     needs: 跨平台验证
     runs-on: ubuntu-latest
+    env:
+      IO_DEPLOY_TOKEN: ${{ secrets.IO_DEPLOY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -77,9 +79,10 @@ jobs:
           mkdir -p website/dist/registry
           cp registry/index.json website/dist/registry/index.json
       - name: 部署到 GitHub IO 仓库
+        if: env.IO_DEPLOY_TOKEN != ''
         uses: peaceiris/actions-gh-pages@v4
         with:
-          personal_token: ${{ secrets.IO_DEPLOY_TOKEN }}
+          personal_token: ${{ env.IO_DEPLOY_TOKEN }}
           external_repository: ARC4991/mindustry-processor-language-io
           publish_branch: gh-pages
           publish_dir: ./website/dist
