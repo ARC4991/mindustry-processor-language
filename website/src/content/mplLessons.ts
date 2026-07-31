@@ -102,7 +102,7 @@ export const mplLessons: TutorialLesson[] = [
     summary: "查询普通 Set，串联 where，再直接操作对象。", keywords: ["Unit.getAllDagger", "Building.getAllDuo", "where", "take"],
     sections: [
       { title: "查询返回通用 Set", paragraphs: ["Unit.getAllDagger 返回 Set<Unit<Dagger>>，where 可连续串联；size、get 与 for 观察同一查询计划。普通查询弱一致，不承诺快照或稳定顺序。"], terms: ["Unit.getAllDagger", "Set<Unit<Dagger>>", "where", "size", "get", "for"], code: { language: "mpl", source: "val ready = Unit.getAllDagger()\n  .where(unit => unit.alive)\n  .where(unit => unit.ammo > 0.0);\nval count = ready.size;\nfor (var unit : ready) { unit.move(40.0, 20.0); }" } },
-      { title: "take 使用隐藏 flag 固定成员", paragraphs: ["take(3) 让 Runtime 私有认领最多三只匹配单位；flag、bind、ID 和扫描游标都不对 MPL/MIL 开放。Building 查询来自已声明链接，可在重新连接后按 alias 恢复。"], terms: ["take(3)", "Runtime", "flag", "Building"], code: { language: "mpl", source: "val squad = Unit.getAllDagger()\n  .where(_.alive)\n  .take(3);\nval turrets = Building.getAllDuo().where(_.enabled);" }, callout: { tone: "warning", title: "Unit 上下文限制", text: "当前禁止嵌套 Unit 遍历，也不允许 UnitRef 作为函数参数、返回值或用户对象字段。" } }
+      { title: "take 使用隐藏 flag 固定成员", paragraphs: ["take(3) 让 Runtime 私有认领最多三只匹配单位；flag、bind、ID 和扫描游标都不对 MPL/MIL 开放。Building 查询来自已声明链接，可在重新连接后按 alias 恢复。保存的 UnitRef 还可以传给函数，函数会在操作前自动重新绑定。"], terms: ["take(3)", "Runtime", "flag", "UnitRef", "Building"], code: { language: "mpl", source: "fun moveUnit(unit: Unit<Dagger>, x: Float, y: Float) {\n  unit.move(x, y);\n}\nval squad = Unit.getAllDagger().where(_.alive).take(3);\nval leader = squad.get(0);\nif (leader != null) { moveUnit(leader, 40.0, 20.0); }" }, callout: { tone: "warning", title: "Unit 上下文限制", text: "当前禁止嵌套 Unit 遍历、循环变量逃逸和在 Unit 遍历体中重绑另一个保存引用。" } }
     ]
   },
   {

@@ -589,7 +589,7 @@ public final class SemanticAnalyzer {
         MplType returnType = function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.ERROR);
         if (parameters.stream().anyMatch(this::unsupportedTopLevelFunctionAbi)
             || unsupportedTopLevelFunctionAbi(returnType)) {
-            error("MPL3602", "函数 ABI 当前支持标量、Int/Float/Bool 元组及固定形状的数值/Bool 数组；其他集合和对象聚合尚不支持",
+            error("MPL3602", "函数 ABI 当前支持标量句柄、Int/Float/Bool 元组及固定形状的数值/Bool 数组；其他集合和对象聚合尚不支持",
                 function.span());
         }
         boolean returnsOwnedObject = returnType instanceof ObjectType object && !object.nullable()
@@ -887,7 +887,7 @@ public final class SemanticAnalyzer {
 
     private void replaceFunctionSignature(FunctionSignature previous, MplType returnType) {
         if (unsupportedTopLevelFunctionAbi(returnType)) {
-            error("MPL3602", "函数 ABI 当前支持标量、Int/Float/Bool 元组及固定形状的数值/Bool 数组；该返回类型尚不支持",
+            error("MPL3602", "函数 ABI 当前支持标量句柄、Int/Float/Bool 元组及固定形状的数值/Bool 数组；该返回类型尚不支持",
                 previous.declaration().span());
             return;
         }
@@ -2274,8 +2274,8 @@ public final class SemanticAnalyzer {
                 error("MPL3308", "可空 " + unit.displayName() + " 必须先通过 != null 检查", call.span());
                 return new HirExpressionStatement(new HirConstant("0", ValueType.ERROR));
             }
-            if (currentFunction != null || unitIterationDepth > 0) {
-                error("MPL3306", "第一版不能在函数或 Unit 遍历体中重绑已保存的 UnitRef", call.span());
+            if (unitIterationDepth > 0) {
+                error("MPL3306", "不能在 Unit 遍历体中重绑已保存的 UnitRef", call.span());
             }
             return analyzeUnitControl(target.name(), true, member.member(), call.arguments(), call.span());
         }
@@ -2797,9 +2797,6 @@ public final class SemanticAnalyzer {
             if (symbol == null) {
                 error("MPL3102", "未声明的变量：" + identifier.name(), identifier.span());
                 return new HirVariable(identifier.name(), ValueType.ERROR);
-            }
-            if (currentFunction != null && symbol.type() instanceof UnitType) {
-                error("MPL3508", "第一版函数不能访问已保存的 UnitRef", identifier.span());
             }
             if ((symbol.reusableLocalObject() || symbol.ownsPooledObject()) && !borrowedObjectUse) {
                 error("MPL3708", "受管对象 " + identifier.name()
@@ -4138,7 +4135,6 @@ public final class SemanticAnalyzer {
 
     private boolean unsupportedTopLevelFunctionAbi(MplType type) {
         if (type == ValueType.ERROR) return false;
-        if (type instanceof UnitType) return true;
         if (type instanceof CollectionType) return !isFunctionArray(type);
         return type instanceof TupleType && !supportedTupleFunctionAbi(type);
     }

@@ -760,6 +760,5 @@ class SemanticAnalyzerTest {
         assertTrue(result.program().isEmpty());
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3306".equals(diagnostic.code())));
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3508".equals(diagnostic.code())));
-        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> "MPL3602".equals(diagnostic.code())));
     }
 }

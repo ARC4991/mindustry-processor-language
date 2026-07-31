@@ -2396,6 +2396,35 @@ class MplCompilerTest {
     }
 
     @Test
+    void passesPersistentUnitReferencesThroughFunctionAbi(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            fun moveUnit(unit: Unit<Dagger>, x: Float, y: Float) {
+                unit.move(x, y);
+            }
+            fun identity(unit: Unit<Dagger>): Unit<Dagger> {
+                return unit;
+            }
+            val candidate: Unit<Dagger>? = Unit.getAllDagger().get(0);
+            if (candidate != null) {
+                moveUnit(identity(candidate), 12.0, 24.0);
+            }
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("fun moveUnit(unit: Unit<Dagger>, x: Float, y: Float)"), mil);
+        assertTrue(mil.contains("fun identity(unit: Unit<Dagger>): Unit<Dagger>"), mil);
+        assertTrue(mil.contains("@unit.refMove(unit, x, y);"), mil);
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("set __mpl_fn"), mlog);
+        assertTrue(mlog.contains("ubind __mpl_fn"), mlog);
+        assertTrue(mlog.contains("ucontrol move __mpl_fn0_arg1 __mpl_fn0_arg2 0 0 0"), mlog);
+    }
+
+    @Test
     void compilesProvenDynamicArraysThroughOnePhysicalMemoryLayout(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
