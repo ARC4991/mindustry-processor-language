@@ -9,8 +9,16 @@ fun normalize(decimal: Bool): (Float, Float) {
     }
     return (1, 2.5);
 }
+fun rotateArray(values: Int[]): Int[] {
+    return [values[2], values[0], values[1]];
+}
+fun sumArray(values: Int[]): Int {
+    return ((values[0] + values[1]) + values[2]);
+}
 val original: (Int, Float) = (3, 4.5);
 val rotated: (Float, Int) = rotate(original);
 val normalized: (Float, Float) = normalize(true);
 val mixed: Float[] = [1, 2.5, 3];
-@io.print(@message1, "rotated=", rotated[0], ",", rotated[1], " normalized=", normalized[0], ",", normalized[1], " arraySize=", 3);
+val reordered: Int[] = rotateArray([2, 3, 5]);
+val arrayTotal: Int = sumArray(reordered);
+@io.print(@message1, "rotated=", rotated[0], ",", rotated[1], " normalized=", normalized[0], ",", normalized[1], " arraySize=", 3, " arrayTotal=", arrayTotal);

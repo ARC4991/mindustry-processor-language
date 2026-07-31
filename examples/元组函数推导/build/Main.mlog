@@ -1,7 +1,7 @@
-# MPL shard: Main / build: b4c1874ef22a
-_2:
+# MPL shard: Main / build: 080143935381
+_4:
 sensor __mpl_hw0 message1 @type
-jump _2 notEqual __mpl_hw0 @message
+jump _4 notEqual __mpl_hw0 @message
 set mpl_original_e0 3
 set mpl_original_e1 4.5
 set __mpl_tmp0 mpl_original_e0
@@ -9,7 +9,7 @@ set __mpl_tmp1 mpl_original_e1
 set __mpl_fn0_arg0_e0 __mpl_tmp0
 set __mpl_fn0_arg0_e1 __mpl_tmp1
 op add __mpl_fn0_return @counter 1
-set @counter 37
+set @counter 63
 set __mpl_tmp2 __mpl_fn0_result_e0
 set __mpl_tmp3 __mpl_fn0_result_e1
 set mpl_rotated_e0 __mpl_tmp2
@@ -17,7 +17,7 @@ set mpl_rotated_e1 __mpl_tmp3
 set __mpl_tmp4 1
 set __mpl_fn1_arg0 __mpl_tmp4
 op add __mpl_fn1_return @counter 1
-set @counter 42
+set @counter 68
 set __mpl_tmp5 __mpl_fn1_result_e0
 set __mpl_tmp6 __mpl_fn1_result_e1
 set mpl_normalized_e0 __mpl_tmp5
@@ -25,6 +25,30 @@ set mpl_normalized_e1 __mpl_tmp6
 set mpl_mixed_e0 1
 set mpl_mixed_e1 2.5
 set mpl_mixed_e2 3
+set __mpl_tmp7 2
+set __mpl_tmp8 3
+set __mpl_tmp9 5
+set __mpl_fn2_arg0_e0 __mpl_tmp7
+set __mpl_fn2_arg0_e1 __mpl_tmp8
+set __mpl_fn2_arg0_e2 __mpl_tmp9
+op add __mpl_fn2_return @counter 1
+set @counter 79
+set __mpl_tmp10 __mpl_fn2_result_e0
+set __mpl_tmp11 __mpl_fn2_result_e1
+set __mpl_tmp12 __mpl_fn2_result_e2
+set mpl_reordered_e0 __mpl_tmp10
+set mpl_reordered_e1 __mpl_tmp11
+set mpl_reordered_e2 __mpl_tmp12
+set __mpl_tmp13 mpl_reordered_e0
+set __mpl_tmp14 mpl_reordered_e1
+set __mpl_tmp15 mpl_reordered_e2
+set __mpl_fn3_arg0_e0 __mpl_tmp13
+set __mpl_fn3_arg0_e1 __mpl_tmp14
+set __mpl_fn3_arg0_e2 __mpl_tmp15
+op add __mpl_fn3_return @counter 1
+set @counter 86
+set __mpl_tmp16 __mpl_fn3_result
+set mpl_arrayTotal __mpl_tmp16
 print "rotated="
 print mpl_rotated_e0
 print ","
@@ -35,24 +59,43 @@ print ","
 print mpl_normalized_e1
 print " arraySize="
 print 3
+print " arrayTotal="
+print mpl_arrayTotal
 printflush message1
 stop
 _0:
-set __mpl_tmp7 __mpl_fn0_arg0_e1
-set __mpl_tmp8 __mpl_fn0_arg0_e0
-set __mpl_fn0_result_e0 __mpl_tmp7
-set __mpl_fn0_result_e1 __mpl_tmp8
+set __mpl_tmp17 __mpl_fn0_arg0_e1
+set __mpl_tmp18 __mpl_fn0_arg0_e0
+set __mpl_fn0_result_e0 __mpl_tmp17
+set __mpl_fn0_result_e1 __mpl_tmp18
 set @counter __mpl_fn0_return
 _1:
-jump _3 equal __mpl_fn1_arg0 0
-set __mpl_tmp9 1.5
-set __mpl_tmp10 2
-set __mpl_fn1_result_e0 __mpl_tmp9
-set __mpl_fn1_result_e1 __mpl_tmp10
+jump _5 equal __mpl_fn1_arg0 0
+set __mpl_tmp19 1.5
+set __mpl_tmp20 2
+set __mpl_fn1_result_e0 __mpl_tmp19
+set __mpl_fn1_result_e1 __mpl_tmp20
 set @counter __mpl_fn1_return
+_5:
+set __mpl_tmp21 1
+set __mpl_tmp22 2.5
+set __mpl_fn1_result_e0 __mpl_tmp21
+set __mpl_fn1_result_e1 __mpl_tmp22
+set @counter __mpl_fn1_return
+_2:
+set __mpl_tmp23 __mpl_fn2_arg0_e2
+set __mpl_tmp24 __mpl_fn2_arg0_e0
+set __mpl_tmp25 __mpl_fn2_arg0_e1
+set __mpl_fn2_result_e0 __mpl_tmp23
+set __mpl_fn2_result_e1 __mpl_tmp24
+set __mpl_fn2_result_e2 __mpl_tmp25
+set @counter __mpl_fn2_return
 _3:
-set __mpl_tmp11 1
-set __mpl_tmp12 2.5
-set __mpl_fn1_result_e0 __mpl_tmp11
-set __mpl_fn1_result_e1 __mpl_tmp12
-set @counter __mpl_fn1_return
+op add __mpl_tmp26 __mpl_fn3_arg0_e0 __mpl_fn3_arg0_e1
+op min __mpl_tmp26 __mpl_tmp26 2147483647
+op max __mpl_tmp26 __mpl_tmp26 -2147483648
+op add __mpl_tmp27 __mpl_tmp26 __mpl_fn3_arg0_e2
+op min __mpl_tmp27 __mpl_tmp27 2147483647
+op max __mpl_tmp27 __mpl_tmp27 -2147483648
+set __mpl_fn3_result __mpl_tmp27
+set @counter __mpl_fn3_return

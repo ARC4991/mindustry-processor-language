@@ -30,7 +30,7 @@ export const mplLessons: TutorialLesson[] = [
     summary: "表达固定结构和同类型连续元素。", keywords: ["元组", "数组", "Int[]", "静态下标"],
     sections: [
       { title: "元组保留每个位置的类型", paragraphs: ["元组可以包含不同类型，省略声明类型时从每个元素推导。异构元组使用常量下标读取，不能直接 for。"], terms: ["元组", "常量下标", "for"], code: { language: "mpl", source: "val spawn = (24.0, 48.0, true); // (Float, Float, Bool)\nval x = spawn[0];               // Float\nval active = spawn[2];          // Bool" } },
-      { title: "数组会求共同元素类型", paragraphs: ["数组字面量的元素必须能归一到同一类型。Int 与 Float 混合时提升为 Float[]；空数组没有推导依据，必须显式标注。"], terms: ["数组字面量", "Float[]", "空数组"], code: { language: "mpl", source: "val ids = [1, 2, 3];       // Int[]\nval points = [1, 2.5, 3];  // Float[]\nval empty: Int[] = [];" } }
+      { title: "数组会求共同元素类型", paragraphs: ["数组字面量的元素必须能归一到同一类型。Int 与 Float 混合时提升为 Float[]；空数组没有推导依据，必须显式标注。已知长度数组可在新声明中按值复制。"], terms: ["数组字面量", "Float[]", "空数组", "按值复制"], code: { language: "mpl", source: "val ids = [1, 2, 3];       // Int[]\nval copy = ids;            // Int[]\nval points = [1, 2.5, 3];  // Float[]\nval empty: Int[] = [];" } }
     ]
   },
   {
@@ -51,10 +51,10 @@ export const mplLessons: TutorialLesson[] = [
   },
   {
     id: "mpl-functions", track: "mpl", number: "07", title: "函数、返回推导与后置声明",
-    summary: "组织逻辑并让函数先使用、后声明。", keywords: ["fun", "return", "后置声明", "元组 ABI"],
+    summary: "组织逻辑并让函数先使用、后声明。", keywords: ["fun", "return", "后置声明", "聚合 ABI"],
     sections: [
-      { title: "返回类型也能推导", paragraphs: ["函数参数必须标注类型；返回类型可从所有 return 路径推导。函数和类支持后置声明，调用点不受源码排列顺序限制。顶层函数还可传入并返回由 Int、Float、Bool 组成的元组。"], terms: ["fun", "return", "返回类型", "后置声明", "Int", "Float", "Bool", "元组"], code: { language: "mpl", source: "val rotated = rotate((3, 4.5)); // (Float, Int)\n\nfun rotate(source: (Int, Float)) {\n  return (source[1], source[0]);\n}" } },
-      { title: "目标层 ABI", paragraphs: ["函数最终使用 @counter 间接跳转和编译器私有返回槽。元组按位置进入独立参数与结果槽，生成的 MIL 保留原签名并可再次编译。递归当前被禁止；缺失返回路径或无法稳定推导返回类型会直接报错。"], terms: ["@counter", "元组", "MIL", "递归", "编译器私有返回槽"], callout: { tone: "warning", title: "数组形状", text: "Int[] 类型本身不携带长度；数组参数与返回要等待编译期形状特化，当前会在编译期明确拒绝。" } }
+      { title: "返回类型也能推导", paragraphs: ["函数参数必须标注类型；返回类型可从所有 return 路径推导。函数和类支持后置声明，调用点不受源码排列顺序限制。顶层函数可传入并返回数值/Bool 元组与固定形状数组。"], terms: ["fun", "return", "返回类型", "后置声明", "Int[]", "元组", "数组"], code: { language: "mpl", source: "val rotated = rotate([1, 2, 3]); // Int[]\n\nfun rotate(values: Int[]) {\n  return [values[2], values[0], values[1]];\n}" } },
+      { title: "目标层 ABI", paragraphs: ["函数最终使用 @counter 间接跳转和编译器私有返回槽。元组与数组都按元素进入独立参数与结果槽；调用前先快照所有元素，嵌套调用不会覆盖实参。生成的 MIL 保留原签名并可再次编译。"], terms: ["@counter", "元组", "数组", "MIL", "快照", "编译器私有返回槽"], callout: { tone: "info", title: "编译期形状", text: "T[] 的长度不是公开类型的一部分。编译器沿调用图推导一个函数 ABI 的固定长度；当前同一函数的不同长度调用会在编译期拒绝。" } }
     ]
   },
   {
