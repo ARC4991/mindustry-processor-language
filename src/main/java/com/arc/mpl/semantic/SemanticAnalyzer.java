@@ -394,7 +394,7 @@ public final class SemanticAnalyzer {
             .map(parameter -> parseType(parameter.typeName(), parameter.span())).toList();
         if (sourceParameters.stream().anyMatch(parameterType -> !supportedMethodAggregateAbi(parameterType))
             || !supportedMethodAggregateAbi(returnType)) {
-            error("MPL3602", "方法 ABI 只支持标量及 Int/Float/Bool 元组", function.span());
+            error("MPL3602", "方法 ABI 当前支持标量、Int/Float/Bool 元组及固定形状的数值/Bool 数组", function.span());
         }
         int overloadIndex = constructor ? type.constructors().size()
             : (int) type.methods().keySet().stream().filter(key -> key.sourceName().equals(function.name())).count();
@@ -463,7 +463,7 @@ public final class SemanticAnalyzer {
 
     private void replaceMethodInfo(ClassInfo owner, MethodInfo previous, MplType returnType) {
         if (!supportedMethodAggregateAbi(returnType)) {
-            error("MPL3602", "方法 ABI 只支持标量及 Int/Float/Bool 元组", previous.declaration().span());
+            error("MPL3602", "方法 ABI 当前支持标量、Int/Float/Bool 元组及固定形状的数值/Bool 数组", previous.declaration().span());
             return;
         }
         MethodInfo replacement = new MethodInfo(previous.ownerClass(), previous.sourceName(), previous.internalName(),
@@ -509,6 +509,7 @@ public final class SemanticAnalyzer {
         if (type == ValueType.INT || type == ValueType.FLOAT || type == ValueType.BOOL
             || type == ValueType.STRING) return true;
         if (type instanceof ObjectType || type instanceof UnitType || type instanceof BuildingType) return true;
+        if (isFunctionArray(type)) return true;
         return type instanceof TupleType tuple && tuple.elementTypes().stream().allMatch(element ->
             element == ValueType.INT || element == ValueType.FLOAT || element == ValueType.BOOL);
     }
@@ -665,7 +666,7 @@ public final class SemanticAnalyzer {
         }
         if (!hasArrayAbi) return;
 
-        int maximumRounds = Math.max(4, (program.functions().size() + 1) * 4);
+        int maximumRounds = Math.max(4, (functions.size() + 1) * 4);
         for (int round = 0; round < maximumRounds; round++) {
             ShapeEnvironment globals = new ShapeEnvironment();
             boolean changed = shapeStatements(program.statements(), globals, null);
@@ -683,6 +684,15 @@ public final class SemanticAnalyzer {
                 }
                 changed |= shapeStatements(declaration.body().statements(), environment, signature);
             }
+            for (ClassInfo type : classes.values()) {
+                for (MethodInfo method : type.methods().values()) {
+                    changed |= shapeMethod(method, globals);
+                }
+                for (MethodInfo constructor : type.constructors().values()) {
+                    changed |= shapeMethod(constructor, globals);
+                }
+            }
+            changed |= propagateMethodArrayShapes();
             if (!changed) break;
             if (round == maximumRounds - 1) {
                 error("MPL3602", "数组函数 ABI 的编译期形状推导未收敛", program.functions().get(0).span());
@@ -701,6 +711,58 @@ public final class SemanticAnalyzer {
                     function.declaration().span());
             }
         }
+    }
+
+    private boolean shapeMethod(MethodInfo method, ShapeEnvironment globals) {
+        FunctionSignature signature = functions.get(method.internalName());
+        if (signature == null) return false;
+        ShapeEnvironment environment = globals.copy();
+        environment.types.put("this", new ObjectType(method.ownerClass(), false));
+        if (classes.get(method.ownerClass()) != null && classes.get(method.ownerClass()).parent() != null) {
+            environment.types.put("super", new ObjectType(classes.get(method.ownerClass()).parent().name(), false));
+        }
+        for (int index = 0; index < method.declaration().parameters().size(); index++) {
+            FunctionParameter parameter = method.declaration().parameters().get(index);
+            MplType type = method.parameterTypes().get(index);
+            environment.types.put(parameter.name(), type);
+            if (isFunctionArray(type)) {
+                environment.aggregateSizes.put(parameter.name(), aggregateParameterSize(signature, index + 1));
+            }
+        }
+        return shapeStatements(method.declaration().body().statements(), environment, signature);
+    }
+
+    private boolean propagateMethodArrayShapes() {
+        boolean changed = false;
+        for (ClassInfo type : classes.values()) {
+            if (type.parent() == null) continue;
+            for (MethodInfo method : type.methods().values()) {
+                MethodInfo parent = findInheritedMethod(type.parent(), method.key());
+                if (parent == null) continue;
+                FunctionSignature childSignature = functions.get(method.internalName());
+                FunctionSignature parentSignature = functions.get(parent.internalName());
+                if (childSignature == null || parentSignature == null) continue;
+                for (int index = 0; index < method.parameterTypes().size(); index++) {
+                    if (!isFunctionArray(method.parameterTypes().get(index))
+                        || !isFunctionArray(parent.parameterTypes().get(index))) continue;
+                    int childSize = aggregateParameterSize(childSignature, index + 1);
+                    int parentSize = aggregateParameterSize(parentSignature, index + 1);
+                    if (childSize > 0) changed |= mergeAggregateParameterSize(parentSignature, index + 1,
+                        childSize, method.declaration().span());
+                    if (parentSize > 0) changed |= mergeAggregateParameterSize(childSignature, index + 1,
+                        parentSize, method.declaration().span());
+                }
+                if (isFunctionArray(method.returnType()) && isFunctionArray(parent.returnType())) {
+                    int childSize = aggregateReturnSize(childSignature);
+                    int parentSize = aggregateReturnSize(parentSignature);
+                    if (childSize > 0) changed |= mergeAggregateReturnSize(parentSignature, childSize,
+                        method.declaration().span());
+                    if (parentSize > 0) changed |= mergeAggregateReturnSize(childSignature, parentSize,
+                        method.declaration().span());
+                }
+            }
+        }
+        return changed;
     }
 
     private boolean shapeStatements(List<Statement> statements, ShapeEnvironment environment,
@@ -789,6 +851,28 @@ public final class SemanticAnalyzer {
                         }
                     }
                     return new ShapeResult(aggregateReturnSize(selected), changed);
+                }
+            }
+            if (call.callee() instanceof MemberAccessExpression member) {
+                MplType receiver = inferExpressionType(member.target(), environment.types);
+                if (receiver instanceof ObjectType object && !object.nullable()) {
+                    List<MplType> argumentTypes = call.arguments().stream()
+                        .map(argument -> inferExpressionType(argument, environment.types)).toList();
+                    MethodInfo selected = selectInferredOverload(
+                        methodCandidates(classes.get(object.className()), member.member()),
+                        MethodInfo::parameterTypes, MethodInfo::returnType, argumentTypes);
+                    if (selected != null) {
+                        FunctionSignature signature = functions.get(selected.internalName());
+                        if (signature != null) {
+                            for (int index = 0; index < selected.parameterTypes().size(); index++) {
+                                if (isFunctionArray(selected.parameterTypes().get(index)) && argumentShapes.get(index).size() > 0) {
+                                    changed |= mergeAggregateParameterSize(signature, index + 1,
+                                        argumentShapes.get(index).size(), call.span());
+                                }
+                            }
+                        }
+                        return new ShapeResult(signature == null ? 0 : aggregateReturnSize(signature), changed);
+                    }
                 }
             }
             changed |= shapeExpression(call.callee(), environment).changed();
@@ -1138,11 +1222,14 @@ public final class SemanticAnalyzer {
             declare("this", new Symbol(thisType, false, null, null, null, null, false, false, function.span()), function.span());
             List<HirFunctionParameter> parameters = new ArrayList<>();
             parameters.add(new HirFunctionParameter("this", thisType));
+            FunctionSignature signature = functions.get(method.internalName());
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
                 MplType parameterType = method.parameterTypes().get(index);
                 Integer aggregateSize = parameterType instanceof TupleType tuple
-                    ? tuple.elementTypes().size() : null;
+                    ? tuple.elementTypes().size()
+                    : isFunctionArray(parameterType) && signature != null
+                        ? aggregateParameterSize(signature, index + 1) : null;
                 declare(parameter.name(), new Symbol(parameterType, false,
                     parameterType == ValueType.STRING ? profile.maxMessageUtf16CodeUnits() : null,
                     aggregateSize, null, null, false, false,
@@ -1157,7 +1244,9 @@ public final class SemanticAnalyzer {
                     + " 并非所有路径都返回 " + display(method.returnType()), function.span());
             }
             int aggregateReturnSize = method.returnType() instanceof TupleType tuple
-                ? tuple.elementTypes().size() : 0;
+                ? tuple.elementTypes().size()
+                : isFunctionArray(method.returnType()) && signature != null
+                    ? aggregateReturnSize(signature) : 0;
             return new HirFunction(method.internalName(), method.sourceName(), parameters, method.returnType(),
                 aggregateReturnSize, body);
         } finally {
@@ -4117,6 +4206,11 @@ public final class SemanticAnalyzer {
     private Integer staticAggregateSize(HirExpression expression) {
         if (expression.type() instanceof TupleType tuple) return tuple.elementTypes().size();
         if (expression instanceof HirFunctionCall call && call.aggregateSize() > 0) return call.aggregateSize();
+        if (expression instanceof HirMethodCall call && isFunctionArray(call.type())) {
+            return call.dispatchTargets().stream().map(HirMethodCall.DispatchTarget::function)
+                .map(functions::get).filter(java.util.Objects::nonNull)
+                .mapToInt(this::aggregateReturnSize).filter(size -> size > 0).findFirst().orElse(0);
+        }
         if (expression instanceof HirArrayLiteral array) return array.elements().size();
         if (expression instanceof HirTupleLiteral tuple) return tuple.elements().size();
         if (expression instanceof HirCollectionLiteral collection) return collection.elements().size();

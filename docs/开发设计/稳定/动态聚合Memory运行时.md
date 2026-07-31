@@ -4,6 +4,8 @@
 
 运行时下标数组和列表不向 MPL 暴露 Memory 或地址。每个需要运行时下标的 `Array<T>` 或 `MutableList<T>` 由编译器分配固定容量的逻辑连续物理槽；一个容器可跨越多个 Cell/Bank 切片，目标 lowering 负责将逻辑下标转换为正确的段 alias 和局部 offset。容量是布局属性，不属于公开类型。
 
+固定形状数组的方法 ABI 复用顶层函数的元素槽协议：`this` 只占一个隐藏槽，数组参数和返回值按元素拆分。虚方法的所有候选实现必须经过同一长度传播；`super` 调用不重新推导形状，因此不会引入额外的运行时元数据。
+
 首个闭环只支持标量 `Int`、`Float`、`Bool` 元素。数组字面量确定容量；`MutableList.withCapacity(n)` 显式确定列表容量，`MutableList.of(...)` 使用初值个数作为容量。运行时下标读写均生成 compiler-private `read`/`write`，列表另有 compiler-private 长度槽。越界不是运行时异常：语义阶段必须证明 `0 <= index < size`，无法证明时构建失败。当前已实现的证明形式为：
 
 ~~~mpl

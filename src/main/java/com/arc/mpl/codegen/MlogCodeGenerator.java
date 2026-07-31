@@ -1212,6 +1212,7 @@ public final class MlogCodeGenerator {
             throw new IllegalArgumentException("array value requires a fixed positive shape");
         }
         if (expression instanceof HirFunctionCall call) return emitArrayFunctionCall(call, type, size);
+        if (expression instanceof HirMethodCall call) return emitArrayMethodCall(call, type, size);
         List<String> values = new java.util.ArrayList<>();
         if (expression instanceof HirArrayLiteral array) {
             for (HirExpression element : array.elements()) values.add(emitExpression(element));
@@ -1232,8 +1233,31 @@ public final class MlogCodeGenerator {
         return List.copyOf(snapshots);
     }
 
+    private List<String> emitArrayMethodCall(HirMethodCall call, CollectionType returnType, int size) {
+        List<String> targets = call.dispatchTargets().stream()
+            .map(HirMethodCall.DispatchTarget::function).distinct().toList();
+        if (targets.isEmpty()) {
+            throw new IllegalArgumentException("array method call has no dispatch target: " + call.sourceName());
+        }
+        HirFunction function = functions.get(targets.get(0));
+        if (function == null || !returnType.equals(function.returnType()) || function.aggregateReturnSize() != size) {
+            throw new IllegalArgumentException("array method call shape does not match method signature: "
+                + call.sourceName());
+        }
+        List<HirExpression> expressions = new java.util.ArrayList<>();
+        expressions.add(call.receiver());
+        expressions.addAll(call.arguments());
+        List<SavedFunctionArgument> arguments = saveStructuredArguments(function, expressions);
+        return emitStructuredMethodCallValues(call, arguments, returnType);
+    }
+
     private int requireAggregateSize(HirExpression expression, String role) {
         if (expression instanceof HirFunctionCall call && call.aggregateSize() > 0) return call.aggregateSize();
+        if (expression instanceof HirMethodCall call && isArray(call.type())) {
+            return call.dispatchTargets().stream().map(HirMethodCall.DispatchTarget::function)
+                .map(functions::get).filter(java.util.Objects::nonNull)
+                .mapToInt(HirFunction::aggregateReturnSize).filter(size -> size > 0).findFirst().orElse(0);
+        }
         if (expression instanceof HirArrayLiteral array) return array.elements().size();
         if (expression instanceof HirVariable variable) {
             Integer known = aggregateShapes.get(aggregateShapeKey(variable.name()));
@@ -1815,9 +1839,9 @@ public final class MlogCodeGenerator {
         List<String> targets = call.dispatchTargets().stream().map(HirMethodCall.DispatchTarget::function).distinct().toList();
         HirFunction reference = functions.get(targets.get(0));
         boolean structured = reference != null && reference.parameters().stream()
-            .anyMatch(parameter -> parameter.type() instanceof TupleType);
-        if (call.type() instanceof TupleType) {
-            throw new IllegalArgumentException("tuple method calls must be lowered through aggregate context");
+            .anyMatch(parameter -> parameter.type() instanceof TupleType || isArray(parameter.type()));
+        if (call.type() instanceof TupleType || isArray(call.type())) {
+            throw new IllegalArgumentException("aggregate method calls must be lowered through aggregate context");
         }
         if (structured) {
             List<HirExpression> expressions = new java.util.ArrayList<>();
@@ -1874,6 +1898,26 @@ public final class MlogCodeGenerator {
             emitVirtualStructuredMethodCall(call, arguments, results);
             return List.copyOf(results);
         }
+        if (isArray(returnType)) {
+            int size = call.dispatchTargets().stream()
+                .map(HirMethodCall.DispatchTarget::function)
+                .map(functions::get)
+                .filter(java.util.Objects::nonNull)
+                .mapToInt(HirFunction::aggregateReturnSize)
+                .filter(value -> value > 0)
+                .findFirst().orElse(0);
+            if (size < 1) {
+                throw new IllegalArgumentException("array method result lacks a specialized shape: " + call.sourceName());
+            }
+            List<String> results = new java.util.ArrayList<>();
+            for (int index = 0; index < size; index++) {
+                String result = temporary();
+                output.set(result, "0");
+                results.add(result);
+            }
+            emitVirtualStructuredMethodCall(call, arguments, results);
+            return List.copyOf(results);
+        }
         String result = temporary();
         output.set(result, "0");
         emitVirtualStructuredMethodCall(call, arguments, List.of(result));
@@ -1884,6 +1928,17 @@ public final class MlogCodeGenerator {
         if (returnType instanceof TupleType tuple) {
             List<String> results = new java.util.ArrayList<>();
             for (int index = 0; index < tuple.elementTypes().size(); index++) {
+                String result = temporary();
+                output.set(result, functionResultElementSlot(function.name(), index));
+                results.add(result);
+            }
+            return List.copyOf(results);
+        }
+        if (isArray(returnType)) {
+            int size = function.aggregateReturnSize();
+            if (size < 1) throw new IllegalArgumentException("array method result lacks a specialized shape: " + function.name());
+            List<String> results = new java.util.ArrayList<>();
+            for (int index = 0; index < size; index++) {
                 String result = temporary();
                 output.set(result, functionResultElementSlot(function.name(), index));
                 results.add(result);

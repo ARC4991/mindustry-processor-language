@@ -573,6 +573,47 @@ class MplCompilerTest {
     }
 
     @Test
+    void compilesFixedArrayMethodAbiAcrossVirtualAndSuperCalls(@TempDir Path project) throws IOException {
+        Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
+        java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """
+            class Base {
+                public fun Base() {}
+                public fun rotate(values: Int[]) {
+                    return [values[1], values[0]];
+                }
+            }
+            class Child extends Base {
+                public fun Child() { super(); }
+                public fun rotate(values: Int[]) {
+                    val parent = super.rotate(values);
+                    return [parent[1] + 1, parent[0] + 1];
+                }
+            }
+            fun apply(subject: Base): Int[] { return subject.rotate([3, 4]); }
+            val result = apply(new Child());
+            val first = result[0];
+            val second = result[1];
+            """);
+
+        CompilationResult result = compiler.compile(new CompilationRequest(project, "v146", true));
+
+        assertTrue(result.succeeded(), () -> result.diagnostics().toString());
+        String mlog = result.mlog().orElseThrow();
+        assertTrue(mlog.contains("_arg1_e0"), mlog);
+        assertTrue(mlog.contains("_arg1_e1"), mlog);
+        assertTrue(mlog.contains("_result_e0"), mlog);
+        assertTrue(mlog.contains("_result_e1"), mlog);
+        assertTrue(mlog.contains("virtual_method_structured_"), mlog);
+        String mil = result.mil().orElseThrow();
+        assertTrue(mil.contains("rotate(values: Int[]): Int[]"), mil);
+        java.nio.file.Files.writeString(project.resolve("mpl.json"), "{ \"entry\": \"src/generated.mil\" }");
+        java.nio.file.Files.writeString(sourceDirectory.resolve("generated.mil"), mil);
+        CompilationResult regenerated = compiler.compile(new CompilationRequest(project, "v146", true));
+        assertTrue(regenerated.succeeded(), () -> regenerated.diagnostics().toString());
+        assertEquals(mlog, regenerated.mlog().orElseThrow());
+    }
+
+    @Test
     void dispatchesDerivedObjectsStoredInThePhysicalObjectPool(@TempDir Path project) throws IOException {
         Path sourceDirectory = java.nio.file.Files.createDirectories(project.resolve("src"));
         java.nio.file.Files.writeString(sourceDirectory.resolve("main.mpl"), """

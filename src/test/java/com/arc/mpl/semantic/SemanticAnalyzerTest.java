@@ -258,6 +258,84 @@ class SemanticAnalyzerTest {
     }
 
     @Test
+    void infersFixedArrayShapesForVirtualAndSuperMethods() {
+        Program program = parser.parse("""
+            class Base {
+                public fun Base() {}
+                public fun rotate(values: Int[]) {
+                    return [values[1], values[0]];
+                }
+            }
+            class Child extends Base {
+                public fun Child() { super(); }
+                public fun rotate(values: Int[]) {
+                    val parent = super.rotate(values);
+                    return [parent[1] + 1, parent[0] + 1];
+                }
+            }
+            fun apply(subject: Base): Int[] { return subject.rotate([3, 4]); }
+            val result = apply(new Child());
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.diagnostics().isEmpty(), () -> result.diagnostics().toString());
+        var methods = result.program().orElseThrow().functions().stream()
+            .filter(function -> function.sourceName().equals("rotate")).toList();
+        assertEquals(2, methods.size());
+        for (var method : methods) {
+            assertEquals(2, method.parameters().size());
+            assertEquals(2, method.parameters().get(1).aggregateSize());
+            assertEquals(2, method.aggregateReturnSize());
+        }
+    }
+
+    @Test
+    void rejectsConflictingArrayShapesAcrossMethodCalls() {
+        Program program = parser.parse("""
+            class Base {
+                public fun Base() {}
+                public fun rotate(values: Int[]) { return values; }
+            }
+            fun use(subject: Base): Int {
+                val first = subject.rotate([1, 2]);
+                val second = subject.rotate([1, 2, 3]);
+                return first[0] + second[0];
+            }
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3602")
+            && diagnostic.message().contains("长度 2 和 3")), () -> result.diagnostics().toString());
+    }
+
+    @Test
+    void rejectsConflictingArrayShapesAcrossOverrideTargets() {
+        Program program = parser.parse("""
+            class Base {
+                public fun Base() {}
+                public fun rotate(values: Int[]) { return values; }
+            }
+            class Child extends Base {
+                public fun Child() { super(); }
+                public fun rotate(values: Int[]) { return values; }
+            }
+            val base = new Base();
+            val child = new Child();
+            val first = base.rotate([1, 2]);
+            val second = child.rotate([1, 2, 3]);
+            """, Path.of("main.mpl")).program().orElseThrow();
+
+        SemanticResult result = analyzer.analyze(program, Path.of("main.mpl"));
+
+        assertTrue(result.program().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("MPL3602")
+            && diagnostic.message().contains("长度 2 和 3")), () -> result.diagnostics().toString());
+    }
+
+    @Test
     void rejectsConflictingArrayFunctionShapes() {
         Program program = parser.parse("""
             fun first(values: Int[]): Int { return values[0]; }
