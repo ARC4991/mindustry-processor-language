@@ -5,7 +5,7 @@
 ~~~bash
 cd examples/字符串运行时
 mpl build --target=v146
-mpl build --target=v159.7 build-v159.7
+mpl build --target=v159.7
 ~~~
 
 构建产物中的 `runtime.msch` 会自动包含 String 描述符表和代码单元序列所需的 Memory。导入游戏后，只需把 Message 建筑连接到 `Main` 处理器，并确认游戏链接名为 `message1`。程序应输出：

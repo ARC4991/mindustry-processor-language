@@ -54,10 +54,10 @@ class MplCliTest {
             "const Status: Message = link(\"message1\");\n");
         Files.writeString(sourceDirectory.resolve("main.mil"),
             "@io.print(@message1, \"MIL ready\");\n");
-        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+        Path outputDirectory = project.resolve("build");
 
         MplCli.execute(new String[]{
-            "build", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+            "build", "--lang=zh-CN", "--target=v146"
         }, project);
 
         assertTrue(Files.readString(outputDirectory.resolve("Main.mlog")).contains("print \"MIL ready\""));
@@ -71,12 +71,12 @@ class MplCliTest {
     void buildWritesADeployableBlueprintBundleAndAppliesTheDebugLabelStyle(@TempDir Path project) throws IOException {
         Path sourceDirectory = Files.createDirectories(project.resolve("src"));
         Files.writeString(sourceDirectory.resolve("main.mpl"), "while (true) { }");
-        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+        Path outputDirectory = project.resolve("build");
         Path mlog = outputDirectory.resolve("Main.mlog");
         Path mil = outputDirectory.resolve("Main.mil");
 
         MplCli.execute(new String[]{
-            "build", "--debug", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+            "build", "--debug", "--lang=zh-CN", "--target=v146"
         }, project);
 
         String deployedMlog = Files.readString(mlog);
@@ -125,10 +125,10 @@ class MplCliTest {
             }
             val result = add(11, 13);
             """);
-        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+        Path outputDirectory = project.resolve("build");
 
         MplCli.execute(new String[]{
-            "build", "--debug", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+            "build", "--debug", "--lang=zh-CN", "--target=v146"
         }, project);
 
         assertTrue(Files.isRegularFile(outputDirectory.resolve("Main.mlog")));
@@ -172,10 +172,10 @@ class MplCliTest {
             val difference = subtract(11, 3);
             val product = multiply(6, 7);
             """);
-        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+        Path outputDirectory = project.resolve("build");
 
         MplCli.execute(new String[]{
-            "build", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+            "build", "--lang=zh-CN", "--target=v146"
         }, project);
 
         assertTrue(Files.isRegularFile(outputDirectory.resolve("Worker-0.mlog")));
@@ -205,10 +205,10 @@ class MplCliTest {
                 values.set(i, values[i] + 1);
             }
             """);
-        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+        Path outputDirectory = project.resolve("build");
 
         MplCli.execute(new String[]{
-            "build", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+            "build", "--lang=zh-CN", "--target=v146"
         }, project);
 
         String mlog = Files.readString(outputDirectory.resolve("Main.mlog"));
@@ -235,10 +235,10 @@ class MplCliTest {
             val text: String = prefix + "L";
             Status.print(text);
             """);
-        Path outputDirectory = Files.createDirectories(project.resolve("artifacts"));
+        Path outputDirectory = project.resolve("build");
 
         MplCli.execute(new String[]{
-            "build", "--lang=zh-CN", "--target=v146", outputDirectory.toString()
+            "build", "--lang=zh-CN", "--target=v146"
         }, project);
 
         String mlog = Files.readString(outputDirectory.resolve("Main.mlog"));

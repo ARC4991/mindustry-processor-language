@@ -118,7 +118,7 @@ export const mplLessons: TutorialLesson[] = [
     summary: "理解自动资源规划、多处理器分片和最终产物。", keywords: ["runtime.goal", "1000 条指令", "runtime.msch", "report.json"],
     sections: [
       { title: "编译器按实际需求规划", paragraphs: ["处理器变量承载虚拟槽，Cell/Bank 承载对象池、字符串、动态聚合和跨处理器邮箱。runtime.goal 在 minResources 与 maxPerformance 之间选择策略；用户只限制可用处理器和 Memory 类型数量。"], terms: ["Cell/Bank", "对象池", "runtime.goal", "minResources", "maxPerformance"], code: { language: "json", title: "mpl.json 资源偏好", source: "{\n  \"runtime\": {\n    \"goal\": \"minResources\",\n    \"processors\": { \"micro\": 8 },\n    \"memory\": { \"cell\": 8, \"bank\": 4 }\n  }\n}" } },
-      { title: "蓝图是正式结果", paragraphs: ["每个处理器最多 1000 条真实指令，label 不计入该上限。超限时编译器优化或把可证明纯数值函数分配给 Worker；最终蓝图包含处理器与已连接 Memory。MIL、mlog、格式化 JSON 报告和连接说明放在构建目录供审计。"], terms: ["1000 条真实指令", "label", "Worker", "蓝图", "MIL", "mlog"], code: { language: "shell", source: "mpl build --target=v146 build\n# build/runtime.msch\n# build/Main.mil / Main.mlog\n# build/report.json / deployment.json\n# build/连接说明.txt" } }
+      { title: "蓝图是正式结果", paragraphs: ["每个处理器最多 1000 条真实指令，label 不计入该上限。超限时编译器优化或把可证明纯数值函数分配给 Worker；最终蓝图包含处理器与已连接 Memory。MIL、mlog、格式化 JSON 报告和连接说明放在构建目录供审计。"], terms: ["1000 条真实指令", "label", "Worker", "蓝图", "MIL", "mlog"], code: { language: "shell", source: "mpl build --target=v146\n# build/runtime.msch\n# build/Main.mil / Main.mlog\n# build/report.json / deployment.json\n# build/连接说明.txt" } }
     ]
   }
 ];

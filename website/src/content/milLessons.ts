@@ -21,7 +21,7 @@ export const milLessons: TutorialLesson[] = [
     id: "mil-profile", track: "mil", number: "03", title: "Profile、白名单与诊断",
     summary: "让同一份结构按 v146 或 v159.7 安全 lowering。", keywords: ["v146", "v159.7", "宏白名单", "runtimePrivate"],
     sections: [
-      { title: "宏能力来自 target", paragraphs: ["每次构建选择一个 profile。profile 登记指令签名、处理器限制、内容类型、公开宏、效果和成本；未知宏或参数数量不匹配在 MIL 解析阶段失败。"], terms: ["profile", "公开宏", "效果", "成本"], code: { language: "shell", source: "mpl check --target=v146\nmpl build --target=v159.7 build-v159" } },
+      { title: "宏能力来自 target", paragraphs: ["每次构建选择一个 profile。profile 登记指令签名、处理器限制、内容类型、公开宏、效果和成本；未知宏或参数数量不匹配在 MIL 解析阶段失败。"], terms: ["profile", "公开宏", "效果", "成本"], code: { language: "shell", source: "mpl check --target=v146\nmpl build --target=v159.7" } },
       { title: "公开与 Runtime 私有", paragraphs: ["public 宏可写入用户 MIL；runtimePrivate 宏只允许编译器生成。当前 @io.drawFlush 是典型私有提交点，MPL 与手写 MIL 都不能直接控制刷新。"], terms: ["public", "runtimePrivate", "@io.drawFlush"], callout: { tone: "warning", title: "版本优化不改变语义", text: "v159.7 可以选择更优指令序列，但不能让同一程序在不同 target 下产生不同的源级行为。" } }
     ]
   },
@@ -70,7 +70,7 @@ export const milLessons: TutorialLesson[] = [
     summary: "把 MIL 作为包模块或入口编译，并对照最终 mlog。", keywords: ["main.mil", "profile 校验", "source map", "构建报告"],
     sections: [
       { title: "把 MIL 放进 src", paragraphs: ["mpl.json.entry 可以指向 main.mil，MPL 模块也能导入 MIL 的 export。所有手写和生成 MIL 都经过相同语法、类型、硬件、profile 与资源校验。"], terms: ["main.mil", "export", "profile", "资源校验"], code: { language: "mil", title: "src/output.mil", source: "export fun announce(value: Int) {\n  @io.print(@message1, \"value=\", value);\n}" } },
-      { title: "三层一起审计", paragraphs: ["构建目录同时保留 .mil、.mlog、report.json 与 deployment.json。定位问题时先看 MIL 是否正确表达目标能力，再看 mlog 指令成本和报告中的处理器、Memory、硬件所有权。"], terms: [".mil", ".mlog", "report.json", "deployment.json"], code: { language: "shell", source: "mpl check --target=v146\nmpl build --target=v146 build" }, callout: { tone: "warning", title: "宏卫生", text: "用户不能定义宏；未知 @ 前缀、runtimePrivate 宏和保留 flag 访问都会被拒绝。" } }
+      { title: "三层一起审计", paragraphs: ["构建目录同时保留 .mil、.mlog、report.json 与 deployment.json。定位问题时先看 MIL 是否正确表达目标能力，再看 mlog 指令成本和报告中的处理器、Memory、硬件所有权。"], terms: [".mil", ".mlog", "report.json", "deployment.json"], code: { language: "shell", source: "mpl check --target=v146\nmpl build --target=v146" }, callout: { tone: "warning", title: "宏卫生", text: "用户不能定义宏；未知 @ 前缀、runtimePrivate 宏和保留 flag 访问都会被拒绝。" } }
     ]
   }
 ];

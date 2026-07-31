@@ -123,7 +123,7 @@ public final class MplCli {
                 return;
             }
             try {
-                Path outputDirectory = Path.of(build.outputDirectory());
+                Path outputDirectory = workingDirectory.resolve("build");
                 HardwareContract hardware = new HardwareLoader().load(workingDirectory);
                 BuildArtifactWriter writer = new BuildArtifactWriter();
                 ProjectMetadata metadata = ProjectMetadata.load(workingDirectory);
@@ -209,11 +209,10 @@ public final class MplCli {
 
     /** Parses the build-only flags without making their order part of the CLI contract. */
     private static BuildArguments parseBuildArguments(String[] args) {
-        if (args.length < 1 || args.length > 4 || !"build".equals(args[0])) return null;
+        if (args.length < 1 || args.length > 3 || !"build".equals(args[0])) return null;
 
         String target = null;
         boolean debug = false;
-        List<String> positionals = new ArrayList<>();
         for (int index = 1; index < args.length; index++) {
             String argument = args[index];
             if (argument.startsWith("--target=")) {
@@ -224,13 +223,10 @@ public final class MplCli {
                 debug = true;
             } else if (argument.startsWith("--")) {
                 return null;
-            } else {
-                positionals.add(argument);
-            }
+            } else return null;
         }
-        if (target == null || positionals.size() > 1) return null;
-        String output = positionals.isEmpty() ? "build" : positionals.get(0);
-        return new BuildArguments(target, debug, output);
+        if (target == null) return null;
+        return new BuildArguments(target, debug);
     }
 
     /** Places the inspectable intermediate artifact beside the final mlog. */
@@ -250,7 +246,7 @@ public final class MplCli {
         System.err.printf("%s %s: %s%n", diagnostic.severity(), diagnostic.code(), diagnostic.render(language));
     }
 
-    private record BuildArguments(String target, boolean debug, String outputDirectory) {
+    private record BuildArguments(String target, boolean debug) {
     }
 
     /** Removes the global language switch before command-specific parsing. */

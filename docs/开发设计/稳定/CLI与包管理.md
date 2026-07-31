@@ -9,10 +9,10 @@ mpl install <包名>
 mpl install <包名>=<git-url|mplpkg路径|registry-url>
 mpl search [关键词]
 mpl check --target=v146
-mpl build [--debug] --target=v146 [输出目录]
+mpl build [--debug] --target=v146
 ```
 
-`init` 要求当前目录为空或尚未初始化。`build` 的可选位置参数仅是构建产物目录，默认 `build`；它不改变项目根目录。
+`init` 要求当前目录为空或尚未初始化。`build` 始终把构建产物写入当前目录的 `build/`，命令不接受项目目录或输出目录参数。
 
 ## 依赖来源
 

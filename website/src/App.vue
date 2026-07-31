@@ -71,10 +71,10 @@ function select(name: PageKey) {
     </section>
 
     <section v-else-if="page === 'packages'" class="page-content">
-      <div class="two-column"><article><h2>当前目录命令</h2><p><code>mpl init</code>、<code>install</code>、<code>check</code> 与 <code>build</code> 均把当前目录作为项目根。输出目录是 build 的唯一可选位置参数。</p><pre class="code"><code>mpl <span class="kw">init</span>
+      <div class="two-column"><article><h2>当前目录命令</h2><p><code>mpl init</code>、<code>install</code>、<code>check</code> 与 <code>build</code> 均把当前目录作为项目根，构建产物固定写入 <code>build/</code>。</p><pre class="code"><code>mpl <span class="kw">init</span>
 mpl <span class="kw">install</span> @mpl/example
 mpl <span class="kw">search</span> display
-mpl <span class="kw">build</span> --target=v146 build</code></pre></article><article><h2>来源与锁定</h2><p>workspace 使用相对路径；Git 使用浅克隆；registry 下载 .mplpkg ZIP。每种来源均由同一个内容 SHA-256 缓存、包清单和 .mplh 硬件摘要共同约束。</p><pre class="code"><code><span class="string">"dependencies"</span>: {
+mpl <span class="kw">build</span> --target=v146</code></pre></article><article><h2>来源与锁定</h2><p>workspace 使用相对路径；Git 使用浅克隆；registry 下载 .mplpkg ZIP。每种来源均由同一个内容 SHA-256 缓存、包清单和 .mplh 硬件摘要共同约束。</p><pre class="code"><code><span class="string">"dependencies"</span>: {
   <span class="string">"orbit"</span>: <span class="string">"git:https://.../orbit.git"</span>,
   <span class="string">"screen-kit"</span>: <span class="string">"registry:https://.../screen.mplpkg"</span>
 }</code></pre></article></div>
@@ -85,7 +85,7 @@ mpl <span class="kw">build</span> --target=v146 build</code></pre></article><art
       <div class="pipeline"><div>MPL 源码</div><b>→</b><div>AST / HIR</div><b>→</b><div>MIL</div><b>→</b><div>mlog</div><b>→</b><div>蓝图</div></div>
       <div class="feature-grid"><article class="card"><h2>前端</h2><p>拆分的 ANTLR 词法/语法文件解析 MPL 与 MIL；后置声明、模块导入、类继承、泛型集合和重载进入统一语义分析。</p></article><article class="card"><h2>优化</h2><p>常量折叠、死分支移除、循环优化、最短标签和目标 profile 专用 lowering 在代码生成前后协同工作。</p></article><article class="card"><h2>产物</h2><p><code>runtime.msch</code>、每片 <code>.mlog</code>/<code>.mil</code>、格式化 JSON 报告与部署清单共同描述最终部署。</p></article></div>
       <pre class="code"><code><span class="cm"># 调试构建保留可读标签；常规构建使用 _0、_1 …</span>
-mpl <span class="kw">build</span> --debug --target=v146 build</code></pre>
+      mpl <span class="kw">build</span> --debug --target=v146</code></pre>
     </section>
 
     <section v-else class="page-content">
