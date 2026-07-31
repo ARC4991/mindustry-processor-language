@@ -7,8 +7,8 @@ public record HirFunctionParameter(String name, MplType type, int aggregateSize)
         Objects.requireNonNull(name, "name");
         Objects.requireNonNull(type, "type");
         if (aggregateSize < 0) throw new IllegalArgumentException("aggregateSize 不能为负数");
-        if (!isArray(type) && aggregateSize != 0) {
-            throw new IllegalArgumentException("只有数组参数才能携带 aggregateSize");
+        if (!isStructured(type) && aggregateSize != 0) {
+            throw new IllegalArgumentException("只有元组或数组参数才能携带 aggregateSize");
         }
     }
 
@@ -16,7 +16,8 @@ public record HirFunctionParameter(String name, MplType type, int aggregateSize)
         this(name, type, 0);
     }
 
-    private static boolean isArray(MplType type) {
-        return type instanceof CollectionType collection && collection.kind() == CollectionType.Kind.ARRAY;
+    private static boolean isStructured(MplType type) {
+        return type instanceof TupleType || type instanceof CollectionType collection
+            && collection.kind() == CollectionType.Kind.ARRAY;
     }
 }

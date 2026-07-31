@@ -392,8 +392,9 @@ public final class SemanticAnalyzer {
             : function.returnType().map(value -> parseType(value, function.span())).orElse(ValueType.ERROR);
         List<MplType> sourceParameters = function.parameters().stream()
             .map(parameter -> parseType(parameter.typeName(), parameter.span())).toList();
-        if (sourceParameters.stream().anyMatch(this::isAggregate) || isAggregate(returnType)) {
-            error("MPL3602", "第一版方法 ABI 尚不支持聚合参数及返回值", function.span());
+        if (sourceParameters.stream().anyMatch(parameterType -> !supportedMethodAggregateAbi(parameterType))
+            || !supportedMethodAggregateAbi(returnType)) {
+            error("MPL3602", "方法 ABI 只支持标量及 Int/Float/Bool 元组", function.span());
         }
         int overloadIndex = constructor ? type.constructors().size()
             : (int) type.methods().keySet().stream().filter(key -> key.sourceName().equals(function.name())).count();
@@ -461,8 +462,8 @@ public final class SemanticAnalyzer {
     }
 
     private void replaceMethodInfo(ClassInfo owner, MethodInfo previous, MplType returnType) {
-        if (isAggregate(returnType) || returnType instanceof UnitType) {
-            error("MPL3602", "第一版方法 ABI 尚不支持聚合参数及返回值", previous.declaration().span());
+        if (!supportedMethodAggregateAbi(returnType)) {
+            error("MPL3602", "方法 ABI 只支持标量及 Int/Float/Bool 元组", previous.declaration().span());
             return;
         }
         MethodInfo replacement = new MethodInfo(previous.ownerClass(), previous.sourceName(), previous.internalName(),
@@ -501,6 +502,15 @@ public final class SemanticAnalyzer {
         if (type == ValueType.INT || type == ValueType.FLOAT || type == ValueType.BOOL || type == ValueType.STRING) return true;
         return type instanceof TupleType tuple && tuple.elementTypes().stream().allMatch(element ->
             element == ValueType.INT || element == ValueType.FLOAT || element == ValueType.BOOL || element == ValueType.STRING);
+    }
+
+    private boolean supportedMethodAggregateAbi(MplType type) {
+        if (type == ValueType.ERROR || type == ValueType.VOID) return true;
+        if (type == ValueType.INT || type == ValueType.FLOAT || type == ValueType.BOOL
+            || type == ValueType.STRING) return true;
+        if (type instanceof ObjectType || type instanceof UnitType || type instanceof BuildingType) return true;
+        return type instanceof TupleType tuple && tuple.elementTypes().stream().allMatch(element ->
+            element == ValueType.INT || element == ValueType.FLOAT || element == ValueType.BOOL);
     }
 
     private FieldInfo lookupField(ClassInfo type, String name, boolean inheritedAccessibleOnly) {
@@ -1131,11 +1141,14 @@ public final class SemanticAnalyzer {
             for (int index = 0; index < function.parameters().size(); index++) {
                 FunctionParameter parameter = function.parameters().get(index);
                 MplType parameterType = method.parameterTypes().get(index);
+                Integer aggregateSize = parameterType instanceof TupleType tuple
+                    ? tuple.elementTypes().size() : null;
                 declare(parameter.name(), new Symbol(parameterType, false,
                     parameterType == ValueType.STRING ? profile.maxMessageUtf16CodeUnits() : null,
-                    null, null, null, false, false,
+                    aggregateSize, null, null, false, false,
                     parameter.span()), parameter.span());
-                parameters.add(new HirFunctionParameter(parameter.name(), parameterType));
+                parameters.add(new HirFunctionParameter(parameter.name(), parameterType,
+                    aggregateSize == null ? 0 : aggregateSize));
             }
             if (method.constructor()) validateConstructorContract(type, function);
             List<HirStatement> body = analyzeBlock(function.body());
@@ -1143,7 +1156,10 @@ public final class SemanticAnalyzer {
                 error("MPL3504", "方法 " + type.name() + "." + method.sourceName()
                     + " 并非所有路径都返回 " + display(method.returnType()), function.span());
             }
-            return new HirFunction(method.internalName(), method.sourceName(), parameters, method.returnType(), body);
+            int aggregateReturnSize = method.returnType() instanceof TupleType tuple
+                ? tuple.elementTypes().size() : 0;
+            return new HirFunction(method.internalName(), method.sourceName(), parameters, method.returnType(),
+                aggregateReturnSize, body);
         } finally {
             scopes.pop();
             currentFunction = previousFunction;

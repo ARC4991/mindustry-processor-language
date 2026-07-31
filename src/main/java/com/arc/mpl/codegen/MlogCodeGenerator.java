@@ -1169,6 +1169,7 @@ public final class MlogCodeGenerator {
 
     private List<String> emitTupleValues(HirExpression expression, TupleType type) {
         if (expression instanceof HirFunctionCall call) return emitTupleFunctionCall(call, type);
+        if (expression instanceof HirMethodCall call) return emitTupleMethodCall(call, type);
         List<String> values = new java.util.ArrayList<>();
         if (expression instanceof HirTupleLiteral tuple) {
             for (HirExpression element : tuple.elements()) values.add(emitExpression(element));
@@ -1189,6 +1190,21 @@ public final class MlogCodeGenerator {
             snapshots.add(snapshot);
         }
         return List.copyOf(snapshots);
+    }
+
+    private List<String> emitTupleMethodCall(HirMethodCall call, TupleType returnType) {
+        List<String> targets = call.dispatchTargets().stream()
+            .map(HirMethodCall.DispatchTarget::function).distinct().toList();
+        HirFunction function = functions.get(targets.get(0));
+        if (function == null || !returnType.equals(function.returnType())) {
+            throw new IllegalArgumentException("tuple method call return type does not match method signature: "
+                + call.sourceName());
+        }
+        List<HirExpression> expressions = new java.util.ArrayList<>();
+        expressions.add(call.receiver());
+        expressions.addAll(call.arguments());
+        List<SavedFunctionArgument> arguments = saveStructuredArguments(function, expressions);
+        return emitStructuredMethodCallValues(call, arguments, returnType);
     }
 
     private List<String> emitArrayValues(HirExpression expression, CollectionType type, int size) {
@@ -1796,6 +1812,26 @@ public final class MlogCodeGenerator {
     }
 
     private String emitMethodCall(HirMethodCall call) {
+        List<String> targets = call.dispatchTargets().stream().map(HirMethodCall.DispatchTarget::function).distinct().toList();
+        HirFunction reference = functions.get(targets.get(0));
+        boolean structured = reference != null && reference.parameters().stream()
+            .anyMatch(parameter -> parameter.type() instanceof TupleType);
+        if (call.type() instanceof TupleType) {
+            throw new IllegalArgumentException("tuple method calls must be lowered through aggregate context");
+        }
+        if (structured) {
+            List<HirExpression> expressions = new java.util.ArrayList<>();
+            expressions.add(call.receiver());
+            expressions.addAll(call.arguments());
+            List<SavedFunctionArgument> arguments = saveStructuredArguments(reference, expressions);
+            List<String> values = emitStructuredMethodCallValues(call, arguments, call.type());
+            String result = values.isEmpty() ? "0" : values.get(0);
+            if (call.type() != com.arc.mpl.hir.ValueType.STRING) return result;
+            StringRuntimeLayout.Entry target = memoryLayout.stringRuntime()
+                .callResult(call.stringResultAllocationId(), call.sourceName());
+            emitStringCopy(result, target);
+            return Integer.toString(target.handle());
+        }
         String receiver = temporary();
         output.set(receiver, emitExpression(call.receiver()));
         List<String> savedArguments = new java.util.ArrayList<>();
@@ -1806,7 +1842,6 @@ public final class MlogCodeGenerator {
             savedArguments.add(saved);
         }
         String result;
-        List<String> targets = call.dispatchTargets().stream().map(HirMethodCall.DispatchTarget::function).distinct().toList();
         if (call.kind() != HirMethodCall.InvocationKind.VIRTUAL || targets.size() == 1) {
             result = emitPreparedFunctionCall(targets.get(0), savedArguments, call.type());
         } else {
@@ -1817,6 +1852,87 @@ public final class MlogCodeGenerator {
             .callResult(call.stringResultAllocationId(), call.sourceName());
         emitStringCopy(result, target);
         return Integer.toString(target.handle());
+    }
+
+    private List<String> emitStructuredMethodCallValues(HirMethodCall call,
+                                                         List<SavedFunctionArgument> arguments, MplType returnType) {
+        List<String> targets = call.dispatchTargets().stream().map(HirMethodCall.DispatchTarget::function).distinct().toList();
+        if (call.kind() != HirMethodCall.InvocationKind.VIRTUAL || targets.size() == 1) {
+            HirFunction function = functions.get(targets.get(0));
+            if (function == null) throw new IllegalArgumentException("unknown method function: " + targets.get(0));
+            writeStructuredArguments(function, arguments);
+            invokeFunction(function);
+            return snapshotStructuredMethodResult(function, returnType);
+        }
+        if (returnType instanceof TupleType tuple) {
+            List<String> results = new java.util.ArrayList<>();
+            for (int index = 0; index < tuple.elementTypes().size(); index++) {
+                String result = temporary();
+                output.set(result, "0");
+                results.add(result);
+            }
+            emitVirtualStructuredMethodCall(call, arguments, results);
+            return List.copyOf(results);
+        }
+        String result = temporary();
+        output.set(result, "0");
+        emitVirtualStructuredMethodCall(call, arguments, List.of(result));
+        return List.of(result);
+    }
+
+    private List<String> snapshotStructuredMethodResult(HirFunction function, MplType returnType) {
+        if (returnType instanceof TupleType tuple) {
+            List<String> results = new java.util.ArrayList<>();
+            for (int index = 0; index < tuple.elementTypes().size(); index++) {
+                String result = temporary();
+                output.set(result, functionResultElementSlot(function.name(), index));
+                results.add(result);
+            }
+            return List.copyOf(results);
+        }
+        if (returnType == com.arc.mpl.hir.ValueType.VOID) return List.of();
+        String result = temporary();
+        output.set(result, functionResultSlot(function.name()));
+        return List.of(result);
+    }
+
+    private void emitVirtualStructuredMethodCall(HirMethodCall call,
+                                                   List<SavedFunctionArgument> arguments, List<String> results) {
+        MlogProgramBuilder.Label end = label("virtual_method_structured_end");
+        Map<String, MlogProgramBuilder.Label> entries = new java.util.LinkedHashMap<>();
+        for (String function : call.dispatchTargets().stream().map(HirMethodCall.DispatchTarget::function).distinct().toList()) {
+            entries.put(function, label("virtual_method_structured_" + function));
+        }
+        String receiver = arguments.get(0).values().get(0);
+        for (HirMethodCall.DispatchTarget target : call.dispatchTargets()) {
+            MlogProgramBuilder.Label entry = entries.get(target.function());
+            for (int allocationId : allocations(target.runtimeClass())) {
+                output.jump(entry, JumpCondition.EQUAL, receiver, Integer.toString(allocationId));
+            }
+            memoryLayout.objectPool(target.runtimeClass()).ifPresent(pool -> {
+                MlogProgramBuilder.Label next = label("virtual_method_structured_next");
+                output.jump(next, JumpCondition.GREATER_THAN, receiver,
+                    Long.toString(-((long) pool.handleBase() + 1L)));
+                output.jump(next, JumpCondition.LESS_THAN, receiver,
+                    Long.toString(-((long) pool.handleBase() + pool.capacity())));
+                output.jump(entry, JumpCondition.ALWAYS, "0", "0");
+                emitLabel(next);
+            });
+        }
+        output.jump(end, JumpCondition.ALWAYS, "0", "0");
+        for (Map.Entry<String, MlogProgramBuilder.Label> entry : entries.entrySet()) {
+            HirFunction function = functions.get(entry.getKey());
+            if (function == null) throw new IllegalArgumentException("unknown method function: " + entry.getKey());
+            emitLabel(entry.getValue());
+            writeStructuredArguments(function, arguments);
+            invokeFunction(function);
+            List<String> snapshot = snapshotStructuredMethodResult(function, function.returnType());
+            for (int index = 0; index < Math.min(results.size(), snapshot.size()); index++) {
+                output.set(results.get(index), snapshot.get(index));
+            }
+            output.jump(end, JumpCondition.ALWAYS, "0", "0");
+        }
+        emitLabel(end);
     }
 
     private String emitVirtualMethodCall(HirMethodCall call, String receiver, List<String> savedArguments) {

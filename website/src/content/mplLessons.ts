@@ -53,8 +53,8 @@ export const mplLessons: TutorialLesson[] = [
     id: "mpl-functions", track: "mpl", number: "07", title: "函数、返回推导与后置声明",
     summary: "组织逻辑并让函数先使用、后声明。", keywords: ["fun", "return", "后置声明", "聚合 ABI"],
     sections: [
-      { title: "返回类型也能推导", paragraphs: ["函数参数必须标注类型；返回类型可从所有 return 路径推导。函数和类支持后置声明，调用点不受源码排列顺序限制。顶层函数可传入并返回数值/Bool 元组与固定形状数组。"], terms: ["fun", "return", "返回类型", "后置声明", "Int[]", "元组", "数组"], code: { language: "mpl", source: "val rotated = rotate([1, 2, 3]); // Int[]\n\nfun rotate(values: Int[]) {\n  return [values[2], values[0], values[1]];\n}" } },
-      { title: "目标层 ABI", paragraphs: ["函数最终使用 @counter 间接跳转和编译器私有返回槽。元组与数组都按元素进入独立参数与结果槽；调用前先快照所有元素，嵌套调用不会覆盖实参。生成的 MIL 保留原签名并可再次编译。"], terms: ["@counter", "元组", "数组", "MIL", "快照", "编译器私有返回槽"], callout: { tone: "info", title: "编译期形状", text: "T[] 的长度不是公开类型的一部分。编译器沿调用图推导一个函数 ABI 的固定长度；当前同一函数的不同长度调用会在编译期拒绝。" } }
+      { title: "返回类型也能推导", paragraphs: ["函数参数必须标注类型；返回类型可从所有 return 路径推导。函数和类支持后置声明，调用点不受源码排列顺序限制。顶层函数和对象方法可传入并返回数值/Bool 元组；顶层函数还支持固定形状数组。"], terms: ["fun", "return", "返回类型", "后置声明", "Int[]", "元组", "数组"], code: { language: "mpl", source: "val rotated = rotate([1, 2, 3]); // Int[]\n\nfun rotate(values: Int[]) {\n  return [values[2], values[0], values[1]];\n}" } },
+      { title: "目标层 ABI", paragraphs: ["函数最终使用 @counter 间接跳转和编译器私有返回槽。元组与数组都按元素进入独立参数与结果槽；对象方法额外把隐藏 this 放在第一个槽。调用前先快照所有元素，虚方法和 super 调用返回后也会立即快照。生成的 MIL 保留原签名并可再次编译。"], terms: ["@counter", "元组", "数组", "this", "MIL", "快照", "编译器私有返回槽"], callout: { tone: "info", title: "编译期形状", text: "T[] 的长度不是公开类型的一部分。编译器沿调用图推导一个函数 ABI 的固定长度；当前同一函数的不同长度调用会在编译期拒绝。" } }
     ]
   },
   {

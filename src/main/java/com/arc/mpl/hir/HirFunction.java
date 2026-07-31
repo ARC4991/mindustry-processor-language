@@ -11,8 +11,8 @@ public record HirFunction(String name, String sourceName, List<HirFunctionParame
         parameters = List.copyOf(Objects.requireNonNull(parameters, "parameters"));
         Objects.requireNonNull(returnType, "returnType");
         if (aggregateReturnSize < 0) throw new IllegalArgumentException("aggregateReturnSize 不能为负数");
-        if (!isArray(returnType) && aggregateReturnSize != 0) {
-            throw new IllegalArgumentException("只有数组返回值才能携带 aggregateReturnSize");
+        if (!isStructured(returnType) && aggregateReturnSize != 0) {
+            throw new IllegalArgumentException("只有元组或数组返回值才能携带 aggregateReturnSize");
         }
         body = List.copyOf(Objects.requireNonNull(body, "body"));
     }
@@ -27,7 +27,8 @@ public record HirFunction(String name, String sourceName, List<HirFunctionParame
         this(name, name, parameters, returnType, 0, body);
     }
 
-    private static boolean isArray(MplType type) {
-        return type instanceof CollectionType collection && collection.kind() == CollectionType.Kind.ARRAY;
+    private static boolean isStructured(MplType type) {
+        return type instanceof TupleType || type instanceof CollectionType collection
+            && collection.kind() == CollectionType.Kind.ARRAY;
     }
 }
